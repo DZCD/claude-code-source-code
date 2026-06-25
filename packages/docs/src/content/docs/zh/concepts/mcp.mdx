@@ -1,0 +1,64 @@
+---
+title: MCP
+description: 把 MCP server 的工具映射成 SDK 工具。
+---
+
+SDK 可以把 MCP server 暴露的 tools 转成 Agent 可调用的 `ToolDefinition`。
+
+第一版支持：
+
+- stdio MCP server
+- 远程 Streamable HTTP MCP server
+- OAuth provider
+- 自定义 `MCPClient` adapter
+
+## stdio server
+
+```ts
+import {
+  connectMCPStdioServer,
+  createAgent,
+} from "@npm-while1/claude-agent-sdk";
+
+const mcp = await connectMCPStdioServer(
+  {
+    command: "node",
+    args: ["./mcp-server.js"],
+  },
+  {
+    namePrefix: "docs",
+  },
+);
+
+const agent = createAgent({
+  apiKey,
+  model,
+  tools: mcp.tools,
+});
+```
+
+使用完成后记得关闭连接：
+
+```ts
+await mcp.close();
+```
+
+## 远程 Streamable HTTP
+
+```ts
+const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
+  namePrefix: "remote",
+});
+```
+
+如果远程 MCP server 需要 OAuth，可以传入官方 MCP SDK 的 `OAuthClientProvider`：
+
+```ts
+const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
+  authProvider,
+});
+```
+
+## 工具命名
+
+MCP 工具名会被清洗成模型可接受的工具名。连接多个 server 时建议使用 `namePrefix`，避免工具名冲突。

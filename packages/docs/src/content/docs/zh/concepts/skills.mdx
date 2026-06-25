@@ -1,0 +1,43 @@
+---
+title: Skills
+description: 用可复用指令包扩展 Agent 行为。
+---
+
+Skill 是一段可复用的说明文档。它比 Claude Code plugin 更轻：SDK 只读取说明，并在相关请求里注入给模型，不依赖 Claude Code 的 plugin runtime。
+
+## 内存中定义 skill
+
+```ts
+import { skill } from "@npm-while1/claude-agent-sdk";
+
+const codeReview = skill({
+  name: "code-review",
+  description: "Review code changes and pull requests",
+  instructions: "Always list bugs and risks before summaries.",
+});
+```
+
+## 从 SKILL.md 加载
+
+```ts
+import { loadSkill } from "@npm-while1/claude-agent-sdk";
+
+const pdf = await loadSkill("./skills/pdf");
+```
+
+`loadSkill(path)` 会读取该目录下的 `SKILL.md`：
+
+```md
+---
+name: pdf
+description: Read and inspect PDF documents
+---
+
+Render pages before claiming layout is correct.
+```
+
+## 什么时候注入
+
+SDK 会根据用户 prompt 和 skill 的 `name/description` 做简单匹配。匹配到的 skill 会被作为额外上下文注入到模型请求中。
+
+这不是完整的 Claude Code skill 系统，但足够支撑“按需注入专业指令”的轻量场景。

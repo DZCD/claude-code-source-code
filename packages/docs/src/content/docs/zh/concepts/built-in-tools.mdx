@@ -1,0 +1,52 @@
+---
+title: 内置工具
+description: 可选启用 Claude Code 风格的文件和 Shell 工具。
+---
+
+SDK 提供一组可选的 Claude Code 风格工具。它们默认不会启用，必须由宿主应用显式传入。
+
+```ts
+import {
+  createAgent,
+  createClaudeCodeTools,
+} from "@npm-while1/claude-agent-sdk";
+
+const agent = createAgent({
+  apiKey,
+  model,
+  tools: createClaudeCodeTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+});
+```
+
+## 工具列表
+
+| 工具 | 说明 |
+| --- | --- |
+| `Read` | 读取工作区文件。 |
+| `Write` | 写入工作区文件。 |
+| `Edit` | 替换已有文件中的文本。 |
+| `LS` | 列出目录。 |
+| `Glob` | 按 glob 查找文件。 |
+| `Grep` | 按正则搜索文件内容。 |
+| `Bash` | 在工作区执行 Shell 命令。 |
+
+## 安全边界
+
+这些工具可以读写文件、执行命令，所以生产环境建议配合 `permission`：
+
+```ts
+permission: async request => {
+  if (request.toolName === "Bash" || request.toolName === "Write") {
+    return {
+      behavior: "deny",
+      message: "This host did not approve shell or write access.",
+    };
+  }
+  return { behavior: "allow" };
+}
+```
+
+`allowedDirectories` 会限制文件工具可访问的目录，但它不能替代宿主应用自己的权限策略。

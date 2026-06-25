@@ -1,0 +1,52 @@
+---
+title: Claude Agent SDK
+description: 不依赖 Claude Code CLI/runtime，也能构建 Claude 风格的 Agent。
+template: splash
+hero:
+  tagline: 独立 TypeScript SDK，内置 agent loop、工具调用、权限回调、流式事件和团队协作模型。
+  actions:
+    - text: 快速开始
+      link: /zh/quickstart/
+      icon: right-arrow
+    - text: 公开 API
+      link: /zh/reference/public-api/
+      icon: document
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## 这个 SDK 解决什么
+
+Claude Agent SDK 是一个轻量 npm 包，用来在你自己的 Node.js 应用里构建 Claude 风格的 Agent，而不需要安装或嵌入 Claude Code CLI。
+
+它适合这些场景：
+
+- 你想把 agent loop 集成进自己的服务端、桌面端或 Worker runtime。
+- 你需要自定义工具、权限审批、流式事件，而不是完整的 Claude Code UI。
+- 你希望支持 Anthropic 兼容接口，比如 DeepSeek 的 Anthropic-compatible endpoint。
+- 你想要可组合的 MCP、skills、内置文件工具、sub-agent 或团队 mailbox 协作能力。
+
+## 能力概览
+
+<CardGrid>
+  <Card title="Agent 循环" icon="setting">
+    保存对话状态，调用 Anthropic 兼容模型，识别工具调用，执行工具，再把结果回填给模型。
+  </Card>
+  <Card title="自定义工具" icon="puzzle">
+    用 Zod schema 定义输入，SDK 会解析参数并转成模型可用的 JSON Schema。
+  </Card>
+  <Card title="权限回调" icon="lock">
+    在工具真正执行前由宿主应用决定允许或拒绝，适合文件、Shell、远程操作等敏感能力。
+  </Card>
+  <Card title="稳定事件" icon="seti:json">
+    通过 `system`、`assistant`、`user`、`stream_event`、`result` 事件消费运行过程。
+  </Card>
+</CardGrid>
+
+## 安装
+
+```bash
+npm install @npm-while1/claude-agent-sdk zod
+```
+
+这个包刻意和 Claude Code 解耦。它不依赖 Claude Code CLI、Ink UI、AppState、sessionStorage 或 Claude Code 的内部运行时。

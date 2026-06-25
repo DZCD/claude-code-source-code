@@ -1,0 +1,38 @@
+---
+title: Streaming Events
+description: Consume stable SDK messages and raw model stream events.
+---
+
+`agent.query()` returns an async generator of SDK messages.
+
+```ts
+for await (const message of agent.query("What is 2+2?")) {
+  switch (message.type) {
+    case "system":
+      console.log("session", message.session_id);
+      break;
+    case "stream_event":
+      console.log("raw stream event", message.event);
+      break;
+    case "assistant":
+      console.log("assistant message", message.message);
+      break;
+    case "user":
+      console.log("tool result", message.tool_use_result);
+      break;
+    case "result":
+      console.log("final", message.result);
+      break;
+  }
+}
+```
+
+## Message types
+
+| Type | Description |
+| --- | --- |
+| `system` | Session initialization metadata. |
+| `stream_event` | Raw provider stream events, emitted when streaming is enabled. |
+| `assistant` | Assistant message after model assembly. |
+| `user` | Tool result message sent back to the model. |
+| `result` | Final success, API error, abort, or max-turn result. |

@@ -1,0 +1,30 @@
+---
+title: Agent Loop
+description: How the SDK turns model responses and tool calls into an agent session.
+---
+
+The agent stores conversation state in memory for the lifetime of the `Agent` instance.
+
+For each prompt, it:
+
+1. Adds the prompt as a user message.
+2. Calls the configured model client.
+3. Emits the assistant response.
+4. Executes any `tool_use` blocks.
+5. Adds `tool_result` blocks as a user message.
+6. Repeats until the assistant returns no tool calls.
+7. Emits a final `result` message.
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  maxTurns: 10,
+});
+
+await agent.prompt("Remember that my project is an SDK.");
+const result = await agent.prompt("What kind of project is this?");
+```
+
+`maxTurns` protects the host application from infinite tool loops. When the limit is reached, the SDK emits a result with `subtype: "error_max_turns"`.

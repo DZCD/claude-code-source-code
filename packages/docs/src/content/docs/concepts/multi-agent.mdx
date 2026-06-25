@@ -1,0 +1,165 @@
+---
+title: Multi-agent
+description: Delegate work from a supervisor agent to named sub-agents.
+---
+
+The SDK supports two multi-agent patterns:
+
+- `createMultiAgent()` for lightweight supervisor/sub-agent delegation.
+- `createTeam()` for mailbox-based team collaboration with longer-lived members.
+
+A sub-agent is a normal `Agent` wrapped as a delegate tool. The supervisor can call that tool, receive the sub-agent result, and continue its own loop.
+
+The team API adds persistent collaboration semantics, but it is still intentionally small: it is not a distributed scheduler or workflow engine.
+
+## Create a sub-agent
+
+```ts
+import {
+  createAgent,
+  createMultiAgent,
+  createSubAgent,
+} from "@npm-while1/claude-agent-sdk";
+
+const researcher = createSubAgent({
+  name: "researcher",
+  description: "Research SDK implementation details",
+  agent: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+});
+```
+
+## Create a supervisor
+
+```ts
+const team = createMultiAgent({
+  supervisor: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  subAgents: [researcher],
+});
+
+const result = await team.prompt("Use the researcher to inspect the SDK design.");
+console.log(result.result);
+```
+
+## How delegation works
+
+`createMultiAgent()` adds one tool to the supervisor for each sub-agent.
+
+| Sub-agent | Supervisor tool |
+| --- | --- |
+| `researcher` | `delegate_researcher` |
+| `code-review` | `delegate_code-review` |
+
+When the supervisor calls a delegate tool, the SDK runs the sub-agent with the delegated task and returns the sub-agent's final result as the tool result.
+
+Use the supervisor's normal `permission` callback if your host wants to approve or deny delegation.
+
+## Team mailbox
+
+Use `createTeam()` when you want named members, inboxes, replies, and work-item context instead of a single delegate call.
+
+```ts
+import {
+  createAgent,
+  createMemoryMailbox,
+  createTeam,
+  teamMember,
+} from "@npm-while1/claude-agent-sdk";
+
+const team = createTeam({
+  name: "engineering",
+  supervisor: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  members: [
+    teamMember({
+      name: "researcher",
+      role: "executor",
+      focus: "Research agent architecture",
+      agent: createAgent({
+        apiKey: process.env.DEEPSEEK_API_KEY,
+        baseURL: "https://api.deepseek.com/anthropic",
+        model: "deepseek-v4-flash",
+      }),
+    }),
+  ],
+  mailbox: createMemoryMailbox(),
+});
+
+await team.prompt("Ask the researcher to inspect the SDK design.");
+```
+
+`createTeam()` injects the same team tools into the supervisor and each member:
+
+| Tool | Purpose |
+| --- | --- |
+| `team_send` | Send an asynchronous message to another member. |
+| `team_inbox` | List mailbox messages. |
+| `team_read` | Read and claim a message. |
+| `team_reply` | Send a final reply and close the original message. |
+| `team_followup` | Send progress without closing the original message. |
+| `team_status` | Summarize mailbox status counts. |
+
+The default mailbox is in memory. For durable local storage, use `createSQLiteMailbox()` with a SQLite-like database:
+
+```ts
+import Database from "better-sqlite3";
+import {
+  createSQLiteMailbox,
+  createTeam,
+} from "@npm-while1/claude-agent-sdk";
+
+const mailbox = createSQLiteMailbox({
+  database: new Database("team-mailbox.db"),
+});
+
+const team = createTeam({
+  name: "engineering",
+  supervisor,
+  members,
+  mailbox,
+});
+```
+
+The SDK does not install a SQLite driver for you. This keeps the package free of native database dependencies and lets hosts choose `better-sqlite3`, Cloudflare D1 wrappers, or another compatible adapter.
+
+Hosts that need distributed execution can provide their own `TeamMailbox` adapter.
+
+## Drain routed work
+
+Team routing is explicit. A pending message belongs to its `to` mailbox and must be handled by that member's agent. The mailbox does not expose a global task pool.
+
+Use `claimNext(mailboxId)` to claim one pending message for a specific member:
+
+```ts
+const message = await team.mailbox.claimNext("engineering::researcher");
+```
+
+Use `team.drain()` to advance already-routed work:
+
+```ts
+const result = await team.drain({
+  maxRounds: 5,
+  maxMessages: 20,
+});
+```
+
+`drain()` iterates members, claims messages from each member's own mailbox, and prompts that member agent. It does not choose a different agent.
+
+Each member must close the loop with one of these tools:
+
+| Tool | Effect |
+| --- | --- |
+| `team_reply` | Sends the final result upstream and marks the original message `done`. |
+| `team_followup` | Sends progress upstream while leaving the original message open. |
+
+If the member agent ends without either tool, `drain()` marks the original message `failed` and sends a diagnostic follow-up to the upstream mailbox.

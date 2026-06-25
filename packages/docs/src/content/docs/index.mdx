@@ -1,0 +1,41 @@
+---
+title: Claude Agent SDK
+description: Build Claude-style agents without depending on the Claude Code CLI runtime.
+template: splash
+hero:
+  tagline: Independent TypeScript SDK for agent loops, tools, permissions, and streaming events.
+  actions:
+    - text: Get started
+      link: /quickstart/
+      icon: right-arrow
+    - text: Public API
+      link: /reference/public-api/
+      icon: document
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What it gives you
+
+<CardGrid>
+  <Card title="Agent loop" icon="setting">
+    Maintains conversation state, calls an Anthropic-compatible model, runs tools, and feeds results back to the model.
+  </Card>
+  <Card title="Custom tools" icon="puzzle">
+    Define tools with Zod schemas, parsed inputs, typed handlers, and model-ready JSON Schema.
+  </Card>
+  <Card title="Permission callbacks" icon="lock">
+    Approve or deny tool calls before execution, including shell and file operations.
+  </Card>
+  <Card title="Stable events" icon="seti:json">
+    Consume `system`, `assistant`, `user`, `stream_event`, and `result` messages.
+  </Card>
+</CardGrid>
+
+## Package
+
+```bash
+npm install @npm-while1/claude-agent-sdk zod
+```
+
+The SDK is intentionally independent from Claude Code. It does not require the Claude Code CLI, Ink UI, session storage, MCP runtime, or app runtime.

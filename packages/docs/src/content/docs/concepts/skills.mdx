@@ -1,0 +1,61 @@
+---
+title: Skills
+description: Reuse instruction bundles without depending on the Claude Code runtime.
+---
+
+Skills are reusable instruction bundles. They help the agent adopt domain-specific behavior for matching prompts.
+
+This SDK supports a lightweight Skill API. It does not require the Claude Code runtime, and it does not load Claude Code plugins.
+
+## Create a skill in code
+
+```ts
+import { createAgent, skill } from "@npm-while1/claude-agent-sdk";
+
+const codeReview = skill({
+  name: "code-review",
+  description: "Review code changes and pull requests",
+  instructions: "Always list bugs and risks before summaries.",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  skills: [codeReview],
+});
+```
+
+## Load a skill from disk
+
+```ts
+import { createAgent, loadSkill } from "@npm-while1/claude-agent-sdk";
+
+const pdf = await loadSkill("./skills/pdf");
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  skills: [pdf],
+});
+```
+
+`loadSkill(path)` expects a `SKILL.md` file:
+
+```md
+---
+name: pdf
+description: Read and inspect PDF documents
+---
+
+Render pages before claiming layout is correct.
+```
+
+## Matching behavior
+
+The agent compares the user's prompt with each skill's `name` and `description`.
+
+When a skill matches, the SDK injects that skill's instructions into the model request for that query. When it does not match, the skill is left out.
+
+This keeps prompts smaller while still allowing applications to register multiple reusable skills.

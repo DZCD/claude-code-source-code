@@ -1,0 +1,118 @@
+---
+title: MCP
+description: Connect MCP server tools to the agent loop.
+---
+
+MCP support lets the SDK expose tools from a Model Context Protocol server as normal agent tools.
+
+The SDK supports stdio MCP servers, remote Streamable HTTP servers, OAuth providers, and a generic `MCPClient` adapter.
+
+## Connect a stdio MCP server
+
+```ts
+import {
+  connectMCPStdioServer,
+  createAgent,
+} from "@npm-while1/claude-agent-sdk";
+
+const mcp = await connectMCPStdioServer(
+  {
+    command: "node",
+    args: ["./mcp-server.js"],
+  },
+  {
+    namePrefix: "docs",
+  },
+);
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: mcp.tools,
+});
+
+try {
+  const result = await agent.prompt("Search the docs for installation steps.");
+  console.log(result.result);
+} finally {
+  await mcp.close();
+}
+```
+
+## Use an existing MCP client
+
+If your application already owns the MCP connection lifecycle, map it into SDK tools:
+
+```ts
+import { createAgent, createMCPTools } from "@npm-while1/claude-agent-sdk";
+
+const tools = await createMCPTools(existingMCPClient, {
+  namePrefix: "repo",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools,
+});
+```
+
+## Tool names
+
+MCP tool names are sanitized before being sent to the model. Use `namePrefix` when connecting multiple MCP servers so tools do not collide.
+
+For example, an MCP tool named `search` with `namePrefix: "docs"` becomes `docs_search`.
+
+## Connect a remote Streamable HTTP server
+
+```ts
+import {
+  connectMCPStreamableHTTPServer,
+  createAgent,
+} from "@npm-while1/claude-agent-sdk";
+
+const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
+  namePrefix: "remote",
+  requestInit: {
+    headers: {
+      "X-Workspace": "demo",
+    },
+  },
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: mcp.tools,
+});
+```
+
+The connection exposes:
+
+| Property | Description |
+| --- | --- |
+| `tools` | SDK tool definitions mapped from the remote MCP server. |
+| `client` | Minimal MCP client adapter. |
+| `close()` | Closes the MCP connection. |
+| `finishAuth(code)` | Completes an OAuth authorization-code flow. |
+| `terminateSession()` | Sends MCP session termination when the server supports it. |
+| `sessionId` | Current Streamable HTTP MCP session ID, when available. |
+
+## OAuth
+
+Pass an official MCP `OAuthClientProvider` when the server requires OAuth:
+
+```ts
+const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
+  authProvider,
+});
+```
+
+If the transport needs user authorization, the official MCP SDK calls `authProvider.redirectToAuthorization(url)`. After the user returns with an authorization code, call:
+
+```ts
+await mcp.finishAuth(code);
+```

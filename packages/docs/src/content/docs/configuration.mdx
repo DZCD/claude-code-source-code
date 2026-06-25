@@ -1,0 +1,50 @@
+---
+title: Configuration
+description: Configure models, providers, turn limits, and request controls.
+---
+
+## DeepSeek
+
+```ts
+import { createAgent } from "@npm-while1/claude-agent-sdk";
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  maxTokens: 4096,
+  maxTurns: 10,
+});
+```
+
+DeepSeek exposes an Anthropic-compatible endpoint, so configure `baseURL` and use a DeepSeek model name.
+
+## Anthropic
+
+Use Anthropic directly by omitting `baseURL` and passing an Anthropic model name.
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+});
+```
+
+## Abort a request
+
+```ts
+const controller = new AbortController();
+
+setTimeout(() => controller.abort(), 5000);
+
+const result = await agent.prompt("Summarize this repository.", {
+  signal: controller.signal,
+});
+```
+
+## Query options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `stream` | `boolean` | `true` | Enables model streaming and `stream_event` SDK messages. |
+| `signal` | `AbortSignal` | `undefined` | Cancels the active model request and tool loop. |

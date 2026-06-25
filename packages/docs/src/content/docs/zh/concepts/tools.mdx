@@ -1,0 +1,46 @@
+---
+title: 工具
+description: 定义自定义工具，并让模型调用你的业务能力。
+---
+
+工具是 Agent 访问外部能力的方式。你可以把数据库查询、HTTP 请求、业务函数、代码执行、搜索等能力包装成工具。
+
+## 定义工具
+
+```ts
+import { createAgent, tool } from "@npm-while1/claude-agent-sdk";
+import { z } from "zod/v4";
+
+const calculator = tool(
+  "calculator",
+  "Evaluate a simple arithmetic expression",
+  z.object({
+    expr: z.string(),
+  }),
+  async input => {
+    return { content: String(Function(`return ${input.expr}`)()) };
+  },
+);
+
+const agent = createAgent({
+  apiKey,
+  model,
+  tools: [calculator],
+});
+```
+
+SDK 会做三件事：
+
+- 把 Zod schema 转成模型需要的 JSON Schema。
+- 在工具执行前解析和校验输入。
+- 把工具返回值封装成 `tool_result` 回填给模型。
+
+## 工具返回值
+
+工具 handler 返回：
+
+```ts
+return { content: "done" };
+```
+
+`content` 可以是字符串，也可以是内容块数组。工具抛错时，SDK 会把错误转成 `is_error: true` 的 `tool_result`，让模型有机会解释或选择其它路径。

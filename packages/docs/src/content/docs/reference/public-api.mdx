@@ -1,0 +1,69 @@
+---
+title: Public API
+description: Stable exports exposed by the SDK package.
+---
+
+## Functions
+
+| Export | Description |
+| --- | --- |
+| `createAgent(options)` | Creates an in-memory `Agent` instance. |
+| `query(params)` | One-shot async generator helper. |
+| `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
+| `skill(options)` | Creates an in-memory skill definition. |
+| `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
+| `createMCPTools(client, options)` | Maps an MCP client into SDK tool definitions. |
+| `connectMCPStdioServer(server, options)` | Connects a stdio MCP server and returns SDK tools plus a close handle. |
+| `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
+| `createSubAgent(options)` | Wraps an `Agent` as a named sub-agent. |
+| `createMultiAgent(options)` | Adds delegate tools to a supervisor agent. |
+| `teamMember(options)` | Creates a named team member with role, focus, and agent. |
+| `createTeam(options)` | Creates a mailbox-based team runtime and injects team tools. |
+| `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
+| `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
+| `createClaudeCodeTools(options)` | Creates opt-in Claude Code-style built-in tools. |
+
+## Agent
+
+```ts
+const agent = createAgent(options);
+
+for await (const message of agent.query(prompt)) {
+  console.log(message);
+}
+
+const result = await agent.prompt(prompt);
+```
+
+## Types
+
+| Export | Description |
+| --- | --- |
+| `SDKMessage` | Union of all emitted SDK events. |
+| `AgentOptions` | Agent construction options. |
+| `ToolDefinition` | Tool shape passed to an agent. |
+| `SkillDefinition` | Reusable instruction bundle passed to an agent. |
+| `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
+| `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
+| `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
+| `SubAgentDefinition` | Named sub-agent wrapper around an `Agent`. |
+| `MultiAgent` | Supervisor/sub-agent delegation wrapper. |
+| `Team` | Mailbox-based team runtime. |
+| `TeamMemberDefinition` | Named team member with role and agent. |
+| `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |
+| `TeamMessage` | Message record with thread and work-item context. |
+| `TeamDrainOptions` | Limits and abort signal for `team.drain()`. |
+| `TeamDrainResult` | Processed, failed, and round counts from `team.drain()`. |
+| `SQLiteDatabaseLike` | Minimal database interface accepted by `createSQLiteMailbox()`. |
+| `SQLiteMailboxOptions` | SQLite mailbox adapter options. |
+| `PermissionDecision` | Allow or deny decision returned by a permission callback. |
+| `ModelClient` | Interface for custom or mocked model clients. |
+
+## Errors
+
+| Error | Description |
+| --- | --- |
+| `APIError` | Provider request or response failure. |
+| `ToolExecutionError` | Tool handler failure. |
+| `MaxTurnsError` | Agent loop reached `maxTurns`. |
+| `AbortError` | Request was aborted. |

@@ -1,0 +1,43 @@
+---
+title: 权限
+description: 在工具执行前由宿主应用做允许或拒绝决策。
+---
+
+权限回调让宿主应用在工具真正执行前做拦截。它适合文件写入、Shell、外部 API、付款、删除数据等敏感操作。
+
+```ts
+const agent = createAgent({
+  apiKey,
+  model,
+  tools: [dangerousTool],
+  permission: async request => {
+    if (request.toolName === "danger") {
+      return {
+        behavior: "deny",
+        message: "Blocked by host policy.",
+      };
+    }
+    return { behavior: "allow" };
+  },
+});
+```
+
+## 拒绝不是崩溃
+
+当回调返回 `deny` 时，SDK 不会直接抛出异常结束整个 agent loop。它会把拒绝原因作为错误 `tool_result` 回给模型。
+
+这样模型可以：
+
+- 告诉用户该操作被策略拒绝。
+- 尝试使用其它允许的工具。
+- 请求用户补充授权。
+
+## 请求内容
+
+权限回调会收到：
+
+| 字段 | 说明 |
+| --- | --- |
+| `toolName` | 模型想调用的工具名。 |
+| `input` | 模型传入的工具参数。 |
+| `toolUseId` | 当前工具调用 id。 |

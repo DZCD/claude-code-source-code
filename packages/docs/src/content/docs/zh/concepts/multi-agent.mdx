@@ -1,0 +1,137 @@
+---
+title: 多 Agent
+description: 使用 sub-agent 委托和 team mailbox 构建多 Agent 协作。
+---
+
+SDK 里有两种多 Agent 模式：
+
+- `createMultiAgent()`：轻量 supervisor/sub-agent 委托。
+- `createTeam()`：带 mailbox 的长期团队协作模型。
+
+这两者都不是完整的分布式调度器。它们提供的是可组合的 SDK 抽象，宿主应用可以在此基础上接入自己的存储、队列和 worker runtime。
+
+## 轻量 sub-agent 委托
+
+sub-agent 本质上还是一个普通 `Agent`，只是被包装成 supervisor 可以调用的工具。
+
+```ts
+import {
+  createAgent,
+  createMultiAgent,
+  createSubAgent,
+} from "@npm-while1/claude-agent-sdk";
+
+const researcher = createSubAgent({
+  name: "researcher",
+  description: "Research SDK implementation details",
+  agent: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+});
+
+const multi = createMultiAgent({
+  supervisor: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  subAgents: [researcher],
+});
+
+const result = await multi.prompt("请让 researcher 检查 SDK 设计。");
+```
+
+supervisor 会得到一个工具，例如 `delegate_researcher`。当模型调用这个工具时，SDK 会运行 researcher agent，并把它的最终结果作为工具结果回填给 supervisor。
+
+## Team mailbox
+
+如果你需要更像团队的协作模型，而不是一次性委托，可以使用 `createTeam()`。
+
+```ts
+import {
+  createAgent,
+  createMemoryMailbox,
+  createTeam,
+  teamMember,
+} from "@npm-while1/claude-agent-sdk";
+
+const team = createTeam({
+  name: "engineering",
+  supervisor: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  members: [
+    teamMember({
+      name: "researcher",
+      role: "executor",
+      focus: "Research agent architecture",
+      agent: createAgent({
+        apiKey: process.env.DEEPSEEK_API_KEY,
+        baseURL: "https://api.deepseek.com/anthropic",
+        model: "deepseek-v4-flash",
+      }),
+    }),
+  ],
+  mailbox: createMemoryMailbox(),
+});
+```
+
+`createTeam()` 会给 supervisor 和每个成员注入同一组团队工具：
+
+| 工具 | 作用 |
+| --- | --- |
+| `team_send` | 给指定成员发送异步消息。 |
+| `team_inbox` | 查看当前 mailbox 里的消息。 |
+| `team_read` | 读取并领取一封消息。 |
+| `team_reply` | 发送最终结果，并把原消息标记为 `done`。 |
+| `team_followup` | 发送阶段性进展，不关闭原消息。 |
+| `team_status` | 查看 mailbox 状态统计。 |
+
+## 持久化 mailbox
+
+默认 `createMemoryMailbox()` 只保存在内存里。需要本地持久化时，可以使用 SQLite adapter：
+
+```ts
+import Database from "better-sqlite3";
+import { createSQLiteMailbox } from "@npm-while1/claude-agent-sdk";
+
+const mailbox = createSQLiteMailbox({
+  database: new Database("team-mailbox.db"),
+});
+```
+
+SDK 不内置 SQLite 驱动。这样可以避免强制安装 native dependency，也方便宿主应用自己选择 `better-sqlite3`、Cloudflare D1 wrapper 或其它兼容实现。
+
+## 显式路由和 claimNext
+
+团队消息不是全局任务池。每条 pending 消息都有明确的 `to` mailbox，必须由对应成员处理。
+
+```ts
+const message = await team.mailbox.claimNext("engineering::researcher");
+```
+
+`claimNext(mailboxId)` 只会领取这个 mailbox 的一条 `pending` 消息，并把它改成 `processing`。它不会重新判断“这个任务该给谁”。
+
+## team.drain()
+
+`team.drain()` 用来推进已经显式路由的任务：
+
+```ts
+const result = await team.drain({
+  maxRounds: 5,
+  maxMessages: 20,
+});
+```
+
+它会遍历团队成员，从每个成员自己的 mailbox 里 claim 消息，然后提示该成员 agent 处理。
+
+成员处理完必须向上级反馈：
+
+- 有最终结果时调用 `team_reply`。
+- 还在处理中时调用 `team_followup`。
+
+如果成员 agent 结束时既没有 `team_reply`，也没有 `team_followup`，runtime 会把原消息标记为 `failed`，并向上级 mailbox 发送一条诊断性 follow-up。这样可以避免任务进入“处理了但没人汇报”的黑洞。

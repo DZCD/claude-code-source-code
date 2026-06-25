@@ -1,0 +1,21 @@
+{
+  "name": "@npm-while1/claude-agent-sdk-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "deploy": "bun run build && wrangler deploy",
+    "cf:typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.0",
+    "astro": "^7.0.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "wrangler": "^4.104.0"
+  }
+}

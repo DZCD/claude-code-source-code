@@ -45,7 +45,9 @@
     "test": "bun test",
     "check:unused": "knip-bun",
     "health": "bun run scripts/health-check.ts",
-    "docs:dev": "npx mintlify dev"
+    "docs:dev": "bun --filter @npm-while1/claude-agent-sdk-docs dev",
+    "docs:build": "bun --filter @npm-while1/claude-agent-sdk-docs build",
+    "docs:deploy": "bun --filter @npm-while1/claude-agent-sdk-docs deploy"
   },
   "dependencies": {},
   "devDependencies": {

@@ -1,0 +1,52 @@
+---
+title: 配置
+description: 配置模型、Provider、轮次限制和请求控制。
+---
+
+## DeepSeek
+
+DeepSeek 提供 Anthropic 兼容接口，所以只需要配置 `baseURL` 并使用 DeepSeek 模型名。
+
+```ts
+import { createAgent } from "@npm-while1/claude-agent-sdk";
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  maxTokens: 4096,
+  maxTurns: 10,
+});
+```
+
+## Anthropic
+
+直接使用 Anthropic 时可以省略 `baseURL`：
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+});
+```
+
+## 中断请求
+
+`AbortSignal` 会中断当前模型请求和后续工具循环：
+
+```ts
+const controller = new AbortController();
+
+setTimeout(() => controller.abort(), 5000);
+
+const result = await agent.prompt("总结这个仓库。", {
+  signal: controller.signal,
+});
+```
+
+## Query options
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `stream` | `boolean` | `true` | 是否启用模型流式调用，并输出 `stream_event` 事件。 |
+| `signal` | `AbortSignal` | `undefined` | 取消当前模型请求和工具循环。 |

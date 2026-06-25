@@ -1,0 +1,38 @@
+---
+title: Built-in Tools
+description: Opt in to Claude Code-style file, search, edit, and shell tools.
+---
+
+Built-in tools are not enabled by default. Use `createClaudeCodeTools()` when your application intentionally wants Claude Code-style workspace access.
+
+```ts
+import {
+  createAgent,
+  createClaudeCodeTools,
+} from "@npm-while1/claude-agent-sdk";
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: createClaudeCodeTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+    bashTimeoutMs: 30_000,
+  }),
+});
+```
+
+## Included tools
+
+| Tool | Capability |
+| --- | --- |
+| `Read` | Read a workspace file, optionally with line offset and limit. |
+| `Write` | Write a file and create parent directories. |
+| `Edit` | Replace text in an existing file. |
+| `LS` | List a directory. |
+| `Glob` | Find files by glob pattern. |
+| `Grep` | Search file contents by regular expression. |
+| `Bash` | Run a shell command with a timeout. |
+
+Always pair file-writing and shell tools with a permission callback in user-facing products.

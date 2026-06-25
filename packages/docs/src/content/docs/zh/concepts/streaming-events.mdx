@@ -1,0 +1,34 @@
+---
+title: 流式事件
+description: SDK query() 输出的事件结构。
+---
+
+`agent.query()` 是一个 async generator，会持续输出 SDK 事件。这样宿主应用可以边运行边更新 UI、日志或调试面板。
+
+```ts
+for await (const message of agent.query("Explain tools.")) {
+  console.log(message.type, message);
+}
+```
+
+## 事件类型
+
+| 类型 | 说明 |
+| --- | --- |
+| `system` | Agent 初始化事件，包含模型、工具列表和 session id。 |
+| `stream_event` | 底层模型流式事件。只有 `stream: true` 时输出。 |
+| `assistant` | 模型返回的 assistant message，可能包含文本或 `tool_use`。 |
+| `user` | SDK 回填给模型的工具结果消息。 |
+| `result` | 本轮 query 的最终结果，成功或错误都会输出。 |
+
+## 非流式请求
+
+如果不需要底层流式事件，可以关闭：
+
+```ts
+const result = await agent.prompt("Give me the final answer.", {
+  stream: false,
+});
+```
+
+关闭后，SDK 仍然会执行 agent loop 和工具调用，只是不再输出 `stream_event`。

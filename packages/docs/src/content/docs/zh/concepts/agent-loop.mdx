@@ -1,0 +1,42 @@
+---
+title: Agent 循环
+description: SDK 如何驱动模型、工具和多轮上下文。
+---
+
+Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具调用和工具结果串成一个稳定的循环。
+
+## 执行流程
+
+一次 `agent.query()` 大致会经历这些步骤：
+
+1. 追加用户消息到内存对话。
+2. 调用 Anthropic 兼容 Messages API。
+3. 如果模型返回普通文本，输出 `result` 并结束。
+4. 如果模型返回 `tool_use`，SDK 找到对应工具并执行。
+5. SDK 把工具结果作为 `tool_result` 回填给模型。
+6. 模型继续推理，直到没有新的工具调用，或达到 `maxTurns`。
+
+## 内存态会话
+
+同一个 `Agent` 实例会在内存里保存 conversation messages：
+
+```ts
+await agent.prompt("我的名字是 Ada。");
+const result = await agent.prompt("我叫什么？");
+```
+
+这个状态只在当前进程和当前实例里存在。持久化 transcript、resume、跨进程 session 不属于第一版核心能力，可以由宿主应用自己实现。
+
+## 轮次限制
+
+`maxTurns` 用来避免模型和工具无限循环：
+
+```ts
+const agent = createAgent({
+  apiKey,
+  model,
+  maxTurns: 8,
+});
+```
+
+达到上限后，SDK 会输出 `error_max_turns` 类型的 `result`。

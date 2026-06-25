@@ -1,0 +1,43 @@
+---
+title: Quickstart
+description: Install the SDK and run a minimal agent.
+---
+
+## Install
+
+```bash
+npm install @npm-while1/claude-agent-sdk zod
+```
+
+## Ask a question
+
+The examples use DeepSeek's Anthropic-compatible endpoint.
+
+```ts
+import { createAgent } from "@npm-while1/claude-agent-sdk";
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+});
+
+for await (const message of agent.query("Say hello in one sentence.")) {
+  console.log(message);
+}
+```
+
+## Return only the final result
+
+```ts
+const result = await agent.prompt("What is 2+2?");
+console.log(result.result);
+```
+
+## Disable streaming
+
+```ts
+const result = await agent.prompt("Write a short haiku.", {
+  stream: false,
+});
+```

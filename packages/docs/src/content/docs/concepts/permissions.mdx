@@ -1,0 +1,30 @@
+---
+title: Permissions
+description: Intercept tool calls before execution.
+---
+
+The permission callback runs before every tool call. Return `allow` to execute the tool, or `deny` to send an error tool result back to the model.
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: createClaudeCodeTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+  permission: async request => {
+    if (request.toolName === "Bash") {
+      return {
+        behavior: "deny",
+        message: "Shell access is disabled for this session.",
+      };
+    }
+
+    return { behavior: "allow" };
+  },
+});
+```
+
+Denied tools do not throw by default. The model receives a `tool_result` with `is_error: true`, so it can explain the limitation or choose another path.

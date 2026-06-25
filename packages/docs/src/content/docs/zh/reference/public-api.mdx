@@ -1,0 +1,69 @@
+---
+title: 公开 API
+description: SDK 暴露的稳定入口和核心类型。
+---
+
+## 函数
+
+| Export | 说明 |
+| --- | --- |
+| `createAgent(options)` | 创建一个内存态 `Agent` 实例。 |
+| `query(params)` | 一次性 async generator helper。 |
+| `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
+| `skill(options)` | 创建内存态 skill。 |
+| `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
+| `createMCPTools(client, options)` | 把 MCP client 映射成 SDK 工具。 |
+| `connectMCPStdioServer(server, options)` | 连接 stdio MCP server，并返回工具和 close handle。 |
+| `connectMCPStreamableHTTPServer(url, options)` | 连接远程 Streamable HTTP MCP server，支持 OAuth。 |
+| `createSubAgent(options)` | 把一个 `Agent` 包装成命名 sub-agent。 |
+| `createMultiAgent(options)` | 给 supervisor agent 添加 sub-agent delegate 工具。 |
+| `teamMember(options)` | 创建团队成员定义。 |
+| `createTeam(options)` | 创建 mailbox-based team runtime，并注入团队工具。 |
+| `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
+| `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
+| `createClaudeCodeTools(options)` | 创建可选的 Claude Code 风格内置工具。 |
+
+## Agent
+
+```ts
+const agent = createAgent(options);
+
+for await (const message of agent.query(prompt)) {
+  console.log(message);
+}
+
+const result = await agent.prompt(prompt);
+```
+
+## 核心类型
+
+| Export | 说明 |
+| --- | --- |
+| `SDKMessage` | SDK 输出事件的 union 类型。 |
+| `AgentOptions` | Agent 构造参数。 |
+| `ToolDefinition` | 传入 Agent 的工具定义。 |
+| `SkillDefinition` | 可复用指令包。 |
+| `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
+| `MCPStdioConnection` | 已连接的 stdio MCP server。 |
+| `MCPStreamableHTTPConnection` | 已连接的远程 MCP server，包含 auth/session helpers。 |
+| `SubAgentDefinition` | 命名 sub-agent wrapper。 |
+| `MultiAgent` | supervisor/sub-agent 委托 wrapper。 |
+| `Team` | mailbox-based team runtime。 |
+| `TeamMemberDefinition` | 带 role 和 agent 的团队成员。 |
+| `TeamMailbox` | 团队消息存储接口，包含成员级 `claimNext()`。 |
+| `TeamMessage` | 带 thread/work item 上下文的消息记录。 |
+| `TeamDrainOptions` | `team.drain()` 的限制和 abort signal。 |
+| `TeamDrainResult` | `team.drain()` 返回的 processed、failed、rounds 统计。 |
+| `SQLiteDatabaseLike` | `createSQLiteMailbox()` 接收的最小 database 接口。 |
+| `SQLiteMailboxOptions` | SQLite mailbox adapter 配置。 |
+| `PermissionDecision` | 权限回调返回的允许或拒绝决策。 |
+| `ModelClient` | 自定义或 mock 模型客户端接口。 |
+
+## 错误类型
+
+| Error | 说明 |
+| --- | --- |
+| `APIError` | Provider 请求或响应失败。 |
+| `ToolExecutionError` | 工具 handler 执行失败。 |
+| `MaxTurnsError` | Agent loop 达到 `maxTurns`。 |
+| `AbortError` | 请求被中断。 |

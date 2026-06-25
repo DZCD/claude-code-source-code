@@ -1,0 +1,41 @@
+---
+title: Tools
+description: Define custom tools with schemas, parsed input, and typed handlers.
+---
+
+Tools are explicit host functions that the model can request.
+
+```ts
+import { createAgent, tool } from "@npm-while1/claude-agent-sdk";
+import { z } from "zod/v4";
+
+const calculator = tool(
+  "calculator",
+  "Evaluate a simple arithmetic expression",
+  z.object({
+    expr: z.string(),
+  }),
+  async input => {
+    return { content: String(Function(`return ${input.expr}`)()) };
+  },
+);
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: [calculator],
+});
+```
+
+The SDK converts Zod schemas to JSON Schema for the model and parses tool input before calling your handler.
+
+## Tool result
+
+```ts
+type ToolResult = {
+  content: string | ContentBlock[];
+};
+```
+
+If a tool handler throws, the SDK returns an error `tool_result` to the model instead of crashing the entire loop.
