@@ -6,7 +6,7 @@ description: 安装 SDK，并运行一个最小 Agent。
 ## 安装
 
 ```bash
-npm install claude-agent-sdk zod
+npm install claude-team-agent-sdk zod
 ```
 
 ## 发起一次提问
@@ -14,7 +14,7 @@ npm install claude-agent-sdk zod
 下面示例使用 DeepSeek 的 Anthropic 兼容接口。你也可以换成 Anthropic 官方 API。
 
 ```ts
-import { createAgent } from "claude-agent-sdk";
+import { createAgent } from "claude-team-agent-sdk";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,

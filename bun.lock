@@ -136,7 +136,7 @@
       "version": "1.0.0",
     },
     "packages/agent-sdk": {
-      "name": "claude-agent-sdk",
+      "name": "claude-team-agent-sdk",
       "version": "0.1.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.80.0",
@@ -160,7 +160,7 @@
       },
     },
     "packages/docs": {
-      "name": "claude-agent-sdk-docs",
+      "name": "claude-team-agent-sdk-docs",
       "version": "0.1.0",
       "dependencies": {
         "@astrojs/starlight": "^0.41.0",
@@ -596,9 +596,9 @@
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "https://registry.npmmirror.com/@nodelib/fs.walk/-/fs.walk-1.2.8.tgz", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
 
-    "claude-agent-sdk": ["claude-agent-sdk@workspace:packages/agent-sdk"],
+    "claude-team-agent-sdk": ["claude-team-agent-sdk@workspace:packages/agent-sdk"],
 
-    "claude-agent-sdk-docs": ["claude-agent-sdk-docs@workspace:packages/docs"],
+    "claude-team-agent-sdk-docs": ["claude-team-agent-sdk-docs@workspace:packages/docs"],
 
     "@npmcli/fs": ["@npmcli/fs@5.0.0", "https://registry.npmmirror.com/@npmcli/fs/-/fs-5.0.0.tgz", { "dependencies": { "semver": "^7.3.5" } }, "sha512-7OsC1gNORBEawOa5+j2pXN9vsicaIOH5cPXxoR6fJOmH6/EXpJB2CajXOu1fPRFun2m1lktEFX11+P89hqO/og=="],
 

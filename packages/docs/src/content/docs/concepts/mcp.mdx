@@ -13,7 +13,7 @@ The SDK supports stdio MCP servers, remote Streamable HTTP servers, OAuth provid
 import {
   connectMCPStdioServer,
   createAgent,
-} from "claude-agent-sdk";
+} from "claude-team-agent-sdk";
 
 const mcp = await connectMCPStdioServer(
   {
@@ -45,7 +45,7 @@ try {
 If your application already owns the MCP connection lifecycle, map it into SDK tools:
 
 ```ts
-import { createAgent, createMCPTools } from "claude-agent-sdk";
+import { createAgent, createMCPTools } from "claude-team-agent-sdk";
 
 const tools = await createMCPTools(existingMCPClient, {
   namePrefix: "repo",
@@ -71,7 +71,7 @@ For example, an MCP tool named `search` with `namePrefix: "docs"` becomes `docs_
 import {
   connectMCPStreamableHTTPServer,
   createAgent,
-} from "claude-agent-sdk";
+} from "claude-team-agent-sdk";
 
 const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
   namePrefix: "remote",

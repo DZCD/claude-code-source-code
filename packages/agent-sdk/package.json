@@ -1,5 +1,5 @@
 {
-  "name": "claude-agent-sdk",
+  "name": "claude-team-agent-sdk",
   "version": "0.1.0",
   "description": "Lightweight Claude agent SDK with custom tools and streaming events",
   "type": "module",

@@ -463,7 +463,7 @@ export async function connectMCPStdioServer(
   options: MCPStdioServerOptions = {},
 ): Promise<MCPStdioConnection> {
   const client = new MCPProtocolClient({
-    name: options.clientName ?? "claude-agent-sdk",
+    name: options.clientName ?? "claude-team-agent-sdk",
     version: options.clientVersion ?? "0.1.0",
   });
   const transport = new StdioClientTransport(server);
@@ -484,7 +484,7 @@ export async function connectMCPStreamableHTTPServer(
   options: MCPStreamableHTTPServerOptions = {},
 ): Promise<MCPStreamableHTTPConnection> {
   const client = new MCPProtocolClient({
-    name: options.clientName ?? "claude-agent-sdk",
+    name: options.clientName ?? "claude-team-agent-sdk",
     version: options.clientVersion ?? "0.1.0",
   });
   const transport = new StreamableHTTPClientTransport(
