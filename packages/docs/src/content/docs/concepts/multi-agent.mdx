@@ -1,11 +1,11 @@
 ---
-title: Multi-agent
+title: Supervisor Delegation
 description: Delegate work from a supervisor agent to named sub-agents.
 ---
 
-The SDK supports two multi-agent patterns:
+The SDK supports two coordination patterns:
 
-- `createMultiAgent()` for lightweight supervisor/sub-agent delegation.
+- `createSupervisor()` for lightweight supervisor/sub-agent delegation.
 - `createTeam()` for mailbox-based team collaboration with longer-lived members.
 
 A sub-agent is a normal `Agent` wrapped as a delegate tool. The supervisor can call that tool, receive the sub-agent result, and continue its own loop.
@@ -17,7 +17,7 @@ The team API adds persistent collaboration semantics, but it is still intentiona
 ```ts
 import {
   createAgent,
-  createMultiAgent,
+  createSupervisor,
   createSubAgent,
 } from "claude-team-agent-sdk";
 
@@ -35,7 +35,7 @@ const researcher = createSubAgent({
 ## Create a supervisor
 
 ```ts
-const team = createMultiAgent({
+const supervisor = createSupervisor({
   supervisor: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
@@ -44,13 +44,13 @@ const team = createMultiAgent({
   subAgents: [researcher],
 });
 
-const result = await team.prompt("Use the researcher to inspect the SDK design.");
+const result = await supervisor.prompt("Use the researcher to inspect the SDK design.");
 console.log(result.result);
 ```
 
 ## How delegation works
 
-`createMultiAgent()` adds one tool to the supervisor for each sub-agent.
+`createSupervisor()` adds one tool to the supervisor for each sub-agent.
 
 | Sub-agent | Supervisor tool |
 | --- | --- |
@@ -60,6 +60,8 @@ console.log(result.result);
 When the supervisor calls a delegate tool, the SDK runs the sub-agent with the delegated task and returns the sub-agent's final result as the tool result.
 
 Use the supervisor's normal `permission` callback if your host wants to approve or deny delegation.
+
+`createMultiAgent()` remains available as a compatibility alias, but new code should prefer `createSupervisor()` so this lightweight delegation layer is not confused with the mailbox-based team API.
 
 ## Team mailbox
 

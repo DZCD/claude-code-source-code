@@ -164,18 +164,24 @@ export type SubAgentDefinition = {
 
 export type SubAgentInput = SubAgentDefinition;
 
-export type MultiAgentOptions = {
+export type SupervisorOptions = {
   supervisor: Agent;
   subAgents: SubAgentDefinition[];
 };
 
-export type MultiAgent = {
+export type Supervisor = {
   supervisor: Agent;
   subAgents: SubAgentDefinition[];
   tools: Array<ToolDefinition<any>>;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<SDKMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
 };
+
+/** @deprecated Use SupervisorOptions instead. */
+export type MultiAgentOptions = SupervisorOptions;
+
+/** @deprecated Use Supervisor instead. */
+export type MultiAgent = Supervisor;
 
 export type TeamMemberRole = "lead" | "executor";
 
@@ -528,7 +534,7 @@ export function createSubAgent(input: SubAgentInput): SubAgentDefinition {
   };
 }
 
-export function createMultiAgent(options: MultiAgentOptions): MultiAgent {
+export function createSupervisor(options: SupervisorOptions): Supervisor {
   const tools = options.subAgents.map(subAgent => subAgentToTool(subAgent));
   options.supervisor.addTools(tools);
   return {
@@ -539,6 +545,9 @@ export function createMultiAgent(options: MultiAgentOptions): MultiAgent {
     prompt: (prompt, queryOptions) => options.supervisor.prompt(prompt, queryOptions),
   };
 }
+
+/** @deprecated Use createSupervisor instead. */
+export const createMultiAgent = createSupervisor;
 
 export function teamMember(input: TeamMemberInput): TeamMemberDefinition {
   if (!input.name.trim()) {

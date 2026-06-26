@@ -5,6 +5,8 @@ description: Define custom tools with schemas, parsed input, and typed handlers.
 
 Tools are explicit host functions that the model can request.
 
+`tool` is exported by the SDK. It is not a global helper, so import it next to `createAgent` before defining custom tools.
+
 ```ts
 import { createAgent, tool } from "claude-team-agent-sdk";
 import { z } from "zod/v4";

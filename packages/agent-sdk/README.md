@@ -202,7 +202,7 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 });
 ```
 
-## Sub-agents and Multi-agent Delegation
+## Supervisor and Sub-agent Delegation
 
 The SDK supports lightweight supervisor/sub-agent delegation. A sub-agent is an
 `Agent` wrapped as a delegate tool. The supervisor can call that tool, receive
@@ -211,7 +211,7 @@ the sub-agent result, and continue its own loop.
 ```ts
 import {
   createAgent,
-  createMultiAgent,
+  createSupervisor,
   createSubAgent,
 } from "claude-team-agent-sdk";
 
@@ -225,7 +225,7 @@ const researcher = createSubAgent({
   }),
 });
 
-const team = createMultiAgent({
+const supervisor = createSupervisor({
   supervisor: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
@@ -234,11 +234,14 @@ const team = createMultiAgent({
   subAgents: [researcher],
 });
 
-const result = await team.prompt("Use the researcher to inspect the SDK design.");
+const result = await supervisor.prompt("Use the researcher to inspect the SDK design.");
 ```
 
 The supervisor receives a tool named `delegate_researcher`. Use the normal
 permission callback on the supervisor if your host wants to approve delegation.
+`createMultiAgent()` remains available as a compatibility alias, but new code
+should use `createSupervisor()` so it is not confused with the mailbox-based
+team API.
 
 ## Team Mailbox Collaboration
 

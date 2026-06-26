@@ -16,7 +16,8 @@ description: Stable exports exposed by the SDK package.
 | `connectMCPStdioServer(server, options)` | Connects a stdio MCP server and returns SDK tools plus a close handle. |
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
 | `createSubAgent(options)` | Wraps an `Agent` as a named sub-agent. |
-| `createMultiAgent(options)` | Adds delegate tools to a supervisor agent. |
+| `createSupervisor(options)` | Adds delegate tools to a supervisor agent. |
+| `createMultiAgent(options)` | Deprecated alias for `createSupervisor(options)`. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a mailbox-based team runtime and injects team tools. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
@@ -47,7 +48,8 @@ const result = await agent.prompt(prompt);
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
 | `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
 | `SubAgentDefinition` | Named sub-agent wrapper around an `Agent`. |
-| `MultiAgent` | Supervisor/sub-agent delegation wrapper. |
+| `Supervisor` | Supervisor/sub-agent delegation wrapper. |
+| `MultiAgent` | Deprecated alias for `Supervisor`. |
 | `Team` | Mailbox-based team runtime. |
 | `TeamMemberDefinition` | Named team member with role and agent. |
 | `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |

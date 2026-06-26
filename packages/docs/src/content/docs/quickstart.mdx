@@ -27,17 +27,54 @@ for await (const message of agent.query("Say hello in one sentence.")) {
 }
 ```
 
+`agent.query()` returns an async iterator of SDK events. Use it when you want to observe the agent as it runs: initialization, assistant messages, streaming deltas, tool calls, tool results, and the final result.
+
 ## Return only the final result
+
+`agent.prompt()` runs the same agent loop and resolves with only the final `result` message. It is the easiest API when your application does not need intermediate events.
 
 ```ts
 const result = await agent.prompt("What is 2+2?");
 console.log(result.result);
 ```
 
-## Disable streaming
+## Choose streaming behavior
+
+`query()` and `prompt()` describe how your app consumes SDK output. The `stream` option controls whether the underlying model request uses streaming.
 
 ```ts
+// Model streaming + SDK event streaming.
+for await (const message of agent.query("Write a short haiku.", {
+  stream: true,
+})) {
+  console.log(message);
+}
+```
+
+```ts
+// Non-streaming model request, while still consuming SDK events.
+for await (const message of agent.query("Write a short haiku.", {
+  stream: false,
+})) {
+  console.log(message);
+}
+```
+
+```ts
+// Non-streaming model request + final result only.
 const result = await agent.prompt("Write a short haiku.", {
   stream: false,
 });
 ```
+
+In short: `query()` is the event-stream API, `prompt()` is the final-result API, and `{ stream: true | false }` controls model streaming.
+
+## Next steps
+
+When you add custom tools, import the `tool` helper explicitly:
+
+```ts
+import { createAgent, tool } from "claude-team-agent-sdk";
+```
+
+Then continue with [Tools](/concepts/tools/).

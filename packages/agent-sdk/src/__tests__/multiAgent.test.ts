@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createAgent,
   createMultiAgent,
+  createSupervisor,
   createSubAgent,
   type ModelClient,
   type SDKMessage,
@@ -29,7 +30,11 @@ async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[
   return messages;
 }
 
-describe("multi-agent", () => {
+describe("supervisor delegation", () => {
+  test("keeps createMultiAgent as a compatibility alias", () => {
+    expect(createMultiAgent).toBe(createSupervisor);
+  });
+
   test("creates delegate tools for sub-agents", async () => {
     const subAgent = createSubAgent({
       name: "researcher",
@@ -45,7 +50,7 @@ describe("multi-agent", () => {
       }),
     });
 
-    const multiAgent = createMultiAgent({
+    const supervisor = createSupervisor({
       supervisor: createAgent({
         apiKey: "test-key",
         model: "claude-test",
@@ -58,7 +63,7 @@ describe("multi-agent", () => {
       subAgents: [subAgent],
     });
 
-    expect(multiAgent.tools.map(tool => tool.name)).toEqual(["delegate_researcher"]);
+    expect(supervisor.tools.map(tool => tool.name)).toEqual(["delegate_researcher"]);
   });
 
   test("supervisor can delegate work to a sub-agent", async () => {
@@ -87,7 +92,7 @@ describe("multi-agent", () => {
         return textAssistant("final answer");
       },
     };
-    const multiAgent = createMultiAgent({
+    const supervisor = createSupervisor({
       supervisor: createAgent({
         apiKey: "test-key",
         model: "claude-test",
@@ -96,7 +101,7 @@ describe("multi-agent", () => {
       subAgents: [subAgent],
     });
 
-    const messages = await collect(multiAgent.query("Use the researcher."));
+    const messages = await collect(supervisor.query("Use the researcher."));
 
     expect(messages.map(message => message.type)).toEqual([
       "system",

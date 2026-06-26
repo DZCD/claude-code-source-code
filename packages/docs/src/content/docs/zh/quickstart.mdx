@@ -31,25 +31,52 @@ for await (const message of agent.query("用一句话介绍你自己。")) {
 
 ## 只拿最终结果
 
-如果你的应用只关心最终回答，可以用 `prompt()`：
+`agent.prompt()` 会跑完同一个 agent loop，然后只返回最后的 `result` 消息。如果你的应用不关心中间事件，这是最简单的 API。
 
 ```ts
 const result = await agent.prompt("2 + 2 等于多少？");
 console.log(result.result);
 ```
 
-## 关闭模型流式输出
+## 选择流式行为
 
-默认会启用模型流式调用，并输出 `stream_event`。如果你只想做普通请求：
+`query()` 和 `prompt()` 描述的是你的应用如何消费 SDK 输出；`stream` 选项控制的是底层模型请求是否使用流式调用。
 
 ```ts
+// 模型流式调用 + SDK 事件流。
+for await (const message of agent.query("写一首短诗。", {
+  stream: true,
+})) {
+  console.log(message);
+}
+```
+
+```ts
+// 模型非流式调用，但仍然逐个消费 SDK 事件。
+for await (const message of agent.query("写一首短诗。", {
+  stream: false,
+})) {
+  console.log(message);
+}
+```
+
+```ts
+// 模型非流式调用 + 只拿最终结果。
 const result = await agent.prompt("写一首短诗。", {
   stream: false,
 });
 ```
 
+简单记：`query()` 是事件流 API，`prompt()` 是最终结果 API，`{ stream: true | false }` 控制模型是否流式输出。
+
 ## 下一步
+
+接入自定义工具时，`tool` 需要显式 import：
+
+```ts
+import { createAgent, tool } from "claude-team-agent-sdk";
+```
 
 - 需要接入自定义函数，阅读 [工具](/zh/concepts/tools/)。
 - 需要文件和 Shell 能力，阅读 [内置工具](/zh/concepts/built-in-tools/)。
-- 需要团队协作，阅读 [多 Agent](/zh/concepts/multi-agent/)。
+- 需要 sub-agent 委托或团队协作，阅读 [Supervisor 委托](/zh/concepts/multi-agent/)。

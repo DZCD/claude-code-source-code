@@ -39,7 +39,7 @@ export default defineConfig({
             { label: "Tools", translations: { "zh-CN": "工具" }, slug: "concepts/tools" },
             { label: "MCP", slug: "concepts/mcp" },
             { label: "Skills", translations: { "zh-CN": "技能" }, slug: "concepts/skills" },
-            { label: "Multi-agent", translations: { "zh-CN": "多 Agent" }, slug: "concepts/multi-agent" },
+            { label: "Supervisor", translations: { "zh-CN": "Supervisor 委托" }, slug: "concepts/multi-agent" },
             { label: "Built-in Tools", translations: { "zh-CN": "内置工具" }, slug: "concepts/built-in-tools" },
             { label: "Permissions", translations: { "zh-CN": "权限" }, slug: "concepts/permissions" },
           ],
