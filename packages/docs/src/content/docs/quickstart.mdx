@@ -6,7 +6,7 @@ description: Install the SDK and run a minimal agent.
 ## Install
 
 ```bash
-npm install @npm-while1/claude-agent-sdk zod
+npm install claude-agent-sdk zod
 ```
 
 ## Ask a question
@@ -14,7 +14,7 @@ npm install @npm-while1/claude-agent-sdk zod
 The examples use DeepSeek's Anthropic-compatible endpoint.
 
 ```ts
-import { createAgent } from "@npm-while1/claude-agent-sdk";
+import { createAgent } from "claude-agent-sdk";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,

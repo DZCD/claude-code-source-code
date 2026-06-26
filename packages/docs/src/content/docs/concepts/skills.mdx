@@ -10,7 +10,7 @@ This SDK supports a lightweight Skill API. It does not require the Claude Code r
 ## Create a skill in code
 
 ```ts
-import { createAgent, skill } from "@npm-while1/claude-agent-sdk";
+import { createAgent, skill } from "claude-agent-sdk";
 
 const codeReview = skill({
   name: "code-review",
@@ -29,7 +29,7 @@ const agent = createAgent({
 ## Load a skill from disk
 
 ```ts
-import { createAgent, loadSkill } from "@npm-while1/claude-agent-sdk";
+import { createAgent, loadSkill } from "claude-agent-sdk";
 
 const pdf = await loadSkill("./skills/pdf");
 

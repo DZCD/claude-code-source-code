@@ -9,7 +9,7 @@ custom tools, permission callbacks, and stable SDK-style events.
 ## Install
 
 ```bash
-npm install @npm-while1/claude-agent-sdk zod
+npm install claude-agent-sdk zod
 ```
 
 ## Minimal Usage
@@ -17,7 +17,7 @@ npm install @npm-while1/claude-agent-sdk zod
 The examples use DeepSeek's Anthropic-compatible endpoint.
 
 ```ts
-import { createAgent } from "@npm-while1/claude-agent-sdk";
+import { createAgent } from "claude-agent-sdk";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -52,7 +52,7 @@ const agent = createAgent({
 ## Custom Tool
 
 ```ts
-import { createAgent, tool } from "@npm-while1/claude-agent-sdk";
+import { createAgent, tool } from "claude-agent-sdk";
 import { z } from "zod/v4";
 
 const agent = createAgent({
@@ -100,7 +100,7 @@ runtime plugins: the SDK reads skill instructions and injects matching skills
 into the model request, but it does not depend on the Claude Code runtime.
 
 ```ts
-import { createAgent, loadSkill, skill } from "@npm-while1/claude-agent-sdk";
+import { createAgent, loadSkill, skill } from "claude-agent-sdk";
 
 const codeReview = skill({
   name: "code-review",
@@ -139,7 +139,7 @@ generic `MCPClient` adapter.
 import {
   connectMCPStdioServer,
   createAgent,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const mcp = await connectMCPStdioServer(
   {
@@ -175,7 +175,7 @@ Connect a remote Streamable HTTP MCP server:
 import {
   connectMCPStreamableHTTPServer,
   createAgent,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
   namePrefix: "remote",
@@ -213,7 +213,7 @@ import {
   createAgent,
   createMultiAgent,
   createSubAgent,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const researcher = createSubAgent({
   name: "researcher",
@@ -251,7 +251,7 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const team = createTeam({
   name: "engineering",
@@ -289,7 +289,7 @@ import Database from "better-sqlite3";
 import {
   createSQLiteMailbox,
   createTeam,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
@@ -344,7 +344,7 @@ The SDK includes an opt-in set of Claude Code-style tools:
 - `Bash`
 
 ```ts
-import { createAgent, createClaudeCodeTools } from "@npm-while1/claude-agent-sdk";
+import { createAgent, createClaudeCodeTools } from "claude-agent-sdk";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,

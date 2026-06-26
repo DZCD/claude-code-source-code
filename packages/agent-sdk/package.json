@@ -1,5 +1,5 @@
 {
-  "name": "@npm-while1/claude-agent-sdk",
+  "name": "claude-agent-sdk",
   "version": "0.1.0",
   "description": "Lightweight Claude agent SDK with custom tools and streaming events",
   "type": "module",

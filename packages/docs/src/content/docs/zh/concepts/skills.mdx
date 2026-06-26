@@ -8,7 +8,7 @@ Skill 是一段可复用的说明文档。它比 Claude Code plugin 更轻：SDK
 ## 内存中定义 skill
 
 ```ts
-import { skill } from "@npm-while1/claude-agent-sdk";
+import { skill } from "claude-agent-sdk";
 
 const codeReview = skill({
   name: "code-review",
@@ -20,7 +20,7 @@ const codeReview = skill({
 ## 从 SKILL.md 加载
 
 ```ts
-import { loadSkill } from "@npm-while1/claude-agent-sdk";
+import { loadSkill } from "claude-agent-sdk";
 
 const pdf = await loadSkill("./skills/pdf");
 ```

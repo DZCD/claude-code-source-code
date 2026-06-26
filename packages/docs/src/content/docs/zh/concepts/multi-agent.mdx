@@ -19,7 +19,7 @@ import {
   createAgent,
   createMultiAgent,
   createSubAgent,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const researcher = createSubAgent({
   name: "researcher",
@@ -55,7 +55,7 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
-} from "@npm-while1/claude-agent-sdk";
+} from "claude-agent-sdk";
 
 const team = createTeam({
   name: "engineering",
@@ -97,7 +97,7 @@ const team = createTeam({
 
 ```ts
 import Database from "better-sqlite3";
-import { createSQLiteMailbox } from "@npm-while1/claude-agent-sdk";
+import { createSQLiteMailbox } from "claude-agent-sdk";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
