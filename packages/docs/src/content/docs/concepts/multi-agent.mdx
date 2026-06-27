@@ -1,14 +1,16 @@
 ---
-title: Supervisor Delegation
-description: Delegate work from a supervisor agent to named sub-agents.
+title: Team
+description: Build coordination with supervisor delegation and mailbox-based teams.
 ---
 
-The SDK supports two coordination patterns:
+The SDK supports two team coordination patterns:
 
 - `createSupervisor()` for lightweight supervisor/sub-agent delegation.
 - `createTeam()` for mailbox-based team collaboration with longer-lived members.
 
-A sub-agent is a normal `Agent` wrapped as a delegate tool. The supervisor can call that tool, receive the sub-agent result, and continue its own loop.
+`Agent`, `Supervisor`, and `Team` all satisfy the same `AgentLike` shape: they expose `query()` and `prompt()`. From the outside, a team can look like one agent; inside, it can contain a whole organization.
+
+A sub-agent is an `AgentLike` wrapped as a delegate tool. The supervisor can call that tool, receive the sub-agent result, and continue its own loop.
 
 The team API adds persistent collaboration semantics, but it is still intentionally small: it is not a distributed scheduler or workflow engine.
 
@@ -63,7 +65,7 @@ Use the supervisor's normal `permission` callback if your host wants to approve 
 
 `createMultiAgent()` remains available as a compatibility alias, but new code should prefer `createSupervisor()` so this lightweight delegation layer is not confused with the mailbox-based team API.
 
-## Team mailbox
+## Mailbox team
 
 Use `createTeam()` when you want named members, inboxes, replies, and work-item context instead of a single delegate call.
 
@@ -135,6 +137,36 @@ const team = createTeam({
 The SDK does not install a SQLite driver for you. This keeps the package free of native database dependencies and lets hosts choose `better-sqlite3`, Cloudflare D1 wrappers, or another compatible adapter.
 
 Hosts that need distributed execution can provide their own `TeamMailbox` adapter.
+
+## Nested teams
+
+Because `teamMember().agent` accepts any `AgentLike`, a team can be a member of another team. This is how you model CEO -> Head Team -> Executor Agent without hard-coding that hierarchy into the SDK.
+
+```ts
+const engineeringTeam = createTeam({
+  name: "engineering",
+  supervisor: engineeringHeadAgent,
+  members: [
+    teamMember({ name: "backend", role: "executor", agent: backendAgent }),
+    teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
+  ],
+});
+
+const companyTeam = createTeam({
+  name: "company",
+  supervisor: ceoAgent,
+  members: [
+    teamMember({
+      name: "engineering",
+      role: "head",
+      focus: "Own engineering delivery",
+      agent: engineeringTeam,
+    }),
+  ],
+});
+```
+
+The CEO sees `engineeringTeam` as one member. The engineering team can internally route work to backend or frontend.
 
 ## Drain routed work
 

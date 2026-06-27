@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   createAgent,
+  createMemoryMailbox,
   createMultiAgent,
   createSupervisor,
   createSubAgent,
+  createTeam,
+  teamMember,
   type ModelClient,
   type SDKMessage,
 } from "../index.js";
@@ -118,5 +121,60 @@ describe("supervisor delegation", () => {
       type: "result",
       result: "final answer",
     });
+  });
+
+  test("supervisor can delegate work to a team sub-agent", async () => {
+    const team = createTeam({
+      name: "engineering",
+      supervisor: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: { async createMessage() { return textAssistant("team answer"); } },
+      }),
+      members: [
+        teamMember({
+          name: "researcher",
+          role: "executor",
+          agent: createAgent({
+            apiKey: "test-key",
+            model: "claude-test",
+            modelClient: { async createMessage() { return textAssistant("researcher idle"); } },
+          }),
+        }),
+      ],
+      mailbox: createMemoryMailbox(),
+    });
+    const subAgent = createSubAgent({
+      name: "engineering",
+      description: "Engineering team",
+      agent: team,
+    });
+    let supervisorCalls = 0;
+    const supervisor = createSupervisor({
+      supervisor: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage() {
+            supervisorCalls++;
+            if (supervisorCalls === 1) {
+              return toolUseAssistant("toolu_1", "delegate_engineering", {
+                task: "Handle engineering work",
+              });
+            }
+            return textAssistant("done");
+          },
+        },
+      }),
+      subAgents: [subAgent],
+    });
+
+    const messages = await collect(supervisor.query("Use engineering."));
+
+    expect(messages[2]).toMatchObject({
+      type: "user",
+      tool_use_result: "team answer",
+    });
+    expect(messages.at(-1)).toMatchObject({ type: "result", result: "done" });
   });
 });

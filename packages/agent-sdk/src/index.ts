@@ -38,6 +38,15 @@ export type ToolResultBlock = {
 };
 export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
 
+export type AgentLike = {
+  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<SDKMessage>;
+  prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+};
+
+type ToolCapableAgentLike = AgentLike & {
+  addTools(tools: Array<ToolDefinition<any>>): void;
+};
+
 export type ModelMessage = {
   role: "user" | "assistant";
   content: string | ContentBlock[];
@@ -159,7 +168,7 @@ export type MCPStreamableHTTPConnection = MCPStdioConnection & {
 export type SubAgentDefinition = {
   name: string;
   description: string;
-  agent: Agent;
+  agent: AgentLike;
 };
 
 export type SubAgentInput = SubAgentDefinition;
@@ -183,13 +192,13 @@ export type MultiAgentOptions = SupervisorOptions;
 /** @deprecated Use Supervisor instead. */
 export type MultiAgent = Supervisor;
 
-export type TeamMemberRole = "lead" | "executor";
+export type TeamMemberRole = "lead" | "head" | "executor";
 
 export type TeamMemberDefinition = {
   name: string;
   role: TeamMemberRole;
   focus?: string;
-  agent: Agent;
+  agent: AgentLike;
   mailboxId?: string;
   workspace?: string;
 };
@@ -754,8 +763,12 @@ export function createTeam(options: TeamOptions): Team {
       ownerMailboxId: member.mailboxId ?? teamMailboxId(name, member.name),
       resolveMailbox,
     });
-    member.agent.addTools(tools);
-    memberTools[member.name] = tools;
+    if (isToolCapableAgentLike(member.agent)) {
+      member.agent.addTools(tools);
+      memberTools[member.name] = tools;
+    } else {
+      memberTools[member.name] = [];
+    }
   }
 
   return {
@@ -1349,6 +1362,10 @@ function parseWithSchema(schema: unknown, input: unknown): unknown {
   return input;
 }
 
+function isToolCapableAgentLike(agent: AgentLike): agent is ToolCapableAgentLike {
+  return "addTools" in agent && typeof agent.addTools === "function";
+}
+
 function schemaToJSONSchema(schema: unknown): Record<string, unknown> {
   if (schema && typeof schema === "object" && "parse" in schema) {
     return toJSONSchema(schema as never) as Record<string, unknown>;
@@ -1592,13 +1609,21 @@ async function drainTeam(input: {
       processed++;
 
       try {
+        const mustUseTeamTools = isToolCapableAgentLike(member.agent);
         const result = await member.agent.prompt(renderTeamTaskPrompt(member, message), {
           signal: input.options.signal,
         });
         const current = await input.mailbox.get(message.id);
-        if (result.is_error || current?.status === "processing") {
+        if (result.is_error) {
           failed++;
           await failUnclosedTeamMessage(input.mailbox, message, mailboxId, result.result || result.error?.message);
+        } else if (current?.status === "processing") {
+          if (mustUseTeamTools) {
+            failed++;
+            await failUnclosedTeamMessage(input.mailbox, message, mailboxId, result.result || result.error?.message);
+          } else {
+            await completeTeamMessageFromResult(input.mailbox, message, mailboxId, result.result);
+          }
         }
       } catch (error) {
         failed++;
@@ -1613,6 +1638,19 @@ async function drainTeam(input: {
 }
 
 function renderTeamTaskPrompt(member: TeamMemberDefinition, message: TeamMessage): string {
+  const canUseTeamTools = isToolCapableAgentLike(member.agent);
+  const closeLoopInstructions = canUseTeamTools
+    ? [
+        "You must close the loop through team tools:",
+        `- Call team_reply(message_id="${message.id}", content="...") when you have the final result.`,
+        `- Call team_followup(message_id="${message.id}", content="...") if you need to report progress or ask a question.`,
+        "- Do not finish with only plain assistant text.",
+      ]
+    : [
+        "Return your final result as the assistant response.",
+        "The parent team will record that result as your upstream reply.",
+      ];
+
   return [
     "You are processing a team mailbox message assigned specifically to you.",
     "",
@@ -1627,14 +1665,29 @@ function renderTeamTaskPrompt(member: TeamMemberDefinition, message: TeamMessage
     `work_item: ${message.workItemId ?? ""}`,
     `work_item_role: ${message.workItemRole ?? ""}`,
     "",
-    "You must close the loop through team tools:",
-    `- Call team_reply(message_id="${message.id}", content="...") when you have the final result.`,
-    `- Call team_followup(message_id="${message.id}", content="...") if you need to report progress or ask a question.`,
-    "- Do not finish with only plain assistant text.",
+    ...closeLoopInstructions,
     "",
     "--- message content ---",
     message.content,
   ].join("\n");
+}
+
+async function completeTeamMessageFromResult(
+  mailbox: TeamMailbox,
+  message: TeamMessage,
+  ownerMailboxId: string,
+  content: string,
+): Promise<void> {
+  const current = await mailbox.get(message.id);
+  if (!current || current.status !== "processing") return;
+  await mailbox.updateStatus(message.id, "done");
+  await mailbox.send(ownerMailboxId, message.from, content, {
+    threadId: message.threadId,
+    parentMessageId: message.id,
+    workItemId: message.workItemId,
+    upstreamMessageId: message.upstreamMessageId,
+    workItemRole: "upstream_report",
+  });
 }
 
 async function failUnclosedTeamMessage(

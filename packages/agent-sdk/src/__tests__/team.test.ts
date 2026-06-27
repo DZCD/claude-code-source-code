@@ -266,4 +266,50 @@ describe("team", () => {
     });
     expect(supervisorInbox[0]?.content).toContain("ended without team_reply or team_followup");
   });
+
+  test("team can be nested as a member agent of another team", async () => {
+    const companyMailbox = createMemoryMailbox();
+    const engineeringTeam = createTeam({
+      name: "engineering",
+      supervisor: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: { async createMessage() { return textAssistant("engineering team handled it"); } },
+      }),
+      members: [],
+      mailbox: createMemoryMailbox(),
+    });
+    const companyTeam = createTeam({
+      name: "company",
+      supervisor: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: { async createMessage() { return textAssistant("ceo idle"); } },
+      }),
+      members: [
+        teamMember({
+          name: "engineering",
+          role: "head",
+          focus: "Own engineering work",
+          agent: engineeringTeam,
+        }),
+      ],
+      mailbox: companyMailbox,
+    });
+    const sent = await companyTeam.send("manager", "engineering", "Handle this through the engineering team.");
+
+    const result = await companyTeam.drain();
+    const original = await companyMailbox.get(sent.id);
+    const supervisorInbox = await companyMailbox.inbox("manager");
+
+    expect(companyTeam.memberTools.engineering).toEqual([]);
+    expect(result).toMatchObject({ processed: 1, failed: 0 });
+    expect(original?.status).toBe("done");
+    expect(supervisorInbox[0]).toMatchObject({
+      from: "company::engineering",
+      to: "manager",
+      content: "engineering team handled it",
+      workItemRole: "upstream_report",
+    });
+  });
 });

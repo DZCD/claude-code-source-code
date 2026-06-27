@@ -41,17 +41,18 @@ const result = await agent.prompt(prompt);
 | Export | Description |
 | --- | --- |
 | `SDKMessage` | Union of all emitted SDK events. |
+| `AgentLike` | Minimal callable interface implemented by `Agent`, `Supervisor`, and `Team`. |
 | `AgentOptions` | Agent construction options. |
 | `ToolDefinition` | Tool shape passed to an agent. |
 | `SkillDefinition` | Reusable instruction bundle passed to an agent. |
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
 | `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
-| `SubAgentDefinition` | Named sub-agent wrapper around an `Agent`. |
+| `SubAgentDefinition` | Named sub-agent wrapper around an `AgentLike`. |
 | `Supervisor` | Supervisor/sub-agent delegation wrapper. |
 | `MultiAgent` | Deprecated alias for `Supervisor`. |
 | `Team` | Mailbox-based team runtime. |
-| `TeamMemberDefinition` | Named team member with role and agent. |
+| `TeamMemberDefinition` | Named team member with role and `AgentLike`. |
 | `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |
 | `TeamMessage` | Message record with thread and work-item context. |
 | `TeamDrainOptions` | Limits and abort signal for `team.drain()`. |

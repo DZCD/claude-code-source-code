@@ -1,12 +1,14 @@
 ---
-title: Supervisor 委托
-description: 使用 supervisor/sub-agent 委托和 team mailbox 构建协作。
+title: Team 团队
+description: 使用 supervisor/sub-agent 委托和 mailbox team 构建团队协作。
 ---
 
-SDK 里有两种协作模式：
+SDK 里有两种团队协作模式：
 
 - `createSupervisor()`：轻量 supervisor/sub-agent 委托。
 - `createTeam()`：带 mailbox 的长期团队协作模型。
+
+`Agent`、`Supervisor` 和 `Team` 都满足同一个 `AgentLike` 形状：它们都暴露 `query()` 和 `prompt()`。从外部看，一个团队可以像一个 agent；从内部看，它可以包含一整个组织。
 
 这两者都不是完整的分布式调度器。它们提供的是可组合的 SDK 抽象，宿主应用可以在此基础上接入自己的存储、队列和 worker runtime。
 
@@ -47,7 +49,7 @@ supervisor 会得到一个工具，例如 `delegate_researcher`。当模型调�
 
 `createMultiAgent()` 仍然保留为兼容 alias，但新代码建议使用 `createSupervisor()`，这样不会和带 mailbox 的 `createTeam()` 团队协作模型混淆。
 
-## Team mailbox
+## Mailbox team
 
 如果你需要更像团队的协作模型，而不是一次性委托，可以使用 `createTeam()`。
 
@@ -107,6 +109,36 @@ const mailbox = createSQLiteMailbox({
 ```
 
 SDK 不内置 SQLite 驱动。这样可以避免强制安装 native dependency，也方便宿主应用自己选择 `better-sqlite3`、Cloudflare D1 wrapper 或其它兼容实现。
+
+## 嵌套团队
+
+因为 `teamMember().agent` 接受任意 `AgentLike`，一个 `Team` 可以成为另一个 `Team` 的成员。这个模式可以表达 CEO -> Head Team -> Executor Agent，而不需要把层级写死在 SDK 里。
+
+```ts
+const engineeringTeam = createTeam({
+  name: "engineering",
+  supervisor: engineeringHeadAgent,
+  members: [
+    teamMember({ name: "backend", role: "executor", agent: backendAgent }),
+    teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
+  ],
+});
+
+const companyTeam = createTeam({
+  name: "company",
+  supervisor: ceoAgent,
+  members: [
+    teamMember({
+      name: "engineering",
+      role: "head",
+      focus: "Own engineering delivery",
+      agent: engineeringTeam,
+    }),
+  ],
+});
+```
+
+CEO 看到的是一个 `engineeringTeam` 成员；engineering team 内部可以继续把工作路由给 backend 或 frontend。
 
 ## 显式路由和 claimNext
 

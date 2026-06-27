@@ -243,6 +243,20 @@ permission callback on the supervisor if your host wants to approve delegation.
 should use `createSupervisor()` so it is not confused with the mailbox-based
 team API.
 
+## AgentLike Composition
+
+`Agent`, `Supervisor`, and `Team` all satisfy the same `AgentLike` shape:
+
+```ts
+type AgentLike = {
+  query(prompt, options?): AsyncGenerator<SDKMessage>;
+  prompt(prompt, options?): Promise<SDKResultMessage>;
+};
+```
+
+That means a team can be used anywhere a callable agent is expected. From the
+outside, a team is an agent; inside, it can contain a whole organization.
+
 ## Team Mailbox Collaboration
 
 Use `createTeam()` when you want longer-lived team members that coordinate
@@ -308,6 +322,38 @@ const team = createTeam({
 
 Hosts can also provide their own `TeamMailbox` adapter for Redis, Cloudflare D1,
 Durable Objects, or another queue/storage backend.
+
+### Nested teams
+
+Because `teamMember().agent` accepts any `AgentLike`, a `Team` can be a member
+of another `Team`:
+
+```ts
+const engineeringTeam = createTeam({
+  name: "engineering",
+  supervisor: engineeringHeadAgent,
+  members: [
+    teamMember({ name: "backend", role: "executor", agent: backendAgent }),
+    teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
+  ],
+});
+
+const companyTeam = createTeam({
+  name: "company",
+  supervisor: ceoAgent,
+  members: [
+    teamMember({
+      name: "engineering",
+      role: "head",
+      focus: "Own engineering delivery",
+      agent: engineeringTeam,
+    }),
+  ],
+});
+```
+
+Use this pattern to model CEO -> Head Team -> Executor Agent without hard-coding
+that hierarchy into the SDK.
 
 ### Team runtime drain
 
