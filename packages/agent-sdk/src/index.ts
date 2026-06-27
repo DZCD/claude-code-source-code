@@ -43,6 +43,39 @@ export type AgentLike = {
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
 };
 
+export type DelegateWaitMode = "result" | "accepted";
+
+export type AgentRuntimeSource = {
+  kind: "root" | "team_member" | "agent";
+  name?: string;
+  team?: string;
+  member?: string;
+  mailbox?: string;
+};
+
+export type AgentRuntimeDelegateInput = {
+  name: string;
+  description?: string;
+  agent: AgentLike;
+  task: string;
+  wait?: DelegateWaitMode;
+  targetMailboxId?: string;
+};
+
+export type AgentRuntimeDelegateResult = {
+  status: "completed" | "accepted";
+  content: string;
+  request: TeamMessage;
+  reply?: TeamMessage;
+  result?: SDKResultMessage;
+};
+
+export type AgentRuntimeContext = {
+  source: AgentRuntimeSource;
+  delegate(input: AgentRuntimeDelegateInput): Promise<AgentRuntimeDelegateResult>;
+  emit(message: TeamRunnerMessage): void;
+};
+
 type ToolCapableAgentLike = AgentLike & {
   addTools(tools: Array<ToolDefinition<any>>): void;
 };
@@ -84,7 +117,7 @@ export type ToolResult = {
 
 export type ToolHandler<TInput = unknown> = (
   input: TInput,
-  context: { signal?: AbortSignal; toolUseId: string },
+  context: { signal?: AbortSignal; toolUseId: string; runtime?: AgentRuntimeContext },
 ) => Promise<ToolResult> | ToolResult;
 
 export type ToolDefinition<TInput = unknown> = {
@@ -297,6 +330,21 @@ export type TeamDrainResult = {
   rounds: number;
 };
 
+export type TeamRunnerOptions = {
+  team?: Team;
+  root?: AgentLike;
+  mailbox?: TeamMailbox;
+  source?: AgentRuntimeSource;
+  maxDelegateDepth?: number;
+};
+
+export type TeamRunner = {
+  root: AgentLike;
+  mailbox: TeamMailbox;
+  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
+  prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+};
+
 export type PermissionRequest = {
   toolName: string;
   input: Record<string, unknown>;
@@ -329,6 +377,7 @@ export type ClaudeCodeToolsOptions = {
 export type QueryOptions = {
   stream?: boolean;
   signal?: AbortSignal;
+  runtime?: AgentRuntimeContext;
 };
 
 export type SDKSystemInitMessage = {
@@ -376,6 +425,42 @@ export type SDKMessage =
   | SDKUserMessage
   | SDKResultMessage;
 
+export type TeamRunnerSource = AgentRuntimeSource;
+
+export type TeamRunnerTeamMessage = {
+  type: "team_message";
+  subtype: "sent" | "claimed" | "replied" | "followup" | "done" | "failed";
+  source: TeamRunnerSource;
+  mailbox: string;
+  message: TeamMessage;
+};
+
+export type TeamRunnerAgentMessage = {
+  type: "agent_message";
+  source: TeamRunnerSource;
+  message: SDKMessage;
+};
+
+export type TeamRunnerAgentLifecycleMessage = {
+  type: "team_agent";
+  subtype: "started" | "finished";
+  source: TeamRunnerSource;
+};
+
+export type TeamRunnerStreamEventMessage = {
+  type: "stream_event";
+  source: TeamRunnerSource;
+  event: Record<string, unknown>;
+  session_id: string;
+};
+
+export type TeamRunnerMessage =
+  | SDKMessage
+  | TeamRunnerTeamMessage
+  | TeamRunnerAgentMessage
+  | TeamRunnerAgentLifecycleMessage
+  | TeamRunnerStreamEventMessage;
+
 export class AgentSDKError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message);
@@ -405,6 +490,41 @@ export function tool<TSchema>(
     },
     handler,
   };
+}
+
+export type DelegateToolOptions = {
+  wait?: DelegateWaitMode;
+  targetMailboxId?: string;
+};
+
+export function delegateTool(
+  name: string,
+  description: string,
+  agent: AgentLike,
+  options: DelegateToolOptions = {},
+): ToolDefinition<{ task: string }> {
+  const toolName = sanitizeToolName(name);
+  return tool(
+    toolName,
+    description,
+    z.object({
+      task: z.string(),
+    }),
+    async (input, context) => {
+      if (!context.runtime) {
+        throw new Error(`delegateTool("${toolName}") requires an AgentRuntime. Use createTeamRunner().query() or createTeamRunner().prompt().`);
+      }
+      const result = await context.runtime.delegate({
+        name: toolName,
+        description,
+        agent,
+        task: input.task,
+        wait: options.wait,
+        targetMailboxId: options.targetMailboxId,
+      });
+      return { content: result.content };
+    },
+  );
 }
 
 export function createAgent(options: AgentOptions): Agent {
@@ -791,6 +911,82 @@ export function createTeam(options: TeamOptions): Team {
   };
 }
 
+export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
+  const root = options.root ?? options.team;
+  if (!root) {
+    throw new Error("createTeamRunner requires either team or root");
+  }
+  const mailbox = options.mailbox ?? options.team?.mailbox ?? createMemoryMailbox();
+  const source = options.source ?? {
+    kind: "root" as const,
+    name: options.team?.name ?? "root",
+    mailbox: "manager",
+  };
+  const maxDelegateDepth = options.maxDelegateDepth ?? 8;
+
+  return {
+    root,
+    mailbox,
+    async *query(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): AsyncGenerator<TeamRunnerMessage> {
+      const queue = new AsyncMessageQueue<TeamRunnerMessage>();
+      const runtime = createTeamRunnerRuntime({
+        mailbox,
+        source,
+        emit: message => queue.push(message),
+        maxDelegateDepth,
+        depth: 0,
+        queryOptions,
+      });
+      const iterator = root.query(prompt, {
+        ...queryOptions,
+        runtime,
+      });
+
+      let rootDone = false;
+      let rootNext = iterator.next().then(value => ({ kind: "root" as const, value }));
+      let queueNext = queue.next().then(value => ({ kind: "queue" as const, value }));
+
+      while (!rootDone) {
+        const next = await Promise.race([rootNext, queueNext]);
+        if (next.kind === "queue") {
+          if (!next.value.done) {
+            yield next.value.value;
+          }
+          queueNext = queue.next().then(value => ({ kind: "queue" as const, value }));
+          continue;
+        }
+
+        if (next.value.done) {
+          rootDone = true;
+          queue.close();
+          continue;
+        }
+
+        yield next.value.value;
+        rootNext = iterator.next().then(value => ({ kind: "root" as const, value }));
+      }
+
+      while (true) {
+        const next = await queue.next();
+        if (next.done) break;
+        yield next.value;
+      }
+    },
+    async prompt(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): Promise<SDKResultMessage> {
+      let finalResult: SDKResultMessage | undefined;
+      for await (const message of this.query(prompt, queryOptions)) {
+        if (message.type === "result") {
+          finalResult = message;
+        }
+      }
+      if (!finalResult) {
+        throw new Error("Team runner query completed without a result message");
+      }
+      return finalResult;
+    },
+  };
+}
+
 export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Array<ToolDefinition<any>> {
   const roots = normalizeAllowedDirectories(options);
   const cwd = roots.cwd;
@@ -1039,7 +1235,7 @@ export class Agent {
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
       for (const block of toolUseBlocks) {
-        const result = await this.runTool(block, options.signal);
+        const result = await this.runTool(block, options.signal, options.runtime);
         if (result.error && !firstToolError) {
           firstToolError = result.error;
         }
@@ -1144,6 +1340,7 @@ export class Agent {
   private async runTool(
     block: ToolUseBlock,
     signal: AbortSignal | undefined,
+    runtime: AgentRuntimeContext | undefined,
   ): Promise<{ block: ToolResultBlock; error?: Error }> {
     const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
     if (!definition) {
@@ -1178,6 +1375,7 @@ export class Agent {
       const output = await definition.handler(parsed, {
         signal,
         toolUseId: block.id,
+        runtime,
       });
       return {
         block: {
@@ -1451,6 +1649,231 @@ function escapeXmlAttribute(value: string): string {
 function sanitizeToolName(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
   return sanitized || "mcp_tool";
+}
+
+class AsyncMessageQueue<T> {
+  private readonly values: T[] = [];
+  private readonly resolvers: Array<(value: IteratorResult<T>) => void> = [];
+  private closed = false;
+
+  push(value: T): void {
+    if (this.closed) return;
+    const resolver = this.resolvers.shift();
+    if (resolver) {
+      resolver({ value, done: false });
+      return;
+    }
+    this.values.push(value);
+  }
+
+  close(): void {
+    this.closed = true;
+    while (this.resolvers.length > 0) {
+      this.resolvers.shift()?.({ value: undefined, done: true });
+    }
+  }
+
+  next(): Promise<IteratorResult<T>> {
+    const value = this.values.shift();
+    if (value) {
+      return Promise.resolve({ value, done: false });
+    }
+    if (this.closed) {
+      return Promise.resolve({ value: undefined, done: true });
+    }
+    return new Promise(resolve => {
+      this.resolvers.push(resolve);
+    });
+  }
+}
+
+function createTeamRunnerRuntime(input: {
+  mailbox: TeamMailbox;
+  source: AgentRuntimeSource;
+  emit(message: TeamRunnerMessage): void;
+  maxDelegateDepth: number;
+  depth: number;
+  queryOptions: QueryOptions;
+}): AgentRuntimeContext {
+  return {
+    source: input.source,
+    emit: input.emit,
+    async delegate(delegateInput) {
+      if (input.depth >= input.maxDelegateDepth) {
+        throw new Error(`Reached maximum delegate depth (${input.maxDelegateDepth})`);
+      }
+
+      const targetMailbox = delegateInput.targetMailboxId ?? sanitizeToolName(delegateInput.name);
+      const callerMailbox = input.source.mailbox ?? input.source.name ?? "manager";
+      const request = await input.mailbox.send(callerMailbox, targetMailbox, delegateInput.task, {
+        workItemRole: "delegation",
+      });
+      input.emit({
+        type: "team_message",
+        subtype: "sent",
+        source: input.source,
+        mailbox: targetMailbox,
+        message: request,
+      });
+
+      if (delegateInput.wait === "accepted") {
+        return {
+          status: "accepted",
+          content: formatDelegateAccepted(request),
+          request,
+        };
+      }
+
+      const claimed = await input.mailbox.claimNext(targetMailbox);
+      const message = claimed ?? request;
+      input.emit({
+        type: "team_message",
+        subtype: "claimed",
+        source: input.source,
+        mailbox: targetMailbox,
+        message,
+      });
+
+      const targetSource: AgentRuntimeSource = {
+        kind: "team_member",
+        name: delegateInput.name,
+        member: delegateInput.name,
+        mailbox: targetMailbox,
+      };
+      input.emit({
+        type: "team_agent",
+        subtype: "started",
+        source: targetSource,
+      });
+
+      const childRuntime = createTeamRunnerRuntime({
+        ...input,
+        source: targetSource,
+        depth: input.depth + 1,
+      });
+      let finalResult: SDKResultMessage | undefined;
+      for await (const agentMessage of delegateInput.agent.query(renderDelegateTaskPrompt(delegateInput, message), {
+        stream: input.queryOptions.stream,
+        signal: input.queryOptions.signal,
+        runtime: childRuntime,
+      })) {
+        if (agentMessage.type === "stream_event") {
+          input.emit({
+            type: "stream_event",
+            source: targetSource,
+            event: agentMessage.event,
+            session_id: agentMessage.session_id,
+          });
+        } else {
+          input.emit({
+            type: "agent_message",
+            source: targetSource,
+            message: agentMessage,
+          });
+        }
+        if (agentMessage.type === "result") {
+          finalResult = agentMessage;
+        }
+      }
+
+      input.emit({
+        type: "team_agent",
+        subtype: "finished",
+        source: targetSource,
+      });
+
+      if (!finalResult) {
+        await input.mailbox.updateStatus(message.id, "failed");
+        const failed = await input.mailbox.get(message.id);
+        if (failed) {
+          input.emit({
+            type: "team_message",
+            subtype: "failed",
+            source: targetSource,
+            mailbox: targetMailbox,
+            message: failed,
+          });
+        }
+        throw new Error(`Delegate ${delegateInput.name} completed without a result`);
+      }
+
+      if (finalResult.is_error) {
+        await input.mailbox.updateStatus(message.id, "failed");
+        const failed = await input.mailbox.get(message.id);
+        if (failed) {
+          input.emit({
+            type: "team_message",
+            subtype: "failed",
+            source: targetSource,
+            mailbox: targetMailbox,
+            message: failed,
+          });
+        }
+        throw finalResult.error ?? new Error(finalResult.result || `Delegate ${delegateInput.name} failed`);
+      }
+
+      await input.mailbox.updateStatus(message.id, "done");
+      const done = await input.mailbox.get(message.id);
+      if (done) {
+        input.emit({
+          type: "team_message",
+          subtype: "done",
+          source: targetSource,
+          mailbox: targetMailbox,
+          message: done,
+        });
+      }
+      const reply = await input.mailbox.send(targetMailbox, callerMailbox, finalResult.result, {
+        threadId: message.threadId,
+        parentMessageId: message.id,
+        workItemId: message.workItemId,
+        upstreamMessageId: message.upstreamMessageId ?? message.id,
+        workItemRole: "upstream_report",
+      });
+      input.emit({
+        type: "team_message",
+        subtype: "replied",
+        source: targetSource,
+        mailbox: callerMailbox,
+        message: reply,
+      });
+
+      return {
+        status: "completed",
+        content: finalResult.result,
+        request: message,
+        reply,
+        result: finalResult,
+      };
+    },
+  };
+}
+
+function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: TeamMessage): string {
+  return [
+    "You are handling delegated work sent through an agent mailbox.",
+    "",
+    `delegate: ${input.name}`,
+    ...(input.description ? [`description: ${input.description}`] : []),
+    `message_id: ${message.id}`,
+    `from: ${message.from}`,
+    `to: ${message.to}`,
+    `thread: ${message.threadId}`,
+    "",
+    "Return the final result as assistant text. If you have delegate tools, you may use them to ask other AgentLike workers for help.",
+    "",
+    "--- delegated task ---",
+    message.content,
+  ].join("\n");
+}
+
+function formatDelegateAccepted(message: TeamMessage): string {
+  return JSON.stringify({
+    status: "accepted",
+    message_id: message.id,
+    thread_id: message.threadId,
+    to: message.to,
+  }, null, 2);
 }
 
 function subAgentToTool(subAgent: SubAgentDefinition): ToolDefinition<{ task: string }> {

@@ -257,6 +257,55 @@ type AgentLike = {
 That means a team can be used anywhere a callable agent is expected. From the
 outside, a team is an agent; inside, it can contain a whole organization.
 
+### Mailbox-backed AgentLike tools
+
+Use `delegateTool()` when one agent should call another `AgentLike` as a tool
+and the call should flow through the runner mailbox:
+
+```ts
+import {
+  createAgent,
+  createMemoryMailbox,
+  createTeamRunner,
+  delegateTool,
+} from "claude-team-agent-sdk";
+
+const engineeringAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You are the engineering agent.",
+});
+
+const ceoAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You are the CEO agent.",
+  tools: [
+    delegateTool(
+      "engineering",
+      "Delegate engineering work to the engineering AgentLike.",
+      engineeringAgent,
+    ),
+  ],
+});
+
+const runner = createTeamRunner({
+  root: ceoAgent,
+  mailbox: createMemoryMailbox(),
+});
+
+for await (const event of runner.query("Design the RAG implementation.")) {
+  console.log(event);
+}
+```
+
+`delegateTool()` requires a runner runtime. Calling an agent with a mailbox-backed
+delegate tool directly through `agent.prompt()` will return a tool error. Use
+`runner.query()` for streamed team activity or `runner.prompt()` for the final
+result.
+
 ## Team Mailbox Collaboration
 
 Use `createTeam()` when you want longer-lived team members that coordinate

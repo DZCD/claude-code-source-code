@@ -137,7 +137,7 @@
     },
     "packages/agent-sdk": {
       "name": "claude-team-agent-sdk",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.80.0",
         "@modelcontextprotocol/sdk": "^1.29.0",

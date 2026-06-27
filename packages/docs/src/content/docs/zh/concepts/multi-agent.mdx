@@ -49,6 +49,51 @@ supervisor 会得到一个工具，例如 `delegate_researcher`。当模型调�
 
 `createMultiAgent()` 仍然保留为兼容 alias，但新代码建议使用 `createSupervisor()`，这样不会和带 mailbox 的 `createTeam()` 团队协作模型混淆。
 
+## AgentLike 委托工具
+
+当一个 agent 想把另一个 `AgentLike` 当成 tool 调用，并且这次调用需要走 runner mailbox 时，使用 `delegateTool()`。
+
+```ts
+import {
+  createAgent,
+  createMemoryMailbox,
+  createTeamRunner,
+  delegateTool,
+} from "claude-team-agent-sdk";
+
+const engineeringAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "你是工程 agent。",
+});
+
+const ceoAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "你是 CEO agent。",
+  tools: [
+    delegateTool(
+      "engineering",
+      "把工程任务委托给 engineering AgentLike。",
+      engineeringAgent,
+    ),
+  ],
+});
+
+const runner = createTeamRunner({
+  root: ceoAgent,
+  mailbox: createMemoryMailbox(),
+});
+
+for await (const event of runner.query("设计 RAG 实现方案。")) {
+  console.log(event);
+}
+```
+
+`delegateTool()` 需要 runner runtime。带 mailbox-backed delegate tool 的 agent 如果被直接 `agent.prompt()` 调用，会返回工具错误。需要团队流式事件时使用 `runner.query()`，只需要最终结果时使用 `runner.prompt()`。
+
 ## Mailbox team
 
 如果你需要更像团队的协作模型，而不是一次性委托，可以使用 `createTeam()`。

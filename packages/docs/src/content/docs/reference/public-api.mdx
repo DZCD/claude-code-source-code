@@ -10,6 +10,7 @@ description: Stable exports exposed by the SDK package.
 | `createAgent(options)` | Creates an in-memory `Agent` instance. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
+| `delegateTool(name, description, agent, options)` | Exposes an `AgentLike` as a mailbox-backed delegate tool for `createTeamRunner()`. |
 | `skill(options)` | Creates an in-memory skill definition. |
 | `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
 | `createMCPTools(client, options)` | Maps an MCP client into SDK tool definitions. |
@@ -20,6 +21,7 @@ description: Stable exports exposed by the SDK package.
 | `createMultiAgent(options)` | Deprecated alias for `createSupervisor(options)`. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a mailbox-based team runtime and injects team tools. |
+| `createTeamRunner(options)` | Runs a root `AgentLike` with mailbox-backed delegate tools and streamed team events. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
 | `createClaudeCodeTools(options)` | Creates opt-in Claude Code-style built-in tools. |
@@ -59,6 +61,7 @@ const result = await agent.prompt(prompt);
 | `AgentLike` | Minimal callable interface implemented by `Agent`, `Supervisor`, and `Team`. |
 | `AgentOptions` | Agent construction options. |
 | `ToolDefinition` | Tool shape passed to an agent. |
+| `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
 | `SkillDefinition` | Reusable instruction bundle passed to an agent. |
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
@@ -67,6 +70,8 @@ const result = await agent.prompt(prompt);
 | `Supervisor` | Supervisor/sub-agent delegation wrapper. |
 | `MultiAgent` | Deprecated alias for `Supervisor`. |
 | `Team` | Mailbox-based team runtime. |
+| `TeamRunner` | Runtime that drives mailbox-backed AgentLike delegate tools. |
+| `TeamRunnerMessage` | Union of root SDK messages and team runner activity events. |
 | `TeamMemberDefinition` | Named team member with role and `AgentLike`. |
 | `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |
 | `TeamMessage` | Message record with thread and work-item context. |
