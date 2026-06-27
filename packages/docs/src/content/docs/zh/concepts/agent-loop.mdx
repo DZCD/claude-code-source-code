@@ -29,7 +29,7 @@ const result = await agent.prompt("我叫什么？");
 
 ## 轮次限制
 
-`maxTurns` 用来避免模型和工具无限循环：
+`maxTurns` 用来避免模型和工具无限循环。默认值是 `50`，统计的是模型请求次数，不是工具执行次数：
 
 ```ts
 const agent = createAgent({

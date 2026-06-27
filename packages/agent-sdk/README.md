@@ -219,9 +219,9 @@ outside, a team is an agent; inside, it can contain a whole organization.
 ## Team Mailbox Collaboration
 
 Use `createTeam()` when you want to talk to one `AgentLike` while it coordinates
-with named members internally. The team automatically injects delegate tools for
-its members and drives the mailbox runtime when you call `team.query()` or
-`team.prompt()`.
+with named members internally. The team automatically injects member
+`agentTool()` tools and drives the mailbox runtime when you call `team.query()`
+or `team.prompt()`.
 
 ```ts
 import {
@@ -266,10 +266,18 @@ for await (const event of team.query("Ask the researcher to inspect the SDK desi
 runtime events such as `team_message`, `team_agent`, and nested `agent_message`
 events. `team.prompt()` consumes that stream and returns only the final result.
 
-`createTeam()` also keeps advanced mailbox controls available through
-`team.send()`, `team.drain()`, and `team.mailbox`. Member agents that can accept
-tools receive `team_send`, `team_inbox`, `team_read`, `team_reply`,
-`team_followup`, and `team_status`.
+`createTeam()` injects member AgentLike tools into the lead. Those tools expose
+an explicit action contract: `mode: "ask"` waits for the member result,
+`mode: "handoff"` accepts work for mailbox-backed continuation, and
+`mode: "observe"` reports unsupported unless a host runtime provides
+observation support.
+
+Advanced mailbox controls remain available through `team.send()`,
+`team.drain()`, and `team.mailbox`. Member agents that can accept tools receive
+`team_send`, `team_inbox`, `team_read`, `team_reply`, `team_followup`, and
+`team_status` so they can process assigned mailbox work. The lead does not
+receive raw mailbox tools by default; pass `exposeLeadMailboxTools: true` only
+when the lead should manually operate the team mailbox.
 
 For durable local storage, pass a SQLite-like database. `better-sqlite3` works
 without the SDK taking a hard dependency on it:

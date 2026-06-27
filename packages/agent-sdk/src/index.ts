@@ -278,6 +278,7 @@ export type TeamOptions = {
   lead: Agent;
   members: TeamMemberDefinition[];
   mailbox?: TeamMailbox;
+  exposeLeadMailboxTools?: boolean;
 };
 
 export type Team = {
@@ -471,6 +472,74 @@ export type DelegateToolOptions = {
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
 };
+
+export type AgentToolMode = "ask" | "handoff" | "observe";
+
+export const agentToolInputSchema = z.object({
+  mode: z.enum(["ask", "handoff", "observe"]),
+  task: z.string(),
+  expectedOutput: z.string().optional(),
+  acceptanceCriteria: z.array(z.string()).optional(),
+});
+
+export type AgentToolInput = z.infer<typeof agentToolInputSchema>;
+
+export type AgentToolOptions = {
+  description: string;
+  targetMailboxId?: string;
+};
+
+export function agentTool(
+  name: string,
+  agent: AgentLike,
+  options: AgentToolOptions,
+): ToolDefinition<AgentToolInput> {
+  const toolName = sanitizeToolName(name);
+  return tool(
+    toolName,
+    formatAgentToolDescription(options.description),
+    agentToolInputSchema,
+    async (input, context) => {
+      const task = formatAgentToolTask(input);
+      if (input.mode === "observe") {
+        throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
+      }
+
+      if (input.mode === "handoff") {
+        if (!context.runtime) {
+          throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
+        }
+        const result = await context.runtime.delegate({
+          name: toolName,
+          description: options.description,
+          agent,
+          task,
+          wait: "accepted",
+          targetMailboxId: options.targetMailboxId,
+        });
+        return { content: result.content };
+      }
+
+      if (context.runtime) {
+        const result = await context.runtime.delegate({
+          name: toolName,
+          description: options.description,
+          agent,
+          task,
+          wait: "result",
+          targetMailboxId: options.targetMailboxId,
+        });
+        return { content: result.content };
+      }
+
+      const result = await agent.prompt(task, { signal: context.signal });
+      if (result.is_error) {
+        throw result.error ?? new Error(result.result || `agentTool("${toolName}") target returned an error`);
+      }
+      return { content: result.result };
+    },
+  );
+}
 
 export function delegateTool(
   name: string,
@@ -817,18 +886,22 @@ export function createTeam(options: TeamOptions): Team {
     mailboxId: member.mailboxId ?? teamMailboxId(name, member.name),
   }));
   const resolveMailbox = (target: string): string => resolveTeamMailbox(name, members, target);
-  const leadMailboxTools = createTeamTools({
-    mailbox,
-    ownerMailboxId: "manager",
-    resolveMailbox,
-  });
-  const delegateTools = members.map(member => delegateTool(
+  const leadMailboxTools = options.exposeLeadMailboxTools
+    ? createTeamTools({
+      mailbox,
+      ownerMailboxId: "manager",
+      resolveMailbox,
+    })
+    : [];
+  const memberAgentTools = members.map(member => agentTool(
     member.name,
-    formatTeamMemberDelegateDescription(member),
     member.agent,
-    { targetMailboxId: member.mailboxId },
+    {
+      description: formatTeamMemberDelegateDescription(member),
+      targetMailboxId: member.mailboxId,
+    },
   ));
-  const leadTools = [...delegateTools, ...leadMailboxTools];
+  const leadTools = [...memberAgentTools, ...leadMailboxTools];
   const memberTools: Record<string, Array<ToolDefinition<any>>> = {};
 
   options.lead.addTools(leadTools);
@@ -1109,7 +1182,7 @@ export class Agent {
     }
     this.options = {
       maxTokens: 4096,
-      maxTurns: 10,
+      maxTurns: 50,
       ...options,
     };
     this.modelClient =
@@ -1829,6 +1902,34 @@ function formatTeamMemberDelegateDescription(member: TeamMemberDefinition): stri
   return details.join(" ");
 }
 
+function formatAgentToolDescription(description: string): string {
+  return [
+    description,
+    "",
+    "This tool calls another AgentLike. Choose the action mode explicitly:",
+    '- mode="ask": ask the AgentLike and wait for its final answer in this tool call.',
+    '- mode="handoff": assign work and receive an acceptance receipt immediately; requires a team/runtime context.',
+    '- mode="observe": request observable long-running work; currently unsupported and will return a clear error.',
+    "Provide a clear task, expected output, and acceptance criteria when useful.",
+  ].join("\n");
+}
+
+function formatAgentToolTask(input: AgentToolInput): string {
+  const lines = [
+    input.task,
+  ];
+  if (input.expectedOutput) {
+    lines.push("", "Expected output:", input.expectedOutput);
+  }
+  if (input.acceptanceCriteria?.length) {
+    lines.push("", "Acceptance criteria:");
+    for (const criterion of input.acceptanceCriteria) {
+      lines.push(`- ${criterion}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function isNestedTeamRunnerMessage(message: AgentLikeEvent): message is Exclude<TeamRunnerMessage, SDKMessage> {
   if (message.type === "team_message" || message.type === "team_agent" || message.type === "agent_message") {
     return true;
@@ -1847,7 +1948,7 @@ function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: Tea
     `to: ${message.to}`,
     `thread: ${message.threadId}`,
     "",
-    "Return the final result as assistant text. If you have delegate tools, you may use them to ask other AgentLike workers for help.",
+    "Return the final result as assistant text. If you have AgentLike tools, you may use them to ask or hand off work to other AgentLike workers.",
     "",
     "--- delegated task ---",
     message.content,

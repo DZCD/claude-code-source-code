@@ -20,11 +20,11 @@ const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  maxTurns: 10,
+  maxTurns: 50,
 });
 
 await agent.prompt("Remember that my project is an SDK.");
 const result = await agent.prompt("What kind of project is this?");
 ```
 
-`maxTurns` protects the host application from infinite tool loops. When the limit is reached, the SDK emits a result with `subtype: "error_max_turns"`.
+`maxTurns` defaults to `50` and protects the host application from infinite tool loops. It counts model requests. Tool executions, permission callbacks, and stream events do not increment it. When the limit is reached, the SDK emits a result with `subtype: "error_max_turns"`.

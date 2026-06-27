@@ -5,7 +5,7 @@ description: 使用 AgentLike 委托工具和 mailbox team 构建团队协作。
 
 SDK 的团队协作围绕一个核心概念：每个可调用单元都是 `AgentLike`。
 
-- `delegateTool()`：把另一个 `AgentLike` 暴露成工具。
+- `agentTool()`：把另一个 `AgentLike` 暴露成带明确行动模式的工具。
 - `createTeam()`：描述命名成员、inbox、回复和团队工具。
 - `createTeamRunner()`：底层高级 runtime，用于自定义 mailbox-backed 委托。
 
@@ -15,7 +15,7 @@ SDK 的团队协作围绕一个核心概念：每个可调用单元都是 `Agent
 
 ## Team 即 AgentLike
 
-当你想直接和一个团队对话，同时让它在内部协调成员时，使用 `createTeam()`。团队会自动把成员注入成 delegate tools，并在你调用 `team.query()` 或 `team.prompt()` 时驱动 mailbox runtime。
+当你想直接和一个团队对话，同时让它在内部协调成员时，使用 `createTeam()`。团队会自动把成员注入成 `agentTool()` 工具，并在你调用 `team.query()` 或 `team.prompt()` 时驱动 runtime。
 
 ```ts
 import {
@@ -93,7 +93,15 @@ const team = createTeam({
 });
 ```
 
-`createTeam()` 会把成员 delegate tools 注入 lead。能够接收工具的成员还会获得 mailbox tools：
+`createTeam()` 会把成员 AgentLike 工具注入 lead。lead 调用成员时要使用明确的行动模式：
+
+| 模式 | 含义 |
+| --- | --- |
+| `ask` | 询问该成员，并在当前工具调用里等待最终答案。 |
+| `handoff` | 把任务交给该成员，并立即获得接收回执。 |
+| `observe` | 在宿主 runtime 支持时，启动可观察的长任务。 |
+
+能够接收工具的成员还会获得 mailbox tools，用于处理分配给自己的消息：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -103,6 +111,8 @@ const team = createTeam({
 | `team_reply` | 发送最终结果，并把原消息标记为 `done`。 |
 | `team_followup` | 发送阶段性进展，不关闭原消息。 |
 | `team_status` | 查看 mailbox 状态统计。 |
+
+lead 默认不会获得 raw mailbox tools。只有高级场景中确实需要 lead 手动操作团队 mailbox 时，才设置 `exposeLeadMailboxTools: true`。
 
 ## 持久化 mailbox
 

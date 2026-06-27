@@ -351,6 +351,35 @@ describe("agent-sdk", () => {
     expect((messages.at(-1) as { error: unknown }).error).toBeInstanceOf(MaxTurnsError);
   });
 
+  test("defaults maxTurns to 50 model requests", async () => {
+    let calls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          calls++;
+          return toolUseAssistant(`toolu_${calls}`, "calculator", { expr: "2+2" });
+        },
+      },
+      tools: [
+        tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => ({
+          content: "4",
+        })),
+      ],
+    });
+
+    const messages = await collect(agent.query("Keep calculating."));
+
+    expect(calls).toBe(50);
+    expect(messages.at(-1)).toMatchObject({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+      num_turns: 50,
+    });
+  });
+
   test("returns an abort result when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

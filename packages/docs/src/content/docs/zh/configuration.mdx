@@ -16,7 +16,7 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
   systemPrompt: "你是一个简洁的工程助手。",
   maxTokens: 4096,
-  maxTurns: 10,
+  maxTurns: 50,
 });
 ```
 
@@ -69,3 +69,17 @@ const result = await agent.prompt("总结这个仓库。", {
 | --- | --- | --- | --- |
 | `stream` | `boolean` | `true` | 是否启用模型流式调用，并输出 `stream_event` 事件。 |
 | `signal` | `AbortSignal` | `undefined` | 取消当前模型请求和工具循环。 |
+
+## 轮次限制
+
+`maxTurns` 统计的是模型请求次数，不是工具执行次数。默认值是 `50`，这样多智能体和重工具调用流程有足够空间完成，同时仍然能防止无限循环。
+
+小型一次性工具或测试场景可以显式调低：
+
+```ts
+const agent = createAgent({
+  apiKey,
+  model,
+  maxTurns: 8,
+});
+```

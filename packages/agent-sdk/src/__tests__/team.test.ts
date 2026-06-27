@@ -31,6 +31,30 @@ async function collect(iterable: AsyncIterable<AgentLikeEvent>): Promise<AgentLi
 }
 
 describe("team", () => {
+  test("lead tools default to member AgentLike tools without raw mailbox controls", async () => {
+    const team = createTeam({
+      name: "engineering",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: { async createMessage() { return textAssistant("lead idle"); } },
+      }),
+      members: [
+        teamMember({
+          name: "researcher",
+          role: "executor",
+          agent: createAgent({
+            apiKey: "test-key",
+            model: "claude-test",
+            modelClient: { async createMessage() { return textAssistant("research idle"); } },
+          }),
+        }),
+      ],
+    });
+
+    expect(team.tools.map(tool => tool.name)).toEqual(["researcher"]);
+  });
+
   test("team.query automatically drives member delegation without an explicit runner", async () => {
     const researcherAgent = createAgent({
       apiKey: "test-key",
@@ -52,6 +76,7 @@ describe("team", () => {
             leadCalls++;
             if (leadCalls === 1) {
               return toolUseAssistant("toolu_1", "researcher", {
+                mode: "ask",
                 task: "Research the team runtime design.",
               });
             }
@@ -108,6 +133,7 @@ describe("team", () => {
             engineeringCalls++;
             if (engineeringCalls === 1) {
               return toolUseAssistant("toolu_2", "backend", {
+                mode: "ask",
                 task: "Design the storage API.",
               });
             }
@@ -135,6 +161,7 @@ describe("team", () => {
             companyCalls++;
             if (companyCalls === 1) {
               return toolUseAssistant("toolu_1", "engineering", {
+                mode: "ask",
                 task: "Plan the RAG feature.",
               });
             }
@@ -256,6 +283,7 @@ describe("team", () => {
         }),
       ],
       mailbox: createMemoryMailbox(),
+      exposeLeadMailboxTools: true,
     });
 
     const events = await collect(team.query("Ask the researcher to inspect this."));

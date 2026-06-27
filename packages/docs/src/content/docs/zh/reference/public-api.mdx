@@ -10,6 +10,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createAgent(options)` | 创建一个内存态 `Agent` 实例。 |
 | `query(params)` | 一次性 async generator helper。 |
 | `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
+| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 行动模式。 |
 | `delegateTool(name, description, agent, options)` | 高级 helper，把一个 `AgentLike` 暴露成 mailbox-backed 委托工具。 |
 | `skill(options)` | 创建内存态 skill。 |
 | `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
@@ -59,12 +60,14 @@ const result = await agent.prompt(prompt);
 | `AgentLike` | `Agent` 和 `Team` 都实现的最小可调用接口。 |
 | `AgentOptions` | Agent 构造参数。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
+| `AgentToolInput` | `agentTool()` 的标准输入结构。 |
+| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
 | `MCPStdioConnection` | 已连接的 stdio MCP server。 |
 | `MCPStreamableHTTPConnection` | 已连接的远程 MCP server，包含 auth/session helpers。 |
-| `Team` | 带 lead、members、mailbox、delegate tools 和高级 mailbox 控制能力的 AgentLike 团队。 |
+| `Team` | 带 lead、members、成员 AgentLike 工具和高级 mailbox 控制能力的 AgentLike 团队。 |
 | `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的高级 runtime。 |
 | `TeamRunnerMessage` | root SDK 事件和 team runner 活动事件的 union 类型。 |
 | `TeamMemberDefinition` | 带 role 和 `AgentLike` 的团队成员。 |

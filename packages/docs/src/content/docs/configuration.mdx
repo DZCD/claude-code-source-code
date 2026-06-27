@@ -14,7 +14,7 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
   systemPrompt: "You are a concise engineering assistant.",
   maxTokens: 4096,
-  maxTurns: 10,
+  maxTurns: 50,
 });
 ```
 
@@ -67,3 +67,17 @@ const result = await agent.prompt("Summarize this repository.", {
 | --- | --- | --- | --- |
 | `stream` | `boolean` | `true` | Enables model streaming and `stream_event` SDK messages. |
 | `signal` | `AbortSignal` | `undefined` | Cancels the active model request and tool loop. |
+
+## Turn limits
+
+`maxTurns` counts model requests, not tool executions. The default is `50`, which gives multi-agent and tool-heavy flows room to complete while still protecting the host from infinite loops.
+
+Set a lower value for small one-shot tools or tests:
+
+```ts
+const agent = createAgent({
+  apiKey,
+  model,
+  maxTurns: 8,
+});
+```
