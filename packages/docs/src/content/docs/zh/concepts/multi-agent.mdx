@@ -1,102 +1,66 @@
 ---
 title: Team 团队
-description: 使用 supervisor/sub-agent 委托和 mailbox team 构建团队协作。
+description: 使用 AgentLike 委托工具和 mailbox team 构建团队协作。
 ---
 
-SDK 里有两种团队协作模式：
+SDK 的团队协作围绕一个核心概念：每个可调用单元都是 `AgentLike`。
 
-- `createSupervisor()`：轻量 supervisor/sub-agent 委托。
-- `createTeam()`：带 mailbox 的长期团队协作模型。
+- `delegateTool()`：把另一个 `AgentLike` 暴露成工具。
+- `createTeam()`：描述命名成员、inbox、回复和团队工具。
+- `createTeamRunner()`：底层高级 runtime，用于自定义 mailbox-backed 委托。
 
-`Agent`、`Supervisor` 和 `Team` 都满足同一个 `AgentLike` 形状：它们都暴露 `query()` 和 `prompt()`。从外部看，一个团队可以像一个 agent；从内部看，它可以包含一整个组织。
+`Agent` 和 `Team` 都满足同一个 `AgentLike` 形状：它们都暴露 `query()` 和 `prompt()`。从外部看，一个团队可以像一个 agent；从内部看，它可以包含一整个组织。
 
 这两者都不是完整的分布式调度器。它们提供的是可组合的 SDK 抽象，宿主应用可以在此基础上接入自己的存储、队列和 worker runtime。
 
-## 轻量 sub-agent 委托
+## Team 即 AgentLike
 
-sub-agent 本质上还是一个普通 `Agent`，只是被包装成 supervisor 可以调用的工具。
-
-```ts
-import {
-  createAgent,
-  createSupervisor,
-  createSubAgent,
-} from "claude-team-agent-sdk";
-
-const researcher = createSubAgent({
-  name: "researcher",
-  description: "Research SDK implementation details",
-  agent: createAgent({
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
-  }),
-});
-
-const supervisor = createSupervisor({
-  supervisor: createAgent({
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
-  }),
-  subAgents: [researcher],
-});
-
-const result = await supervisor.prompt("请让 researcher 检查 SDK 设计。");
-```
-
-supervisor 会得到一个工具，例如 `delegate_researcher`。当模型调用这个工具时，SDK 会运行 researcher agent，并把它的最终结果作为工具结果回填给 supervisor。
-
-`createMultiAgent()` 仍然保留为兼容 alias，但新代码建议使用 `createSupervisor()`，这样不会和带 mailbox 的 `createTeam()` 团队协作模型混淆。
-
-## AgentLike 委托工具
-
-当一个 agent 想把另一个 `AgentLike` 当成 tool 调用，并且这次调用需要走 runner mailbox 时，使用 `delegateTool()`。
+当你想直接和一个团队对话，同时让它在内部协调成员时，使用 `createTeam()`。团队会自动把成员注入成 delegate tools，并在你调用 `team.query()` 或 `team.prompt()` 时驱动 mailbox runtime。
 
 ```ts
 import {
   createAgent,
   createMemoryMailbox,
-  createTeamRunner,
-  delegateTool,
+  createTeam,
+  teamMember,
 } from "claude-team-agent-sdk";
 
-const engineeringAgent = createAgent({
+const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  systemPrompt: "你是工程 agent。",
+  systemPrompt: "你负责调研 agent SDK 架构，并输出简洁结论。",
 });
 
-const ceoAgent = createAgent({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
-  systemPrompt: "你是 CEO agent。",
-  tools: [
-    delegateTool(
-      "engineering",
-      "把工程任务委托给 engineering AgentLike。",
-      engineeringAgent,
-    ),
+const team = createTeam({
+  name: "engineering",
+  lead: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+    systemPrompt: "你是工程负责人。需要调研时委托 researcher。",
+  }),
+  members: [
+    teamMember({
+      name: "researcher",
+      role: "executor",
+      focus: "Research agent architecture",
+      agent: researcher,
+    }),
   ],
-});
-
-const runner = createTeamRunner({
-  root: ceoAgent,
   mailbox: createMemoryMailbox(),
 });
 
-for await (const event of runner.query("设计 RAG 实现方案。")) {
+for await (const event of team.query("请让 researcher 检查 SDK 设计。")) {
   console.log(event);
 }
 ```
 
-`delegateTool()` 需要 runner runtime。带 mailbox-backed delegate tool 的 agent 如果被直接 `agent.prompt()` 调用，会返回工具错误。需要团队流式事件时使用 `runner.query()`，只需要最终结果时使用 `runner.prompt()`。
+`team.query()` 会同时输出 lead agent 的普通 SDK 消息，以及 `team_message`、`team_agent`、嵌套 `agent_message` 等团队 runtime 事件。只需要最终结果时，使用 `team.prompt()`。
 
 ## Mailbox team
 
-如果你需要更像团队的协作模型，而不是一次性委托，可以使用 `createTeam()`。
+团队仍然暴露 mailbox 原语，适合需要显式路由、持久化存储或手动 drain 的高级场景。
 
 ```ts
 import {
@@ -108,7 +72,7 @@ import {
 
 const team = createTeam({
   name: "engineering",
-  supervisor: createAgent({
+  lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-flash",
@@ -129,7 +93,7 @@ const team = createTeam({
 });
 ```
 
-`createTeam()` 会给 supervisor 和每个成员注入同一组团队工具：
+`createTeam()` 会把成员 delegate tools 注入 lead。能够接收工具的成员还会获得 mailbox tools：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -146,10 +110,25 @@ const team = createTeam({
 
 ```ts
 import Database from "better-sqlite3";
-import { createSQLiteMailbox } from "claude-team-agent-sdk";
+import {
+  createAgent,
+  createSQLiteMailbox,
+  createTeam,
+} from "claude-team-agent-sdk";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
+});
+
+const team = createTeam({
+  name: "engineering",
+  lead: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  members: [],
+  mailbox,
 });
 ```
 
@@ -204,7 +183,7 @@ const frontendAgent = createDeepSeekAgent(
 
 const engineeringTeam = createTeam({
   name: "engineering",
-  supervisor: engineeringHeadAgent,
+  lead: engineeringHeadAgent,
   members: [
     teamMember({ name: "backend", role: "executor", agent: backendAgent }),
     teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
@@ -213,7 +192,7 @@ const engineeringTeam = createTeam({
 
 const companyTeam = createTeam({
   name: "company",
-  supervisor: ceoAgent,
+  lead: ceoAgent,
   members: [
     teamMember({
       name: "engineering",

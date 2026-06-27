@@ -38,8 +38,10 @@ export type ToolResultBlock = {
 };
 export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
 
+export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
+
 export type AgentLike = {
-  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<SDKMessage>;
+  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<AgentLikeEvent>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
 };
 
@@ -199,33 +201,6 @@ export type MCPStreamableHTTPConnection = MCPStdioConnection & {
   sessionId: string | undefined;
 };
 
-export type SubAgentDefinition = {
-  name: string;
-  description: string;
-  agent: AgentLike;
-};
-
-export type SubAgentInput = SubAgentDefinition;
-
-export type SupervisorOptions = {
-  supervisor: Agent;
-  subAgents: SubAgentDefinition[];
-};
-
-export type Supervisor = {
-  supervisor: Agent;
-  subAgents: SubAgentDefinition[];
-  tools: Array<ToolDefinition<any>>;
-  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<SDKMessage>;
-  prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
-};
-
-/** @deprecated Use SupervisorOptions instead. */
-export type MultiAgentOptions = SupervisorOptions;
-
-/** @deprecated Use Supervisor instead. */
-export type MultiAgent = Supervisor;
-
 export type TeamMemberRole = "lead" | "head" | "executor";
 
 export type TeamMemberDefinition = {
@@ -300,21 +275,21 @@ export type SQLiteMailboxOptions = {
 
 export type TeamOptions = {
   name: string;
-  supervisor: Agent;
+  lead: Agent;
   members: TeamMemberDefinition[];
   mailbox?: TeamMailbox;
 };
 
 export type Team = {
   name: string;
-  supervisor: Agent;
+  lead: Agent;
   members: TeamMemberDefinition[];
   mailbox: TeamMailbox;
   tools: Array<ToolDefinition<any>>;
   memberTools: Record<string, Array<ToolDefinition<any>>>;
   send(from: string, to: string, content: string, options?: TeamSendOptions): Promise<TeamMessage>;
   drain(options?: TeamDrainOptions): Promise<TeamDrainResult>;
-  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<SDKMessage>;
+  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
 };
 
@@ -651,35 +626,6 @@ export async function connectMCPStreamableHTTPServer(
   };
 }
 
-export function createSubAgent(input: SubAgentInput): SubAgentDefinition {
-  if (!input.name.trim()) {
-    throw new Error("Sub-agent name is required");
-  }
-  if (!input.description.trim()) {
-    throw new Error("Sub-agent description is required");
-  }
-  return {
-    name: sanitizeToolName(input.name),
-    description: input.description,
-    agent: input.agent,
-  };
-}
-
-export function createSupervisor(options: SupervisorOptions): Supervisor {
-  const tools = options.subAgents.map(subAgent => subAgentToTool(subAgent));
-  options.supervisor.addTools(tools);
-  return {
-    supervisor: options.supervisor,
-    subAgents: options.subAgents,
-    tools,
-    query: (prompt, queryOptions) => options.supervisor.query(prompt, queryOptions),
-    prompt: (prompt, queryOptions) => options.supervisor.prompt(prompt, queryOptions),
-  };
-}
-
-/** @deprecated Use createSupervisor instead. */
-export const createMultiAgent = createSupervisor;
-
 export function teamMember(input: TeamMemberInput): TeamMemberDefinition {
   if (!input.name.trim()) {
     throw new Error("Team member name is required");
@@ -871,14 +817,21 @@ export function createTeam(options: TeamOptions): Team {
     mailboxId: member.mailboxId ?? teamMailboxId(name, member.name),
   }));
   const resolveMailbox = (target: string): string => resolveTeamMailbox(name, members, target);
-  const supervisorTools = createTeamTools({
+  const leadMailboxTools = createTeamTools({
     mailbox,
     ownerMailboxId: "manager",
     resolveMailbox,
   });
+  const delegateTools = members.map(member => delegateTool(
+    member.name,
+    formatTeamMemberDelegateDescription(member),
+    member.agent,
+    { targetMailboxId: member.mailboxId },
+  ));
+  const leadTools = [...delegateTools, ...leadMailboxTools];
   const memberTools: Record<string, Array<ToolDefinition<any>>> = {};
 
-  options.supervisor.addTools(supervisorTools);
+  options.lead.addTools(leadTools);
   for (const member of members) {
     const tools = createTeamTools({
       mailbox,
@@ -895,10 +848,10 @@ export function createTeam(options: TeamOptions): Team {
 
   return {
     name,
-    supervisor: options.supervisor,
+    lead: options.lead,
     members,
     mailbox,
-    tools: supervisorTools,
+    tools: leadTools,
     memberTools,
     send: (from, to, content, sendOptions) => mailbox.send(from, resolveMailbox(to), content, sendOptions),
     drain: drainOptions => drainTeam({
@@ -906,13 +859,21 @@ export function createTeam(options: TeamOptions): Team {
       mailbox,
       options: drainOptions ?? {},
     }),
-    query: (prompt, queryOptions) => options.supervisor.query(prompt, queryOptions),
-    prompt: (prompt, queryOptions) => options.supervisor.prompt(prompt, queryOptions),
+    query: (prompt, queryOptions) => createTeamRunner({
+      root: options.lead,
+      mailbox,
+      source: { kind: "root", name, team: name, mailbox: "manager" },
+    }).query(prompt, queryOptions),
+    prompt: (prompt, queryOptions) => createTeamRunner({
+      root: options.lead,
+      mailbox,
+      source: { kind: "root", name, team: name, mailbox: "manager" },
+    }).prompt(prompt, queryOptions),
   };
 }
 
 export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
-  const root = options.root ?? options.team;
+  const root = options.root ?? options.team?.lead;
   if (!root) {
     throw new Error("createTeamRunner requires either team or root");
   }
@@ -947,7 +908,7 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
       let queueNext = queue.next().then(value => ({ kind: "queue" as const, value }));
 
       while (!rootDone) {
-        const next = await Promise.race([rootNext, queueNext]);
+        const next = await Promise.race([queueNext, rootNext]);
         if (next.kind === "queue") {
           if (!next.value.done) {
             yield next.value.value;
@@ -962,6 +923,9 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
           continue;
         }
 
+        for (const queued of queue.drainAvailable()) {
+          yield queued;
+        }
         yield next.value.value;
         rootNext = iterator.next().then(value => ({ kind: "root" as const, value }));
       }
@@ -1685,6 +1649,10 @@ class AsyncMessageQueue<T> {
       this.resolvers.push(resolve);
     });
   }
+
+  drainAvailable(): T[] {
+    return this.values.splice(0);
+  }
 }
 
 function createTeamRunnerRuntime(input: {
@@ -1757,7 +1725,9 @@ function createTeamRunnerRuntime(input: {
         signal: input.queryOptions.signal,
         runtime: childRuntime,
       })) {
-        if (agentMessage.type === "stream_event") {
+        if (isNestedTeamRunnerMessage(agentMessage)) {
+          input.emit(agentMessage);
+        } else if (agentMessage.type === "stream_event") {
           input.emit({
             type: "stream_event",
             source: targetSource,
@@ -1849,6 +1819,23 @@ function createTeamRunnerRuntime(input: {
   };
 }
 
+function formatTeamMemberDelegateDescription(member: TeamMemberDefinition): string {
+  const details = [
+    `Delegate work to team member ${member.name}.`,
+    `Role: ${member.role}.`,
+    ...(member.focus ? [`Focus: ${member.focus}.`] : []),
+    "Pass a clear task. The member will return a final result.",
+  ];
+  return details.join(" ");
+}
+
+function isNestedTeamRunnerMessage(message: AgentLikeEvent): message is Exclude<TeamRunnerMessage, SDKMessage> {
+  if (message.type === "team_message" || message.type === "team_agent" || message.type === "agent_message") {
+    return true;
+  }
+  return message.type === "stream_event" && "source" in message;
+}
+
 function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: TeamMessage): string {
   return [
     "You are handling delegated work sent through an agent mailbox.",
@@ -1874,25 +1861,6 @@ function formatDelegateAccepted(message: TeamMessage): string {
     thread_id: message.threadId,
     to: message.to,
   }, null, 2);
-}
-
-function subAgentToTool(subAgent: SubAgentDefinition): ToolDefinition<{ task: string }> {
-  return tool(
-    `delegate_${sanitizeToolName(subAgent.name)}`,
-    `Delegate work to sub-agent ${subAgent.name}: ${subAgent.description}`,
-    z.object({
-      task: z.string(),
-    }),
-    async (input, context) => {
-      const result = await subAgent.agent.prompt(input.task, {
-        signal: context.signal,
-      });
-      if (result.is_error) {
-        throw result.error ?? new Error(result.result || `Sub-agent ${subAgent.name} failed`);
-      }
-      return { content: result.result };
-    },
-  );
 }
 
 function createTeamTools(options: {

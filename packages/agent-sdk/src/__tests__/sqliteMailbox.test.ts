@@ -24,11 +24,11 @@ describe("SQLite mailbox", () => {
     const mailbox = createSQLiteMailbox({ database });
 
     const { first, second } = await roundTrip(mailbox);
-    const supervisorInbox = await mailbox.inbox("manager");
+    const leadInbox = await mailbox.inbox("manager");
     const storedFirst = await mailbox.get(first.id);
 
-    expect(supervisorInbox).toHaveLength(1);
-    expect(supervisorInbox[0]).toMatchObject({
+    expect(leadInbox).toHaveLength(1);
+    expect(leadInbox[0]).toMatchObject({
       id: second.id,
       from: "engineering::researcher",
       to: "manager",

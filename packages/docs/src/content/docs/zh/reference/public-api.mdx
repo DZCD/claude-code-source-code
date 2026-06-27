@@ -10,18 +10,15 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createAgent(options)` | 创建一个内存态 `Agent` 实例。 |
 | `query(params)` | 一次性 async generator helper。 |
 | `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
-| `delegateTool(name, description, agent, options)` | 把一个 `AgentLike` 暴露成供 `createTeamRunner()` 使用的 mailbox-backed 委托工具。 |
+| `delegateTool(name, description, agent, options)` | 高级 helper，把一个 `AgentLike` 暴露成 mailbox-backed 委托工具。 |
 | `skill(options)` | 创建内存态 skill。 |
 | `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
 | `createMCPTools(client, options)` | 把 MCP client 映射成 SDK 工具。 |
 | `connectMCPStdioServer(server, options)` | 连接 stdio MCP server，并返回工具和 close handle。 |
 | `connectMCPStreamableHTTPServer(url, options)` | 连接远程 Streamable HTTP MCP server，支持 OAuth。 |
-| `createSubAgent(options)` | 把一个 `Agent` 包装成命名 sub-agent。 |
-| `createSupervisor(options)` | 给 supervisor agent 添加 sub-agent delegate 工具。 |
-| `createMultiAgent(options)` | `createSupervisor(options)` 的 deprecated alias。 |
 | `teamMember(options)` | 创建团队成员定义。 |
-| `createTeam(options)` | 创建 mailbox-based team runtime，并注入团队工具。 |
-| `createTeamRunner(options)` | 运行一个 root `AgentLike`，驱动 mailbox-backed delegate tools，并输出团队事件流。 |
+| `createTeam(options)` | 创建一个带 lead、members、mailbox 和内置 runtime 的 `AgentLike` 团队。 |
+| `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。 |
 | `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
 | `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
 | `createClaudeCodeTools(options)` | 创建可选的 Claude Code 风格内置工具。 |
@@ -58,7 +55,8 @@ const result = await agent.prompt(prompt);
 | Export | 说明 |
 | --- | --- |
 | `SDKMessage` | SDK 输出事件的 union 类型。 |
-| `AgentLike` | `Agent`、`Supervisor` 和 `Team` 都实现的最小可调用接口。 |
+| `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
+| `AgentLike` | `Agent` 和 `Team` 都实现的最小可调用接口。 |
 | `AgentOptions` | Agent 构造参数。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
@@ -66,11 +64,8 @@ const result = await agent.prompt(prompt);
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
 | `MCPStdioConnection` | 已连接的 stdio MCP server。 |
 | `MCPStreamableHTTPConnection` | 已连接的远程 MCP server，包含 auth/session helpers。 |
-| `SubAgentDefinition` | 基于 `AgentLike` 的命名 sub-agent wrapper。 |
-| `Supervisor` | supervisor/sub-agent 委托 wrapper。 |
-| `MultiAgent` | `Supervisor` 的 deprecated alias。 |
-| `Team` | mailbox-based team runtime。 |
-| `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的 runtime。 |
+| `Team` | 带 lead、members、mailbox、delegate tools 和高级 mailbox 控制能力的 AgentLike 团队。 |
+| `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的高级 runtime。 |
 | `TeamRunnerMessage` | root SDK 事件和 team runner 活动事件的 union 类型。 |
 | `TeamMemberDefinition` | 带 role 和 `AgentLike` 的团队成员。 |
 | `TeamMailbox` | 团队消息存储接口，包含成员级 `claimNext()`。 |

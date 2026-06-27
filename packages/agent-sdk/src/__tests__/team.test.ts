@@ -4,8 +4,8 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
+  type AgentLikeEvent,
   type ModelClient,
-  type SDKMessage,
 } from "../index.js";
 
 function textAssistant(text: string) {
@@ -22,8 +22,8 @@ function toolUseAssistant(id: string, name: string, input: Record<string, unknow
   };
 }
 
-async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[]> {
-  const messages: SDKMessage[] = [];
+async function collect(iterable: AsyncIterable<AgentLikeEvent>): Promise<AgentLikeEvent[]> {
+  const messages: AgentLikeEvent[] = [];
   for await (const message of iterable) {
     messages.push(message);
   }
@@ -31,6 +31,142 @@ async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[
 }
 
 describe("team", () => {
+  test("team.query automatically drives member delegation without an explicit runner", async () => {
+    const researcherAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return textAssistant("Research complete.");
+        },
+      },
+    });
+    let leadCalls = 0;
+    const team = createTeam({
+      name: "engineering",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage() {
+            leadCalls++;
+            if (leadCalls === 1) {
+              return toolUseAssistant("toolu_1", "researcher", {
+                task: "Research the team runtime design.",
+              });
+            }
+            return textAssistant("Engineering final.");
+          },
+        },
+      }),
+      members: [
+        teamMember({
+          name: "researcher",
+          role: "executor",
+          focus: "Research agent architecture",
+          agent: researcherAgent,
+        }),
+      ],
+      mailbox: createMemoryMailbox(),
+    });
+
+    const events = await collect(team.query("Ask the researcher to inspect this."));
+
+    expect(events.some(event => event.type === "team_message" && event.subtype === "sent")).toBe(true);
+    expect(events.some(event => event.type === "team_message" && event.subtype === "replied")).toBe(true);
+    expect(events.some(event =>
+      event.type === "agent_message" &&
+      event.source.member === "researcher" &&
+      event.message.type === "result" &&
+      event.message.result === "Research complete."
+    )).toBe(true);
+    expect(events.some(event =>
+      event.type === "user" &&
+      event.tool_use_result === "Research complete."
+    )).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "result", result: "Engineering final." });
+  });
+
+  test("nested teams are driven when talking directly to the parent team", async () => {
+    const backendAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return textAssistant("Backend complete.");
+        },
+      },
+    });
+    let engineeringCalls = 0;
+    const engineeringTeam = createTeam({
+      name: "engineering",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage() {
+            engineeringCalls++;
+            if (engineeringCalls === 1) {
+              return toolUseAssistant("toolu_2", "backend", {
+                task: "Design the storage API.",
+              });
+            }
+            return textAssistant("Engineering final with backend.");
+          },
+        },
+      }),
+      members: [
+        teamMember({
+          name: "backend",
+          role: "executor",
+          focus: "Backend implementation",
+          agent: backendAgent,
+        }),
+      ],
+    });
+    let companyCalls = 0;
+    const companyTeam = createTeam({
+      name: "company",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage() {
+            companyCalls++;
+            if (companyCalls === 1) {
+              return toolUseAssistant("toolu_1", "engineering", {
+                task: "Plan the RAG feature.",
+              });
+            }
+            return textAssistant("CEO final.");
+          },
+        },
+      }),
+      members: [
+        teamMember({
+          name: "engineering",
+          role: "head",
+          focus: "Own engineering delivery",
+          agent: engineeringTeam,
+        }),
+      ],
+    });
+
+    const events = await collect(companyTeam.query("Design a RAG feature."));
+
+    expect(events.some(event =>
+      event.type === "agent_message" &&
+      event.source.member === "backend" &&
+      event.message.type === "result" &&
+      event.message.result === "Backend complete."
+    )).toBe(true);
+    expect(events.some(event =>
+      event.type === "user" &&
+      event.tool_use_result === "Engineering final with backend."
+    )).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "result", result: "CEO final." });
+  });
+
   test("claimNext only claims messages for the addressed member", async () => {
     const mailbox = createMemoryMailbox();
     await mailbox.send("manager", "engineering::researcher", "Research this.");
@@ -85,12 +221,12 @@ describe("team", () => {
     });
   });
 
-  test("supervisor can send work to a team member mailbox", async () => {
-    let supervisorCalls = 0;
-    const supervisorClient: ModelClient = {
+  test("lead can send work to a team member mailbox", async () => {
+    let leadCalls = 0;
+    const leadClient: ModelClient = {
       async createMessage() {
-        supervisorCalls++;
-        if (supervisorCalls === 1) {
+        leadCalls++;
+        if (leadCalls === 1) {
           return toolUseAssistant("toolu_1", "team_send", {
             to: "researcher",
             content: "Research the team runtime design.",
@@ -102,10 +238,10 @@ describe("team", () => {
 
     const team = createTeam({
       name: "engineering",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
-        modelClient: supervisorClient,
+        modelClient: leadClient,
       }),
       members: [
         teamMember({
@@ -142,10 +278,10 @@ describe("team", () => {
     const mailbox = createMemoryMailbox();
     const team = createTeam({
       name: "engineering",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
-        modelClient: { async createMessage() { return textAssistant("supervisor idle"); } },
+        modelClient: { async createMessage() { return textAssistant("lead idle"); } },
       }),
       members: [
         teamMember({
@@ -179,12 +315,12 @@ describe("team", () => {
     const member = team.members[0]!;
     await member.agent.prompt("Handle your team inbox.");
 
-    const supervisorInbox = await mailbox.inbox("manager");
+    const leadInbox = await mailbox.inbox("manager");
     const original = await mailbox.get(sent.id);
 
     expect(original?.status).toBe("done");
-    expect(supervisorInbox).toHaveLength(1);
-    expect(supervisorInbox[0]).toMatchObject({
+    expect(leadInbox).toHaveLength(1);
+    expect(leadInbox[0]).toMatchObject({
       from: "engineering::researcher",
       to: "manager",
       content: "Research complete.",
@@ -202,10 +338,10 @@ describe("team", () => {
     let testerCalls = 0;
     const team = createTeam({
       name: "engineering",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
-        modelClient: { async createMessage() { return textAssistant("supervisor idle"); } },
+        modelClient: { async createMessage() { return textAssistant("lead idle"); } },
       }),
       members: [
         teamMember({
@@ -250,7 +386,7 @@ describe("team", () => {
     await team.send("manager", "researcher", "Only researcher should handle this.");
 
     const result = await team.drain();
-    const supervisorInbox = await mailbox.inbox("manager");
+    const leadInbox = await mailbox.inbox("manager");
 
     expect(result).toMatchObject({
       processed: 1,
@@ -258,7 +394,7 @@ describe("team", () => {
     });
     expect(researcherCalls).toBe(2);
     expect(testerCalls).toBe(0);
-    expect(supervisorInbox[0]).toMatchObject({
+    expect(leadInbox[0]).toMatchObject({
       from: "engineering::researcher",
       to: "manager",
       content: "Research handled.",
@@ -270,10 +406,10 @@ describe("team", () => {
     const mailbox = createMemoryMailbox();
     const team = createTeam({
       name: "engineering",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
-        modelClient: { async createMessage() { return textAssistant("supervisor idle"); } },
+        modelClient: { async createMessage() { return textAssistant("lead idle"); } },
       }),
       members: [
         teamMember({
@@ -292,23 +428,23 @@ describe("team", () => {
 
     const result = await team.drain();
     const original = await mailbox.get(sent.id);
-    const supervisorInbox = await mailbox.inbox("manager");
+    const leadInbox = await mailbox.inbox("manager");
 
     expect(result.failed).toBe(1);
     expect(original?.status).toBe("failed");
-    expect(supervisorInbox[0]).toMatchObject({
+    expect(leadInbox[0]).toMatchObject({
       from: "engineering::researcher",
       to: "manager",
       workItemRole: "followup",
     });
-    expect(supervisorInbox[0]?.content).toContain("ended without team_reply or team_followup");
+    expect(leadInbox[0]?.content).toContain("ended without team_reply or team_followup");
   });
 
   test("team can be nested as a member agent of another team", async () => {
     const companyMailbox = createMemoryMailbox();
     const engineeringTeam = createTeam({
       name: "engineering",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
         modelClient: { async createMessage() { return textAssistant("engineering team handled it"); } },
@@ -318,7 +454,7 @@ describe("team", () => {
     });
     const companyTeam = createTeam({
       name: "company",
-      supervisor: createAgent({
+      lead: createAgent({
         apiKey: "test-key",
         model: "claude-test",
         modelClient: { async createMessage() { return textAssistant("ceo idle"); } },
@@ -337,12 +473,12 @@ describe("team", () => {
 
     const result = await companyTeam.drain();
     const original = await companyMailbox.get(sent.id);
-    const supervisorInbox = await companyMailbox.inbox("manager");
+    const leadInbox = await companyMailbox.inbox("manager");
 
     expect(companyTeam.memberTools.engineering).toEqual([]);
     expect(result).toMatchObject({ processed: 1, failed: 0 });
     expect(original?.status).toBe("done");
-    expect(supervisorInbox[0]).toMatchObject({
+    expect(leadInbox[0]).toMatchObject({
       from: "company::engineering",
       to: "manager",
       content: "engineering team handled it",

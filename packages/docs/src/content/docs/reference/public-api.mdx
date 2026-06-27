@@ -10,18 +10,15 @@ description: Stable exports exposed by the SDK package.
 | `createAgent(options)` | Creates an in-memory `Agent` instance. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
-| `delegateTool(name, description, agent, options)` | Exposes an `AgentLike` as a mailbox-backed delegate tool for `createTeamRunner()`. |
+| `delegateTool(name, description, agent, options)` | Advanced helper that exposes an `AgentLike` as a mailbox-backed delegate tool. |
 | `skill(options)` | Creates an in-memory skill definition. |
 | `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
 | `createMCPTools(client, options)` | Maps an MCP client into SDK tool definitions. |
 | `connectMCPStdioServer(server, options)` | Connects a stdio MCP server and returns SDK tools plus a close handle. |
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
-| `createSubAgent(options)` | Wraps an `Agent` as a named sub-agent. |
-| `createSupervisor(options)` | Adds delegate tools to a supervisor agent. |
-| `createMultiAgent(options)` | Deprecated alias for `createSupervisor(options)`. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
-| `createTeam(options)` | Creates a mailbox-based team runtime and injects team tools. |
-| `createTeamRunner(options)` | Runs a root `AgentLike` with mailbox-backed delegate tools and streamed team events. |
+| `createTeam(options)` | Creates an `AgentLike` team with a lead, members, mailbox, and built-in runtime. |
+| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
 | `createClaudeCodeTools(options)` | Creates opt-in Claude Code-style built-in tools. |
@@ -58,7 +55,8 @@ const result = await agent.prompt(prompt);
 | Export | Description |
 | --- | --- |
 | `SDKMessage` | Union of all emitted SDK events. |
-| `AgentLike` | Minimal callable interface implemented by `Agent`, `Supervisor`, and `Team`. |
+| `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
+| `AgentLike` | Minimal callable interface implemented by `Agent` and `Team`. |
 | `AgentOptions` | Agent construction options. |
 | `ToolDefinition` | Tool shape passed to an agent. |
 | `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
@@ -66,11 +64,8 @@ const result = await agent.prompt(prompt);
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
 | `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
-| `SubAgentDefinition` | Named sub-agent wrapper around an `AgentLike`. |
-| `Supervisor` | Supervisor/sub-agent delegation wrapper. |
-| `MultiAgent` | Deprecated alias for `Supervisor`. |
-| `Team` | Mailbox-based team runtime. |
-| `TeamRunner` | Runtime that drives mailbox-backed AgentLike delegate tools. |
+| `Team` | Agent-like team with a lead, members, mailbox, delegate tools, and advanced mailbox controls. |
+| `TeamRunner` | Advanced runtime that drives mailbox-backed AgentLike delegate tools. |
 | `TeamRunnerMessage` | Union of root SDK messages and team runner activity events. |
 | `TeamMemberDefinition` | Named team member with role and `AgentLike`. |
 | `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |

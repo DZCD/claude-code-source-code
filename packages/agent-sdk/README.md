@@ -202,54 +202,13 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 });
 ```
 
-## Supervisor and Sub-agent Delegation
-
-The SDK supports lightweight supervisor/sub-agent delegation. A sub-agent is an
-`Agent` wrapped as a delegate tool. The supervisor can call that tool, receive
-the sub-agent result, and continue its own loop.
-
-```ts
-import {
-  createAgent,
-  createSupervisor,
-  createSubAgent,
-} from "claude-team-agent-sdk";
-
-const researcher = createSubAgent({
-  name: "researcher",
-  description: "Research SDK implementation details",
-  agent: createAgent({
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
-  }),
-});
-
-const supervisor = createSupervisor({
-  supervisor: createAgent({
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
-  }),
-  subAgents: [researcher],
-});
-
-const result = await supervisor.prompt("Use the researcher to inspect the SDK design.");
-```
-
-The supervisor receives a tool named `delegate_researcher`. Use the normal
-permission callback on the supervisor if your host wants to approve delegation.
-`createMultiAgent()` remains available as a compatibility alias, but new code
-should use `createSupervisor()` so it is not confused with the mailbox-based
-team API.
-
 ## AgentLike Composition
 
-`Agent`, `Supervisor`, and `Team` all satisfy the same `AgentLike` shape:
+`Agent` and `Team` satisfy the same `AgentLike` shape:
 
 ```ts
 type AgentLike = {
-  query(prompt, options?): AsyncGenerator<SDKMessage>;
+  query(prompt, options?): AsyncGenerator<SDKMessage | TeamRunnerMessage>;
   prompt(prompt, options?): Promise<SDKResultMessage>;
 };
 ```
@@ -257,59 +216,12 @@ type AgentLike = {
 That means a team can be used anywhere a callable agent is expected. From the
 outside, a team is an agent; inside, it can contain a whole organization.
 
-### Mailbox-backed AgentLike tools
-
-Use `delegateTool()` when one agent should call another `AgentLike` as a tool
-and the call should flow through the runner mailbox:
-
-```ts
-import {
-  createAgent,
-  createMemoryMailbox,
-  createTeamRunner,
-  delegateTool,
-} from "claude-team-agent-sdk";
-
-const engineeringAgent = createAgent({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
-  systemPrompt: "You are the engineering agent.",
-});
-
-const ceoAgent = createAgent({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
-  systemPrompt: "You are the CEO agent.",
-  tools: [
-    delegateTool(
-      "engineering",
-      "Delegate engineering work to the engineering AgentLike.",
-      engineeringAgent,
-    ),
-  ],
-});
-
-const runner = createTeamRunner({
-  root: ceoAgent,
-  mailbox: createMemoryMailbox(),
-});
-
-for await (const event of runner.query("Design the RAG implementation.")) {
-  console.log(event);
-}
-```
-
-`delegateTool()` requires a runner runtime. Calling an agent with a mailbox-backed
-delegate tool directly through `agent.prompt()` will return a tool error. Use
-`runner.query()` for streamed team activity or `runner.prompt()` for the final
-result.
-
 ## Team Mailbox Collaboration
 
-Use `createTeam()` when you want longer-lived team members that coordinate
-through mailbox messages instead of a single delegate call.
+Use `createTeam()` when you want to talk to one `AgentLike` while it coordinates
+with named members internally. The team automatically injects delegate tools for
+its members and drives the mailbox runtime when you call `team.query()` or
+`team.prompt()`.
 
 ```ts
 import {
@@ -319,33 +231,45 @@ import {
   teamMember,
 } from "claude-team-agent-sdk";
 
+const researcher = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You research agent SDK architecture and report concise findings.",
+});
+
 const team = createTeam({
   name: "engineering",
-  supervisor: createAgent({
+  lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-flash",
+    systemPrompt: "You lead engineering work. Delegate research tasks to researcher.",
   }),
   members: [
     teamMember({
       name: "researcher",
       role: "executor",
       focus: "Research agent architecture",
-      agent: createAgent({
-        apiKey: process.env.DEEPSEEK_API_KEY,
-        baseURL: "https://api.deepseek.com/anthropic",
-        model: "deepseek-v4-flash",
-      }),
+      agent: researcher,
     }),
   ],
   mailbox: createMemoryMailbox(),
 });
 
-await team.prompt("Ask the researcher to inspect the SDK design.");
+for await (const event of team.query("Ask the researcher to inspect the SDK design.")) {
+  console.log(event);
+}
 ```
 
-`createTeam()` injects `team_send`, `team_inbox`, `team_read`, `team_reply`,
-`team_followup`, and `team_status`. The default mailbox is in memory.
+`team.query()` streams both the lead agent's normal SDK messages and team
+runtime events such as `team_message`, `team_agent`, and nested `agent_message`
+events. `team.prompt()` consumes that stream and returns only the final result.
+
+`createTeam()` also keeps advanced mailbox controls available through
+`team.send()`, `team.drain()`, and `team.mailbox`. Member agents that can accept
+tools receive `team_send`, `team_inbox`, `team_read`, `team_reply`,
+`team_followup`, and `team_status`.
 
 For durable local storage, pass a SQLite-like database. `better-sqlite3` works
 without the SDK taking a hard dependency on it:
@@ -353,6 +277,7 @@ without the SDK taking a hard dependency on it:
 ```ts
 import Database from "better-sqlite3";
 import {
+  createAgent,
   createSQLiteMailbox,
   createTeam,
 } from "claude-team-agent-sdk";
@@ -363,8 +288,12 @@ const mailbox = createSQLiteMailbox({
 
 const team = createTeam({
   name: "engineering",
-  supervisor,
-  members,
+  lead: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  members: [],
   mailbox,
 });
 ```
@@ -422,7 +351,7 @@ const frontendAgent = createDeepSeekAgent(
 
 const engineeringTeam = createTeam({
   name: "engineering",
-  supervisor: engineeringHeadAgent,
+  lead: engineeringHeadAgent,
   members: [
     teamMember({ name: "backend", role: "executor", agent: backendAgent }),
     teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
@@ -431,7 +360,7 @@ const engineeringTeam = createTeam({
 
 const companyTeam = createTeam({
   name: "company",
-  supervisor: ceoAgent,
+  lead: ceoAgent,
   members: [
     teamMember({
       name: "engineering",
