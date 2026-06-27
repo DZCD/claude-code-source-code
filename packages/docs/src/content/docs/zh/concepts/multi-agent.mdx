@@ -140,6 +140,12 @@ const companyTeam = createTeam({
 
 CEO 看到的是一个 `engineeringTeam` 成员；engineering team 内部可以继续把工作路由给 backend 或 frontend。
 
+## 路由回流
+
+SDK 默认不会阻止路由回流。任务可以从 manager 发给成员，成员为了补充上下文再发回 manager，然后 manager 再把任务交回同一个成员。这是正常的组织协作流，不一定是 runtime 错误。
+
+控制成本和风险时，优先使用 `maxTurns`、权限回调、mailbox 状态和宿主侧监控。除非你的应用明确需要严格组织规则，否则不要把强制层级治理写进 SDK 核心。
+
 ## 显式路由和 claimNext
 
 团队消息不是全局任务池。每条 pending 消息都有明确的 `to` mailbox，必须由对应成员处理。

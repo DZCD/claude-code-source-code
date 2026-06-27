@@ -48,6 +48,43 @@ describe("team", () => {
     expect(testerInbox[0]).toMatchObject({ status: "pending" });
   });
 
+  test("mailbox allows work to return to a previous responsible member", async () => {
+    const mailbox = createMemoryMailbox();
+    const initial = await mailbox.send("manager", "engineering::researcher", "Research this.");
+    await mailbox.updateStatus(initial.id, "done");
+    const question = await mailbox.send("engineering::researcher", "manager", "Need product context.", {
+      threadId: initial.threadId,
+      parentMessageId: initial.id,
+      workItemId: initial.workItemId,
+      upstreamMessageId: initial.id,
+      workItemRole: "followup",
+    });
+    const returned = await mailbox.send("manager", "engineering::researcher", "Here is the missing context.", {
+      threadId: initial.threadId,
+      parentMessageId: question.id,
+      workItemId: initial.workItemId,
+      upstreamMessageId: initial.id,
+      workItemRole: "upstream_request",
+    });
+
+    const claimed = await mailbox.claimNext("engineering::researcher");
+    const managerInbox = await mailbox.inbox("manager");
+
+    expect(managerInbox[0]).toMatchObject({
+      from: "engineering::researcher",
+      to: "manager",
+      content: "Need product context.",
+    });
+    expect(claimed).toMatchObject({
+      id: returned.id,
+      from: "manager",
+      to: "engineering::researcher",
+      status: "processing",
+      threadId: initial.threadId,
+      workItemId: initial.workItemId,
+    });
+  });
+
   test("supervisor can send work to a team member mailbox", async () => {
     let supervisorCalls = 0;
     const supervisorClient: ModelClient = {

@@ -355,6 +355,16 @@ const companyTeam = createTeam({
 Use this pattern to model CEO -> Head Team -> Executor Agent without hard-coding
 that hierarchy into the SDK.
 
+### Routing loops
+
+The SDK does not block routing loops by default. A task can move from a manager
+to a member, back to the manager for context, and then back to the same member.
+That is normal organizational flow, not necessarily a runtime error.
+
+Use `maxTurns`, permission callbacks, mailbox status, and host-level monitoring
+to control cost and risk. Keep strict organization policies outside the core SDK
+unless your application explicitly needs them.
+
 ### Team runtime drain
 
 Mailbox routing is explicit: a pending message belongs to its `to` mailbox and
