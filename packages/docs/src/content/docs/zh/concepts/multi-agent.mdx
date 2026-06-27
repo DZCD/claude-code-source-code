@@ -115,6 +115,23 @@ SDK 不内置 SQLite 驱动。这样可以避免强制安装 native dependency�
 因为 `teamMember().agent` 接受任意 `AgentLike`，一个 `Team` 可以成为另一个 `Team` 的成员。这个模式可以表达 CEO -> Head Team -> Executor Agent，而不需要把层级写死在 SDK 里。
 
 ```ts
+import {
+  createAgent,
+  createTeam,
+  teamMember,
+} from "claude-team-agent-sdk";
+
+const createDeepSeekAgent = () => createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+});
+
+const ceoAgent = createDeepSeekAgent();
+const engineeringHeadAgent = createDeepSeekAgent();
+const backendAgent = createDeepSeekAgent();
+const frontendAgent = createDeepSeekAgent();
+
 const engineeringTeam = createTeam({
   name: "engineering",
   supervisor: engineeringHeadAgent,

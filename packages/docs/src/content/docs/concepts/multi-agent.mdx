@@ -143,6 +143,23 @@ Hosts that need distributed execution can provide their own `TeamMailbox` adapte
 Because `teamMember().agent` accepts any `AgentLike`, a team can be a member of another team. This is how you model CEO -> Head Team -> Executor Agent without hard-coding that hierarchy into the SDK.
 
 ```ts
+import {
+  createAgent,
+  createTeam,
+  teamMember,
+} from "claude-team-agent-sdk";
+
+const createDeepSeekAgent = () => createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+});
+
+const ceoAgent = createDeepSeekAgent();
+const engineeringHeadAgent = createDeepSeekAgent();
+const backendAgent = createDeepSeekAgent();
+const frontendAgent = createDeepSeekAgent();
+
 const engineeringTeam = createTeam({
   name: "engineering",
   supervisor: engineeringHeadAgent,

@@ -329,6 +329,23 @@ Because `teamMember().agent` accepts any `AgentLike`, a `Team` can be a member
 of another `Team`:
 
 ```ts
+import {
+  createAgent,
+  createTeam,
+  teamMember,
+} from "claude-team-agent-sdk";
+
+const createDeepSeekAgent = () => createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+});
+
+const ceoAgent = createDeepSeekAgent();
+const engineeringHeadAgent = createDeepSeekAgent();
+const backendAgent = createDeepSeekAgent();
+const frontendAgent = createDeepSeekAgent();
+
 const engineeringTeam = createTeam({
   name: "engineering",
   supervisor: engineeringHeadAgent,
