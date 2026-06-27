@@ -36,6 +36,21 @@ for await (const message of agent.query(prompt)) {
 const result = await agent.prompt(prompt);
 ```
 
+### AgentOptions
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `apiKey` | `string` | Provider API key. |
+| `baseURL` | `string` | Optional Anthropic-compatible endpoint, such as DeepSeek. |
+| `model` | `string` | Model name. |
+| `systemPrompt` | `string` | Stable role and responsibility instructions sent as the provider system prompt. |
+| `maxTokens` | `number` | Maximum output tokens per model request. |
+| `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
+| `tools` | `ToolDefinition[]` | Custom tools available to the model. |
+| `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
+| `permission` | `function` | Callback that can allow or deny tool execution. |
+| `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
+
 ## Types
 
 | Export | Description |

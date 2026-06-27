@@ -151,6 +151,28 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("passes systemPrompt to the model client", async () => {
+    const seenSystemPrompts: Array<string | undefined> = [];
+    const modelClient: ModelClient = {
+      async createMessage({ systemPrompt }) {
+        seenSystemPrompts.push(systemPrompt);
+        return textAssistant("handled");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      systemPrompt: "You are the backend executor. Only handle API and database work.",
+      modelClient,
+    });
+
+    await collect(agent.query("Build the API"));
+
+    expect(seenSystemPrompts).toEqual([
+      "You are the backend executor. Only handle API and database work.",
+    ]);
+  });
+
   test("emits stream events for streaming text responses", async () => {
     const agent = createAgent({
       apiKey: "test-key",

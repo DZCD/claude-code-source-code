@@ -65,6 +65,7 @@ export type ModelToolDefinition = {
 
 export type ModelRequest = {
   model: string;
+  systemPrompt?: string;
   maxTokens: number;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
@@ -310,6 +311,7 @@ export type AgentOptions = {
   apiKey?: string;
   baseURL?: string;
   model: string;
+  systemPrompt?: string;
   maxTokens?: number;
   maxTurns?: number;
   tools?: Array<ToolDefinition<any>>;
@@ -991,6 +993,7 @@ export class Agent {
       try {
         assistant = await this.modelClient.createMessage({
           model: this.options.model,
+          systemPrompt: this.options.systemPrompt,
           maxTokens: this.options.maxTokens,
           messages: this.messagesForModel(prompt),
           tools: this.modelTools(),
@@ -1214,6 +1217,7 @@ class AnthropicModelClient implements ModelClient {
     try {
       const body = {
         model: request.model,
+        ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
         max_tokens: request.maxTokens,
         messages: request.messages.map(toAnthropicMessage) as never,
         tools: request.tools.map(tool => ({

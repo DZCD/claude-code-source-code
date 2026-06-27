@@ -12,6 +12,7 @@ const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
+  systemPrompt: "You are a concise engineering assistant.",
   maxTokens: 4096,
   maxTurns: 10,
 });
@@ -27,6 +28,24 @@ Use Anthropic directly by omitting `baseURL` and passing an Anthropic model name
 const agent = createAgent({
   apiKey: process.env.ANTHROPIC_API_KEY,
   model: "claude-sonnet-4-6",
+  systemPrompt: "You are a concise engineering assistant.",
+});
+```
+
+## System prompt
+
+Use `systemPrompt` to define an agent's stable role, responsibility, and boundaries. This is especially important in team setups where each `AgentLike` needs a different job description.
+
+```ts
+const backendAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: [
+    "You are the backend executor agent.",
+    "Handle APIs, data models, storage, integrations, and server-side correctness.",
+    "Escalate product or UI decisions instead of guessing.",
+  ].join("\n"),
 });
 ```
 

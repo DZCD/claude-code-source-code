@@ -121,16 +121,41 @@ import {
   teamMember,
 } from "claude-team-agent-sdk";
 
-const createDeepSeekAgent = () => createAgent({
+const createDeepSeekAgent = (systemPrompt: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
+  systemPrompt,
 });
 
-const ceoAgent = createDeepSeekAgent();
-const engineeringHeadAgent = createDeepSeekAgent();
-const backendAgent = createDeepSeekAgent();
-const frontendAgent = createDeepSeekAgent();
+const ceoAgent = createDeepSeekAgent(
+  [
+    "你是 CEO agent。",
+    "你负责澄清产品目标，判断工作应该交给哪个部门，并要求下级给出简洁进展汇报。",
+    "不要自己实现工程细节。",
+  ].join("\n"),
+);
+const engineeringHeadAgent = createDeepSeekAgent(
+  [
+    "你是工程负责人 agent。",
+    "你负责把工程目标拆成 backend 和 frontend 工作，显式路由给合适的执行者，并向上级汇报结果。",
+    "架构决策要说清楚。",
+  ].join("\n"),
+);
+const backendAgent = createDeepSeekAgent(
+  [
+    "你是 backend 执行 agent。",
+    "你负责 API、数据模型、存储、集成和服务端正确性。",
+    "遇到产品或 UI 决策时向上级反馈，不要擅自假设。",
+  ].join("\n"),
+);
+const frontendAgent = createDeepSeekAgent(
+  [
+    "你是 frontend 执行 agent。",
+    "你负责 UI 流程、客户端状态、可访问性和浏览器行为。",
+    "遇到 API 契约问题时向上级反馈，不要自行发明接口。",
+  ].join("\n"),
+);
 
 const engineeringTeam = createTeam({
   name: "engineering",

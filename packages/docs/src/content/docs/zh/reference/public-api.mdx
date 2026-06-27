@@ -36,6 +36,21 @@ for await (const message of agent.query(prompt)) {
 const result = await agent.prompt(prompt);
 ```
 
+### AgentOptions
+
+| 选项 | 类型 | 说明 |
+| --- | --- | --- |
+| `apiKey` | `string` | Provider API key。 |
+| `baseURL` | `string` | 可选的 Anthropic 兼容接口地址，例如 DeepSeek。 |
+| `model` | `string` | 模型名。 |
+| `systemPrompt` | `string` | 作为 provider system prompt 发送的稳定角色和职责指令。 |
+| `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
+| `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
+| `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
+| `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
+| `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
+| `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
+
 ## 核心类型
 
 | Export | 说明 |

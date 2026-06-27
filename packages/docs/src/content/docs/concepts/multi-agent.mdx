@@ -149,16 +149,41 @@ import {
   teamMember,
 } from "claude-team-agent-sdk";
 
-const createDeepSeekAgent = () => createAgent({
+const createDeepSeekAgent = (systemPrompt: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
+  systemPrompt,
 });
 
-const ceoAgent = createDeepSeekAgent();
-const engineeringHeadAgent = createDeepSeekAgent();
-const backendAgent = createDeepSeekAgent();
-const frontendAgent = createDeepSeekAgent();
+const ceoAgent = createDeepSeekAgent(
+  [
+    "You are the CEO agent.",
+    "Clarify product goals, decide which department owns the work, and ask for concise progress reports.",
+    "Do not implement engineering details yourself.",
+  ].join("\n"),
+);
+const engineeringHeadAgent = createDeepSeekAgent(
+  [
+    "You are the engineering head agent.",
+    "Break engineering goals into backend and frontend work, route tasks to the right executor, and report outcomes upstream.",
+    "Keep architecture decisions explicit.",
+  ].join("\n"),
+);
+const backendAgent = createDeepSeekAgent(
+  [
+    "You are the backend executor agent.",
+    "Handle APIs, data models, storage, integrations, and server-side correctness.",
+    "Escalate product or UI decisions instead of guessing.",
+  ].join("\n"),
+);
+const frontendAgent = createDeepSeekAgent(
+  [
+    "You are the frontend executor agent.",
+    "Handle UI flows, client state, accessibility, and browser behavior.",
+    "Escalate API contract questions instead of inventing them.",
+  ].join("\n"),
+);
 
 const engineeringTeam = createTeam({
   name: "engineering",

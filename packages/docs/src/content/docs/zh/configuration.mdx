@@ -14,6 +14,7 @@ const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
+  systemPrompt: "你是一个简洁的工程助手。",
   maxTokens: 4096,
   maxTurns: 10,
 });
@@ -27,6 +28,24 @@ const agent = createAgent({
 const agent = createAgent({
   apiKey: process.env.ANTHROPIC_API_KEY,
   model: "claude-sonnet-4-6",
+  systemPrompt: "你是一个简洁的工程助手。",
+});
+```
+
+## 系统提示词
+
+使用 `systemPrompt` 定义 agent 的稳定角色、职责和边界。团队场景尤其需要它，因为每个 `AgentLike` 都应该有自己的职责描述。
+
+```ts
+const backendAgent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: [
+    "你是 backend 执行 agent。",
+    "你负责 API、数据模型、存储、集成和服务端正确性。",
+    "遇到产品或 UI 决策时向上级反馈，不要擅自假设。",
+  ].join("\n"),
 });
 ```
 
