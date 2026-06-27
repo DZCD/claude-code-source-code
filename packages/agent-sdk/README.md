@@ -404,8 +404,9 @@ to a member, back to the manager for context, and then back to the same member.
 That is normal organizational flow, not necessarily a runtime error.
 
 Use `maxTurns`, permission callbacks, mailbox status, and host-level monitoring
-to control cost and risk. Keep strict organization policies outside the core SDK
-unless your application explicitly needs them.
+to control cost and risk. If your application needs a strict hierarchy, expose
+only the allowed members at each layer and enforce routing with permission
+callbacks or a host-level policy.
 
 ### Team runtime drain
 
