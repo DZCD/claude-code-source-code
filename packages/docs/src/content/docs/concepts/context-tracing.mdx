@@ -1,0 +1,159 @@
+---
+title: Context Tracing
+description: Record JSONL traces for agent runs, tool calls, and delegated team work.
+---
+
+Context tracing lets a host observe an agent run without changing the agent loop.
+The SDK emits structured trace events through a small `ContextTracer` interface,
+and the built-in JSONL tracer writes one event per line.
+
+Tracing is append-only observability. It is not resume support: agents still keep
+conversation state in memory for the lifetime of the `Agent` instance.
+
+## JSONL tracer
+
+Use `createJsonlContextTracer()` when you want local trace files for debugging,
+audit logs, or test artifacts.
+
+```ts
+import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+await agent.prompt("Remember that my name is Ada.", {
+  stream: false,
+});
+```
+
+Each JSONL row is an independent object:
+
+```json
+{
+  "version": 1,
+  "timestamp": "2026-06-28T12:00:00.000Z",
+  "session_id": "session-id",
+  "run_id": "run-id",
+  "seq": 1,
+  "source": { "kind": "agent", "name": "agent" },
+  "type": "user_message",
+  "data": {
+    "message": {
+      "role": "user",
+      "content": "Remember that my name is Ada."
+    }
+  }
+}
+```
+
+If you pass `dir` instead of `path`, the tracer writes one file per session:
+
+```ts
+const tracer = createJsonlContextTracer({
+  dir: ".agent-runs",
+});
+```
+
+## Event types
+
+| Type | Description |
+| --- | --- |
+| `run_start` | Agent run metadata, including model and tool names. |
+| `user_message` | User prompt or tool-result message added to the model context. |
+| `model_request` | Model request context, including selected messages, tools, and stream mode. |
+| `assistant_message` | Assistant message returned by the model client. |
+| `tool_use` | Tool call requested by the assistant. |
+| `tool_result` | Tool result produced by the SDK and sent back to the model. |
+| `result` | Final query result, including success and error subtypes. |
+
+The tracer uses a monotonically increasing `seq` per tracer instance. Use
+`session_id`, `run_id`, and `source` to group entries in UIs or log pipelines.
+
+## Team tracing
+
+Pass a tracer in `team.query()` or `createTeamRunner().query()` options to
+propagate the same trace sink into delegated agents.
+
+```ts
+for await (const event of team.query("Ask engineering to inspect tracing.", {
+  tracer,
+})) {
+  console.log(event);
+}
+```
+
+Delegated agents include their runtime source:
+
+```json
+{
+  "source": {
+    "kind": "team_member",
+    "name": "engineering",
+    "member": "engineering",
+    "mailbox": "engineering"
+  },
+  "type": "result",
+  "data": {
+    "subtype": "success",
+    "result": "Engineering result"
+  }
+}
+```
+
+This keeps the JSONL stream readable even when a root agent delegates through
+teams or nested teams.
+
+## Custom sinks
+
+`ContextTracer` is intentionally small so hosts can write to their own storage or
+observability pipeline.
+
+```ts
+import type { ContextTracer } from "claude-team-agent-sdk";
+
+const tracer: ContextTracer = {
+  async onEvent(event) {
+    await writeTraceToDatabase(event);
+  },
+  async flush() {
+    await flushTraceWrites();
+  },
+};
+```
+
+Use `failOnError: true` only when trace durability is part of your product
+contract. By default, tracing should be observational and should not make agent
+runs fail.
+
+## Redaction
+
+Trace entries can contain prompts, model context, tool inputs, and tool outputs.
+Use `redact` for local policy before writing JSONL:
+
+```ts
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+  redact(event) {
+    if (event.type === "model_request") {
+      return {
+        ...event,
+        data: {
+          ...event.data,
+          messages: "[redacted]",
+        },
+      };
+    }
+    return event;
+  },
+});
+```
+
+Return `undefined` from `redact` to skip an event entirely.

@@ -36,6 +36,7 @@ export default defineConfig({
           items: [
             { label: "Agent Loop", translations: { "zh-CN": "Agent 循环" }, slug: "concepts/agent-loop" },
             { label: "Streaming Events", translations: { "zh-CN": "流式事件" }, slug: "concepts/streaming-events" },
+            { label: "Context Tracing", translations: { "zh-CN": "上下文追踪" }, slug: "concepts/context-tracing" },
             { label: "Tools", translations: { "zh-CN": "工具" }, slug: "concepts/tools" },
             { label: "MCP", slug: "concepts/mcp" },
             { label: "Skills", translations: { "zh-CN": "技能" }, slug: "concepts/skills" },

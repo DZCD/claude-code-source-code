@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import {
   AbortError,
   MaxTurnsError,
   ToolExecutionError,
   createAgent,
+  createJsonlContextTracer,
   tool,
   type ModelClient,
   type SDKMessage,
@@ -149,6 +153,55 @@ describe("agent-sdk", () => {
       subtype: "success",
       result: "The answer is 4",
     });
+  });
+
+  test("writes agent context trace entries to jsonl", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-sdk-trace-"));
+    const tracePath = join(dir, "trace.jsonl");
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: clientFromResponses([
+          toolUseAssistant("toolu_1", "calculator", { expr: "2+2" }),
+          textAssistant("The answer is 4"),
+        ]),
+        tools: [
+          tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => ({
+            content: "4",
+          })),
+        ],
+        tracer: createJsonlContextTracer({ path: tracePath }),
+      });
+
+      await collect(agent.query("What is 2+2?", { stream: false }));
+
+      const entries = (await readFile(tracePath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line));
+      expect(entries.map(entry => entry.type)).toContain("run_start");
+      expect(entries.map(entry => entry.type)).toContain("user_message");
+      expect(entries.map(entry => entry.type)).toContain("model_request");
+      expect(entries.map(entry => entry.type)).toContain("assistant_message");
+      expect(entries.map(entry => entry.type)).toContain("tool_use");
+      expect(entries.map(entry => entry.type)).toContain("tool_result");
+      expect(entries.at(-1)).toMatchObject({
+        version: 1,
+        type: "result",
+        data: {
+          subtype: "success",
+          result: "The answer is 4",
+        },
+        source: {
+          kind: "agent",
+        },
+      });
+      expect(entries.every(entry => entry.session_id === entries[0].session_id)).toBe(true);
+      expect(entries.map(entry => entry.seq)).toEqual(entries.map((_, index) => index + 1));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("passes systemPrompt to the model client", async () => {

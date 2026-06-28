@@ -10,7 +10,7 @@ import {
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import {
   dirname,
   basename,
@@ -76,6 +76,43 @@ export type AgentRuntimeContext = {
   source: AgentRuntimeSource;
   delegate(input: AgentRuntimeDelegateInput): Promise<AgentRuntimeDelegateResult>;
   emit(message: TeamRunnerMessage): void;
+};
+
+export type ContextTraceEventType =
+  | "run_start"
+  | "user_message"
+  | "model_request"
+  | "assistant_message"
+  | "tool_use"
+  | "tool_result"
+  | "team_message"
+  | "result"
+  | "error";
+
+export type ContextTraceEvent = {
+  version: 1;
+  timestamp: string;
+  session_id: string;
+  run_id: string;
+  parent_run_id?: string;
+  seq: number;
+  source: AgentRuntimeSource;
+  type: ContextTraceEventType;
+  data: Record<string, unknown>;
+};
+
+export type ContextTracer = {
+  failOnError?: boolean;
+  onEvent(event: ContextTraceEvent): Promise<void> | void;
+  flush?(): Promise<void>;
+  close?(): Promise<void>;
+};
+
+export type JsonlContextTracerOptions = {
+  path?: string;
+  dir?: string;
+  redact?: (event: ContextTraceEvent) => ContextTraceEvent | undefined;
+  failOnError?: boolean;
 };
 
 type ToolCapableAgentLike = AgentLike & {
@@ -334,6 +371,7 @@ export type PermissionDecision =
 export type AgentOptions = {
   apiKey?: string;
   baseURL?: string;
+  name?: string;
   model: string;
   systemPrompt?: string;
   maxTokens?: number;
@@ -342,6 +380,7 @@ export type AgentOptions = {
   skills?: SkillDefinition[];
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
   modelClient?: ModelClient;
+  tracer?: ContextTracer;
 };
 
 export type ClaudeCodeToolsOptions = {
@@ -354,6 +393,7 @@ export type QueryOptions = {
   stream?: boolean;
   signal?: AbortSignal;
   runtime?: AgentRuntimeContext;
+  tracer?: ContextTracer;
 };
 
 export type SDKSystemInitMessage = {
@@ -573,6 +613,34 @@ export function delegateTool(
 
 export function createAgent(options: AgentOptions): Agent {
   return new Agent(options);
+}
+
+export function createJsonlContextTracer(options: JsonlContextTracerOptions): ContextTracer {
+  if (!options.path && !options.dir) {
+    throw new Error("createJsonlContextTracer requires either path or dir");
+  }
+
+  let queue = Promise.resolve();
+  const tracer: ContextTracer = {
+    failOnError: options.failOnError,
+    onEvent(event) {
+      const entry = options.redact ? options.redact(event) : event;
+      if (!entry) return;
+      const filePath = options.path ?? join(options.dir!, `${entry.session_id}.jsonl`);
+      queue = queue.then(
+        () => appendJsonlEntry(filePath, entry),
+        () => appendJsonlEntry(filePath, entry),
+      );
+      return queue;
+    },
+    async flush() {
+      await queue;
+    },
+    async close() {
+      await queue;
+    },
+  };
+  return tracer;
 }
 
 export function skill(input: SkillInput): SkillDefinition {
@@ -1194,45 +1262,107 @@ export class Agent {
   }
 
   async *query(prompt: string | ContentBlock[], options: QueryOptions = {}): AsyncGenerator<SDKMessage> {
+    const tracer = options.tracer ?? this.options.tracer;
+    const runId = randomId();
+    const source: AgentRuntimeSource = options.runtime?.source ?? {
+      kind: "agent",
+      name: this.options.name ?? "agent",
+    };
+    const traceBase = {
+      session_id: this.sessionId,
+      run_id: runId,
+      source,
+    };
+
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "run_start",
+      data: {
+        model: this.options.model,
+        tools: (this.options.tools ?? []).map(tool => tool.name),
+      },
+    });
+
     const startAbort = abortErrorIfNeeded(options.signal);
     yield this.initMessage();
     if (startAbort) {
-      yield this.resultMessage("error_abort", "", 0, startAbort);
+      const result = this.resultMessage("error_abort", "", 0, startAbort);
+      await emitTraceEvent(tracer, {
+        ...traceBase,
+        type: "result",
+        data: traceResultData(result),
+      });
+      await flushTracer(tracer);
+      yield result;
       return;
     }
 
-    this.messages.push({
+    const inputMessage: ModelMessage = {
       role: "user",
       content: prompt,
+    };
+    this.messages.push(inputMessage);
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "user_message",
+      data: { message: inputMessage },
     });
 
     let turns = 0;
     while (true) {
       const abortError = abortErrorIfNeeded(options.signal);
       if (abortError) {
-        yield this.resultMessage("error_abort", "", turns, abortError);
+        const result = this.resultMessage("error_abort", "", turns, abortError);
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
         return;
       }
 
       if (turns >= this.options.maxTurns) {
         const error = new MaxTurnsError(`Reached maximum number of turns (${this.options.maxTurns})`);
-        yield this.resultMessage("error_max_turns", "", turns, error);
+        const result = this.resultMessage("error_max_turns", "", turns, error);
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
         return;
       }
 
       turns++;
       let assistant: AssistantModelMessage;
       const streamEvents: Record<string, unknown>[] = [];
+      const modelMessages = this.messagesForModel(prompt);
+      const modelTools = this.modelTools();
+      const stream = options.stream ?? true;
+      await emitTraceEvent(tracer, {
+        ...traceBase,
+        type: "model_request",
+        data: {
+          model: this.options.model,
+          max_tokens: this.options.maxTokens,
+          messages: modelMessages,
+          tools: modelTools.map(tool => tool.name),
+          stream,
+        },
+      });
       try {
         assistant = await this.modelClient.createMessage({
           model: this.options.model,
           systemPrompt: this.options.systemPrompt,
           maxTokens: this.options.maxTokens,
-          messages: this.messagesForModel(prompt),
-          tools: this.modelTools(),
-          stream: options.stream ?? true,
+          messages: modelMessages,
+          tools: modelTools,
+          stream,
           onStreamEvent: event => {
-            if (options.stream ?? true) {
+            if (stream) {
               streamEvents.push(event);
             }
           },
@@ -1244,7 +1374,14 @@ export class Agent {
             ? error
             : new APIError(errorMessage(error), { cause: error });
         const subtype = wrapped instanceof AbortError ? "error_abort" : "error";
-        yield this.resultMessage(subtype, "", turns, wrapped);
+        const result = this.resultMessage(subtype, "", turns, wrapped);
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
         return;
       }
 
@@ -1257,6 +1394,11 @@ export class Agent {
       }
 
       this.messages.push(assistant);
+      await emitTraceEvent(tracer, {
+        ...traceBase,
+        type: "assistant_message",
+        data: { message: assistant },
+      });
       yield {
         type: "assistant",
         message: assistant,
@@ -1265,17 +1407,43 @@ export class Agent {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
-        yield this.resultMessage("success", extractText(assistant), turns);
+        const result = this.resultMessage("success", extractText(assistant), turns);
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
         return;
       }
 
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
       for (const block of toolUseBlocks) {
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "tool_use",
+          data: {
+            id: block.id,
+            name: block.name,
+            input: block.input,
+          },
+        });
         const result = await this.runTool(block, options.signal, options.runtime);
         if (result.error && !firstToolError) {
           firstToolError = result.error;
         }
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "tool_result",
+          data: {
+            tool_use_id: result.block.tool_use_id,
+            content: result.block.content,
+            is_error: result.block.is_error ?? false,
+            ...(result.error ? { error: result.error } : {}),
+          },
+        });
         toolResults.push(result.block);
       }
 
@@ -1284,6 +1452,11 @@ export class Agent {
         content: toolResults,
       };
       this.messages.push(userMessage);
+      await emitTraceEvent(tracer, {
+        ...traceBase,
+        type: "user_message",
+        data: { message: userMessage },
+      });
       yield {
         type: "user",
         message: userMessage,
@@ -1796,6 +1969,7 @@ function createTeamRunnerRuntime(input: {
       for await (const agentMessage of delegateInput.agent.query(renderDelegateTaskPrompt(delegateInput, message), {
         stream: input.queryOptions.stream,
         signal: input.queryOptions.signal,
+        tracer: input.queryOptions.tracer,
         runtime: childRuntime,
       })) {
         if (isNestedTeamRunnerMessage(agentMessage)) {
@@ -2390,6 +2564,64 @@ function extractText(message: AssistantModelMessage): string {
 
 function abortErrorIfNeeded(signal: AbortSignal | undefined): AbortError | undefined {
   return signal?.aborted ? new AbortError("Operation aborted") : undefined;
+}
+
+const traceSequences = new WeakMap<ContextTracer, number>();
+
+async function emitTraceEvent(
+  tracer: ContextTracer | undefined,
+  input: Omit<ContextTraceEvent, "version" | "timestamp" | "seq">,
+): Promise<void> {
+  if (!tracer) return;
+  const nextSeq = (traceSequences.get(tracer) ?? 0) + 1;
+  traceSequences.set(tracer, nextSeq);
+  const event: ContextTraceEvent = {
+    version: 1,
+    timestamp: new Date().toISOString(),
+    seq: nextSeq,
+    ...input,
+  };
+  try {
+    await tracer.onEvent(event);
+  } catch (error) {
+    if (tracer.failOnError) throw error;
+  }
+}
+
+async function flushTracer(tracer: ContextTracer | undefined): Promise<void> {
+  if (!tracer?.flush) return;
+  try {
+    await tracer.flush();
+  } catch (error) {
+    if (tracer.failOnError) throw error;
+  }
+}
+
+async function appendJsonlEntry(filePath: string, entry: ContextTraceEvent): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await appendFile(filePath, `${stringifyTraceEntry(entry)}\n`, "utf8");
+}
+
+function stringifyTraceEntry(entry: ContextTraceEvent): string {
+  return JSON.stringify(entry, (_key, value) => {
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: value.message,
+      };
+    }
+    return value;
+  });
+}
+
+function traceResultData(result: SDKResultMessage): Record<string, unknown> {
+  return {
+    subtype: result.subtype,
+    is_error: result.is_error,
+    result: result.result,
+    num_turns: result.num_turns,
+    ...(result.error ? { error: result.error } : {}),
+  };
 }
 
 function errorMessage(error: unknown): string {

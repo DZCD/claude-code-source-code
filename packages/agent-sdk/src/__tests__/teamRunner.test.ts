@@ -5,6 +5,7 @@ import {
   createMemoryMailbox,
   createTeamRunner,
   delegateTool,
+  type ContextTraceEvent,
   type ModelClient,
   type TeamRunnerMessage,
 } from "../index.js";
@@ -232,6 +233,63 @@ describe("team runner", () => {
       content: "Engineering result",
       workItemRole: "upstream_report",
     });
+  });
+
+  test("passes query tracer context to delegated agents with member source", async () => {
+    const trace: ContextTraceEvent[] = [];
+    const engineeringAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return textAssistant("Engineering result");
+        },
+      },
+    });
+    let rootCalls = 0;
+    const rootAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          rootCalls++;
+          if (rootCalls === 1) {
+            return toolUseAssistant("toolu_1", "engineering", {
+              task: "Design the trace store",
+            });
+          }
+          return textAssistant("CEO final");
+        },
+      },
+      tools: [
+        delegateTool("engineering", "Delegate engineering work", engineeringAgent),
+      ],
+    });
+    const runner = createTeamRunner({
+      root: rootAgent,
+      mailbox: createMemoryMailbox(),
+    });
+
+    await collect(runner.query("Use engineering.", {
+      tracer: {
+        onEvent(event) {
+          trace.push(event);
+        },
+      },
+    }));
+
+    expect(trace.some(entry =>
+      entry.type === "result" &&
+      entry.data.result === "Engineering result" &&
+      entry.source.kind === "team_member" &&
+      entry.source.member === "engineering" &&
+      entry.source.mailbox === "engineering"
+    )).toBe(true);
+    expect(trace.some(entry =>
+      entry.type === "tool_use" &&
+      entry.source.kind === "root" &&
+      entry.data.name === "engineering"
+    )).toBe(true);
   });
 
   test("delegated AgentLike can delegate to another AgentLike", async () => {

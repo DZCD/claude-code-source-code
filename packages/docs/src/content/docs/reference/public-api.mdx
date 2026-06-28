@@ -17,6 +17,7 @@ description: Stable exports exposed by the SDK package.
 | `createMCPTools(client, options)` | Maps an MCP client into SDK tool definitions. |
 | `connectMCPStdioServer(server, options)` | Connects a stdio MCP server and returns SDK tools plus a close handle. |
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
+| `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates an `AgentLike` team with a lead, members, mailbox, and built-in runtime. |
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. |
@@ -42,6 +43,7 @@ const result = await agent.prompt(prompt);
 | --- | --- | --- |
 | `apiKey` | `string` | Provider API key. |
 | `baseURL` | `string` | Optional Anthropic-compatible endpoint, such as DeepSeek. |
+| `name` | `string` | Optional source name used in context trace events. |
 | `model` | `string` | Model name. |
 | `systemPrompt` | `string` | Stable role and responsibility instructions sent as the provider system prompt. |
 | `maxTokens` | `number` | Maximum output tokens per model request. |
@@ -50,6 +52,40 @@ const result = await agent.prompt(prompt);
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
 | `permission` | `function` | Callback that can allow or deny tool execution. |
 | `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
+| `tracer` | `ContextTracer` | Optional trace sink for agent context events. |
+
+### QueryOptions
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `stream` | `boolean` | Enables raw provider stream events. Defaults to `true`. |
+| `signal` | `AbortSignal` | Cancels the running query. |
+| `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
+| `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
+
+## Context tracing
+
+```ts
+import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+});
+
+const agent = createAgent({
+  model: "deepseek-v4-flash",
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  tracer,
+});
+
+await agent.prompt("Trace this run.", { stream: false });
+```
+
+`createJsonlContextTracer()` accepts either `path` for one explicit file or `dir`
+for one file per `session_id`. It also accepts `redact(event)` for local
+filtering before persistence and `failOnError` for hosts that want trace write
+failures to fail the agent run.
 
 ## Types
 
@@ -59,6 +95,11 @@ const result = await agent.prompt(prompt);
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
 | `AgentLike` | Minimal callable interface implemented by `Agent` and `Team`. |
 | `AgentOptions` | Agent construction options. |
+| `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
+| `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
+| `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
+| `ContextTraceEventType` | Union of trace event type strings. |
+| `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
 | `ToolDefinition` | Tool shape passed to an agent. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
 | `AgentToolOptions` | Description and target mailbox options for `agentTool()`. |

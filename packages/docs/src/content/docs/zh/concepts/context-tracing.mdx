@@ -1,0 +1,155 @@
+---
+title: 上下文追踪
+description: 用 JSONL 记录 agent 运行、工具调用和团队委托上下文。
+---
+
+上下文追踪让宿主应用在不改变 agent loop 的情况下观察运行过程。SDK 会通过
+很小的 `ContextTracer` 接口输出结构化事件，内置 JSONL tracer 会把每个事件
+写成一行 JSON。
+
+追踪是 append-only 的可观测性能力，不等于 resume。当前 `Agent` 的对话状态仍然
+只在实例生命周期内保存在内存中。
+
+## JSONL tracer
+
+需要本地调试、审计日志或测试产物时，可以使用 `createJsonlContextTracer()`。
+
+```ts
+import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+await agent.prompt("记住我的名字是 Ada。", {
+  stream: false,
+});
+```
+
+每一行 JSONL 都是一个独立对象：
+
+```json
+{
+  "version": 1,
+  "timestamp": "2026-06-28T12:00:00.000Z",
+  "session_id": "session-id",
+  "run_id": "run-id",
+  "seq": 1,
+  "source": { "kind": "agent", "name": "agent" },
+  "type": "user_message",
+  "data": {
+    "message": {
+      "role": "user",
+      "content": "记住我的名字是 Ada。"
+    }
+  }
+}
+```
+
+如果传入 `dir` 而不是 `path`，tracer 会按 session 写文件：
+
+```ts
+const tracer = createJsonlContextTracer({
+  dir: ".agent-runs",
+});
+```
+
+## 事件类型
+
+| 类型 | 说明 |
+| --- | --- |
+| `run_start` | Agent run 元数据，包括模型和工具名。 |
+| `user_message` | 加入模型上下文的用户消息或工具结果消息。 |
+| `model_request` | 模型请求上下文，包括选中的 messages、tools 和 stream 模式。 |
+| `assistant_message` | 模型客户端返回的 assistant message。 |
+| `tool_use` | Assistant 请求的工具调用。 |
+| `tool_result` | SDK 产生并回填给模型的工具结果。 |
+| `result` | 本次 query 的最终结果，包括成功和错误 subtype。 |
+
+`seq` 在同一个 tracer 实例中单调递增。UI 或日志管线可以用 `session_id`、
+`run_id` 和 `source` 来分组。
+
+## Team 追踪
+
+在 `team.query()` 或 `createTeamRunner().query()` options 中传入 tracer，可以把
+同一个追踪 sink 传递给被委托的子 agent。
+
+```ts
+for await (const event of team.query("请 engineering 检查 tracing 设计。", {
+  tracer,
+})) {
+  console.log(event);
+}
+```
+
+被委托的 agent 会带上运行来源：
+
+```json
+{
+  "source": {
+    "kind": "team_member",
+    "name": "engineering",
+    "member": "engineering",
+    "mailbox": "engineering"
+  },
+  "type": "result",
+  "data": {
+    "subtype": "success",
+    "result": "Engineering result"
+  }
+}
+```
+
+即使根 agent 通过 team 或嵌套 team 委托工作，JSONL 也能保持可读。
+
+## 自定义 sink
+
+`ContextTracer` 很小，宿主可以写入自己的数据库或可观测性系统。
+
+```ts
+import type { ContextTracer } from "claude-team-agent-sdk";
+
+const tracer: ContextTracer = {
+  async onEvent(event) {
+    await writeTraceToDatabase(event);
+  },
+  async flush() {
+    await flushTraceWrites();
+  },
+};
+```
+
+只有当 trace 持久性是产品契约的一部分时，才建议使用 `failOnError: true`。
+默认情况下，tracing 应该是旁路观察，不应该让 agent run 失败。
+
+## 脱敏
+
+Trace 事件可能包含 prompt、模型上下文、工具输入和工具输出。写入 JSONL 前可以
+使用 `redact` 执行本地策略：
+
+```ts
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+  redact(event) {
+    if (event.type === "model_request") {
+      return {
+        ...event,
+        data: {
+          ...event.data,
+          messages: "[redacted]",
+        },
+      };
+    }
+    return event;
+  },
+});
+```
+
+从 `redact` 返回 `undefined` 可以跳过整个事件。

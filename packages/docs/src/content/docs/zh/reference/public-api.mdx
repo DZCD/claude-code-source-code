@@ -17,6 +17,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createMCPTools(client, options)` | 把 MCP client 映射成 SDK 工具。 |
 | `connectMCPStdioServer(server, options)` | 连接 stdio MCP server，并返回工具和 close handle。 |
 | `connectMCPStreamableHTTPServer(url, options)` | 连接远程 Streamable HTTP MCP server，支持 OAuth。 |
+| `createJsonlContextTracer(options)` | 创建用于 agent 运行上下文事件的 JSONL trace sink。 |
 | `teamMember(options)` | 创建团队成员定义。 |
 | `createTeam(options)` | 创建一个带 lead、members、mailbox 和内置 runtime 的 `AgentLike` 团队。 |
 | `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。 |
@@ -42,6 +43,7 @@ const result = await agent.prompt(prompt);
 | --- | --- | --- |
 | `apiKey` | `string` | Provider API key。 |
 | `baseURL` | `string` | 可选的 Anthropic 兼容接口地址，例如 DeepSeek。 |
+| `name` | `string` | 可选的 trace source 名称。 |
 | `model` | `string` | 模型名。 |
 | `systemPrompt` | `string` | 作为 provider system prompt 发送的稳定角色和职责指令。 |
 | `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
@@ -50,6 +52,39 @@ const result = await agent.prompt(prompt);
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
 | `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
+| `tracer` | `ContextTracer` | 可选的 agent 上下文事件 trace sink。 |
+
+### QueryOptions
+
+| 选项 | 类型 | 说明 |
+| --- | --- | --- |
+| `stream` | `boolean` | 是否输出底层 provider stream event，默认 `true`。 |
+| `signal` | `AbortSignal` | 中断当前 query。 |
+| `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
+| `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
+
+## 上下文追踪
+
+```ts
+import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+});
+
+const agent = createAgent({
+  model: "deepseek-v4-flash",
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  tracer,
+});
+
+await agent.prompt("Trace this run.", { stream: false });
+```
+
+`createJsonlContextTracer()` 可以接收 `path` 写入一个明确文件，也可以接收 `dir`
+按 `session_id` 写文件。它还支持 `redact(event)` 在持久化前做本地过滤，以及
+`failOnError` 让 trace 写入失败时终止 agent run。
 
 ## 核心类型
 
@@ -59,6 +94,11 @@ const result = await agent.prompt(prompt);
 | `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
 | `AgentLike` | `Agent` 和 `Team` 都实现的最小可调用接口。 |
 | `AgentOptions` | Agent 构造参数。 |
+| `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
+| `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
+| `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
+| `ContextTraceEventType` | Trace event 类型字符串 union。 |
+| `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
 | `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置。 |

@@ -36,6 +36,53 @@ Pass `{ stream: false }` to disable model streaming for a query:
 const result = await agent.prompt("Say hello", { stream: false });
 ```
 
+## JSONL Context Tracing
+
+Pass a `ContextTracer` to observe an agent run without changing the agent loop.
+The built-in JSONL tracer writes one structured event per line:
+
+```ts
+import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+await agent.prompt("Remember that my name is Ada.");
+```
+
+Each JSONL entry includes `session_id`, `run_id`, `seq`, `source`, `type`, and
+`data`. Agent runs record transcript and context events such as `run_start`,
+`user_message`, `model_request`, `assistant_message`, `tool_use`,
+`tool_result`, and `result`. For team runners, pass the tracer per query to
+propagate it into delegated agents:
+
+```ts
+for await (const event of team.query("Ask engineering to investigate.", {
+  tracer,
+})) {
+  console.log(event);
+}
+```
+
+Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
+storage, or host-specific observability:
+
+```ts
+const tracer = {
+  async onEvent(event) {
+    await writeTraceSomewhere(event);
+  },
+};
+```
+
 ## DeepSeek Anthropic-compatible API
 
 DeepSeek exposes an Anthropic-compatible endpoint. Configure `baseURL` and use a
