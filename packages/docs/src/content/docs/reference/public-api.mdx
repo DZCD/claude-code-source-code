@@ -19,7 +19,7 @@ description: Stable exports exposed by the SDK package.
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
 | `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
-| `createTeam(options)` | Creates an `AgentLike` team with a lead, members, mailbox, and built-in runtime. |
+| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. |
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
@@ -50,6 +50,7 @@ const result = await agent.prompt(prompt);
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
+| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Private agent workspace. Automatically adds workspace tools and handoff instructions to this agent. |
 | `permission` | `function` | Callback that can allow or deny tool execution. |
 | `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
 | `tracer` | `ContextTracer` | Optional trace sink for agent context events. |
@@ -93,8 +94,9 @@ failures to fail the agent run.
 | --- | --- |
 | `SDKMessage` | Union of all emitted SDK events. |
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
-| `AgentLike` | Minimal callable interface implemented by `Agent` and `Team`. |
+| `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper. |
 | `AgentOptions` | Agent construction options. |
+| `AgentWorkspaceOptions` | String path or workspace configuration object accepted by `AgentOptions.workspace`. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
@@ -108,7 +110,7 @@ failures to fail the agent run.
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
 | `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
-| `Team` | Agent-like team with a lead, members, member AgentLike tools, and advanced mailbox controls. |
+| `Team` | Callable wrapper around a lead with members, member AgentLike tools, and advanced mailbox controls. |
 | `TeamRunner` | Advanced runtime that drives mailbox-backed AgentLike delegate tools. |
 | `TeamRunnerMessage` | Union of root SDK messages and team runner activity events. |
 | `TeamMemberDefinition` | Named team member with role and `AgentLike`. |

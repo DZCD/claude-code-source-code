@@ -3,19 +3,19 @@ title: Team 团队
 description: 使用 AgentLike 委托工具和 mailbox team 构建团队协作。
 ---
 
-SDK 的团队协作围绕一个核心概念：每个可调用单元都是 `AgentLike`。
+SDK 的团队协作围绕一个核心接口：每个可调用边界都是 `AgentLike`。
 
 - `agentTool()`：把另一个 `AgentLike` 暴露成带明确行动模式的工具。
-- `createTeam()`：描述命名成员、inbox、回复和团队工具。
+- `createTeam()`：把 lead agent 包装上命名成员工具、inbox、回复和 runtime wiring。
 - `createTeamRunner()`：底层高级 runtime，用于自定义 mailbox-backed 委托。
 
-`Agent` 和 `Team` 都满足同一个 `AgentLike` 形状：它们都暴露 `query()` 和 `prompt()`。从外部看，一个团队可以像一个 agent；从内部看，它可以包含一整个组织。
+`Agent` 和 `Team` 都满足同一个 `AgentLike` 形状：它们都暴露 `query()` 和 `prompt()`。`Agent` 是真正工作的主体，拥有自己的角色、skills、tools 和 workspace。`Team` 是通向 lead 的可调用入口，lead 背后挂着团队 mailbox 和成员工具。
 
-这两者都不是完整的分布式调度器。它们提供的是可组合的 SDK 抽象，宿主应用可以在此基础上接入自己的存储、队列和 worker runtime。
+Team 不是另一个 agent 人格，也不是完整的分布式调度器。它提供的是可组合的组织/runtime 抽象，宿主应用可以在此基础上接入自己的存储、队列和 worker runtime。
 
-## Team 即 AgentLike
+## Team 作为 lead wrapper
 
-当你想直接和一个团队对话，同时让它在内部协调成员时，使用 `createTeam()`。团队会自动把成员注入成 `agentTool()` 工具，并在你调用 `team.query()` 或 `team.prompt()` 时驱动 runtime。
+当你想直接和 lead 对话，同时让这个 lead 在内部协调命名成员时，使用 `createTeam()`。Team 会自动把成员注入成 lead 可用的 `agentTool()` 工具，并在你调用 `team.query()` 或 `team.prompt()` 时驱动 runtime。
 
 ```ts
 import {
@@ -30,6 +30,7 @@ const researcher = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt: "你负责调研 agent SDK 架构，并输出简洁结论。",
+  workspace: ".agent-workspaces/researcher",
 });
 
 const team = createTeam({
@@ -39,6 +40,7 @@ const team = createTeam({
     baseURL: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-flash",
     systemPrompt: "你是工程负责人。需要调研时委托 researcher。",
+    workspace: ".agent-workspaces/engineering-lead",
   }),
   members: [
     teamMember({
@@ -57,6 +59,8 @@ for await (const event of team.query("请让 researcher 检查 SDK 设计。")) 
 ```
 
 `team.query()` 会同时输出 lead agent 的普通 SDK 消息，以及 `team_message`、`team_agent`、嵌套 `agent_message` 等团队 runtime 事件。只需要最终结果时，使用 `team.prompt()`。
+
+workspace 属于 agent，不属于 Team 或 team member 定义。给每个真正干活的 agent 配置自己的 `createAgent({ workspace })`，然后让 agent 在 mailbox 回复里用自然语言说明重要 workspace 路径和验证结果。
 
 ## Mailbox team
 
@@ -86,6 +90,7 @@ const team = createTeam({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseURL: "https://api.deepseek.com/anthropic",
         model: "deepseek-v4-flash",
+        workspace: ".agent-workspaces/researcher",
       }),
     }),
   ],
@@ -101,7 +106,7 @@ const team = createTeam({
 | `handoff` | 把任务交给该成员，并立即获得接收回执。 |
 | `observe` | 在宿主 runtime 支持时，启动可观察的长任务。 |
 
-能够接收工具的成员还会获得 mailbox tools，用于处理分配给自己的消息：
+能够接收工具的成员还会获得 mailbox tools，用于处理分配给自己的消息。如果成员创建了文件、代码、日志或其它持久化交付物，应写入自己的 workspace，并在 `team_reply` 或 `team_followup` 文本里说明相关路径。
 
 | 工具 | 作用 |
 | --- | --- |
@@ -146,7 +151,7 @@ SDK 不内置 SQLite 驱动。这样可以避免强制安装 native dependency�
 
 ## 嵌套团队
 
-因为 `teamMember().agent` 接受任意 `AgentLike`，一个 `Team` 可以成为另一个 `Team` 的成员。这个模式可以表达 CEO -> Head Team -> Executor Agent，而不需要把层级写死在 SDK 里。
+因为 `teamMember().agent` 接受任意 `AgentLike`，一个 team wrapper 可以成为另一个 team wrapper 的成员。这个模式可以表达 CEO -> Head Team -> Executor Agent，而不需要把层级写死在 SDK 里。
 
 ```ts
 import {
@@ -155,11 +160,12 @@ import {
   teamMember,
 } from "claude-team-agent-sdk";
 
-const createDeepSeekAgent = (systemPrompt: string) => createAgent({
+const createDeepSeekAgent = (systemPrompt: string, workspace: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt,
+  workspace,
 });
 
 const ceoAgent = createDeepSeekAgent(
@@ -168,6 +174,7 @@ const ceoAgent = createDeepSeekAgent(
     "你负责澄清产品目标，判断工作应该交给哪个部门，并要求下级给出简洁进展汇报。",
     "不要自己实现工程细节。",
   ].join("\n"),
+  ".agent-workspaces/ceo",
 );
 const engineeringHeadAgent = createDeepSeekAgent(
   [
@@ -175,6 +182,7 @@ const engineeringHeadAgent = createDeepSeekAgent(
     "你负责把工程目标拆成 backend 和 frontend 工作，显式路由给合适的执行者，并向上级汇报结果。",
     "架构决策要说清楚。",
   ].join("\n"),
+  ".agent-workspaces/engineering-head",
 );
 const backendAgent = createDeepSeekAgent(
   [
@@ -182,6 +190,7 @@ const backendAgent = createDeepSeekAgent(
     "你负责 API、数据模型、存储、集成和服务端正确性。",
     "遇到产品或 UI 决策时向上级反馈，不要擅自假设。",
   ].join("\n"),
+  ".agent-workspaces/backend",
 );
 const frontendAgent = createDeepSeekAgent(
   [
@@ -189,6 +198,7 @@ const frontendAgent = createDeepSeekAgent(
     "你负责 UI 流程、客户端状态、可访问性和浏览器行为。",
     "遇到 API 契约问题时向上级反馈，不要自行发明接口。",
   ].join("\n"),
+  ".agent-workspaces/frontend",
 );
 
 const engineeringTeam = createTeam({
@@ -214,7 +224,7 @@ const companyTeam = createTeam({
 });
 ```
 
-CEO 看到的是一个 `engineeringTeam` 成员；engineering team 内部可以继续把工作路由给 backend 或 frontend。
+CEO 看到的是一个 `engineeringTeam` 成员，但这个成员仍然是通向工程负责人的 callable wrapper。CEO 实际上是在和工程负责人对话；工程负责人可以在内部继续把工作路由给 backend 或 frontend。
 
 ## 路由回流
 

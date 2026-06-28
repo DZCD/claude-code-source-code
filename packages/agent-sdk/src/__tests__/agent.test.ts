@@ -226,6 +226,96 @@ describe("agent-sdk", () => {
     ]);
   });
 
+  test("workspace option gives the agent private workspace tools and instructions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-sdk-workspace-"));
+    const seenRequests: Array<{
+      systemPrompt?: string;
+      toolNames: string[];
+    }> = [];
+    let calls = 0;
+    const modelClient: ModelClient = {
+      async createMessage({ systemPrompt, tools }) {
+        calls++;
+        seenRequests.push({
+          systemPrompt,
+          toolNames: tools.map(tool => tool.name),
+        });
+        if (calls === 1) {
+          return toolUseAssistant("toolu_1", "Write", {
+            file_path: "notes/delivery.txt",
+            content: "workspace delivery",
+          });
+        }
+        return textAssistant("Wrote notes/delivery.txt and verified it in my workspace.");
+      },
+    };
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        systemPrompt: "You are the backend executor.",
+        workspace: dir,
+        modelClient,
+      });
+
+      const messages = await collect(agent.query("Create a delivery artifact."));
+      const artifact = await readFile(join(dir, "notes", "delivery.txt"), "utf8");
+
+      expect(messages.at(-1)).toMatchObject({
+        type: "result",
+        subtype: "success",
+        result: "Wrote notes/delivery.txt and verified it in my workspace.",
+      });
+      expect(artifact).toBe("workspace delivery");
+      expect(seenRequests[0]?.toolNames).toEqual([
+        "Read",
+        "Write",
+        "Edit",
+        "LS",
+        "Glob",
+        "Grep",
+        "Bash",
+      ]);
+      expect(seenRequests[0]?.systemPrompt).toContain("You are the backend executor.");
+      expect(seenRequests[0]?.systemPrompt).toContain("Your private workspace is:");
+      expect(seenRequests[0]?.systemPrompt).toContain(dir);
+      expect(seenRequests[0]?.systemPrompt).toContain("Reply in natural language with the important workspace paths");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses 16384 as the default maxTokens for model requests and traces", async () => {
+    const seenMaxTokens: number[] = [];
+    const traceEvents: Array<{ type: string; data?: Record<string, unknown> }> = [];
+    const modelClient: ModelClient = {
+      async createMessage({ maxTokens }) {
+        seenMaxTokens.push(maxTokens);
+        return textAssistant("handled");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+      tracer: {
+        onEvent(event) {
+          traceEvents.push(event);
+        },
+      },
+    });
+
+    await collect(agent.query("Use the default output budget", { stream: false }));
+
+    expect(seenMaxTokens).toEqual([16384]);
+    expect(traceEvents.find(event => event.type === "model_request")).toMatchObject({
+      data: {
+        max_tokens: 16384,
+      },
+    });
+  });
+
   test("emits stream events for streaming text responses", async () => {
     const agent = createAgent({
       apiKey: "test-key",

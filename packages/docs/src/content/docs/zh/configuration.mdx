@@ -15,7 +15,7 @@ const agent = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt: "你是一个简洁的工程助手。",
-  maxTokens: 4096,
+  maxTokens: 16384,
   maxTurns: 50,
 });
 ```
@@ -34,7 +34,7 @@ const agent = createAgent({
 
 ## 系统提示词
 
-使用 `systemPrompt` 定义 agent 的稳定角色、职责和边界。团队场景尤其需要它，因为每个 `AgentLike` 都应该有自己的职责描述。
+使用 `systemPrompt` 定义 agent 的稳定角色、职责和边界。团队场景尤其需要它，因为每个真正工作的 `Agent` 都应该有自己的职责描述。
 
 ```ts
 const backendAgent = createAgent({
@@ -48,6 +48,21 @@ const backendAgent = createAgent({
   ].join("\n"),
 });
 ```
+
+## Workspace
+
+当 agent 需要创建持久化文件、代码、报告、日志或测试证据时，使用 `workspace`。workspace 属于这个 agent，不属于 `Team` 或 `teamMember()` 定义。
+
+```ts
+const backendAgent = createAgent({
+  apiKey,
+  model,
+  systemPrompt: "你是 backend 执行 agent。",
+  workspace: ".agent-workspaces/backend",
+});
+```
+
+设置 `workspace` 后，SDK 会自动给这个 agent 增加 workspace 工具，并注入说明：交付时用自然语言汇报重要路径和验证结果。
 
 ## 中断请求
 

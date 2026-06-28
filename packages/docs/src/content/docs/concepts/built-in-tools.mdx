@@ -3,25 +3,24 @@ title: Built-in Tools
 description: Opt in to Claude Code-style file, search, edit, and shell tools.
 ---
 
-Built-in tools are not enabled by default. Use `createClaudeCodeTools()` when your application intentionally wants Claude Code-style workspace access.
+Built-in tools are not enabled by default. For a real working agent, prefer `createAgent({ workspace })`; it gives that agent private workspace tools and adds instructions to report durable deliverables with natural-language paths and verification notes.
 
 ```ts
-import {
-  createAgent,
-  createClaudeCodeTools,
-} from "claude-team-agent-sdk";
+import { createAgent } from "claude-team-agent-sdk";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  tools: createClaudeCodeTools({
+  workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
     bashTimeoutMs: 30_000,
-  }),
+  },
 });
 ```
+
+Use `createClaudeCodeTools()` directly when you want manual control over the tool list instead of attaching a workspace identity to the agent.
 
 ## Included tools
 

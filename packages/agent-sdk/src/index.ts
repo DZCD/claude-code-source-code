@@ -246,7 +246,6 @@ export type TeamMemberDefinition = {
   focus?: string;
   agent: AgentLike;
   mailboxId?: string;
-  workspace?: string;
 };
 
 export type TeamMemberInput = TeamMemberDefinition;
@@ -368,6 +367,14 @@ export type PermissionDecision =
   | { behavior: "allow" }
   | { behavior: "deny"; message: string };
 
+export type AgentWorkspaceOptions =
+  | string
+  | {
+      cwd: string;
+      allowedDirectories?: string[];
+      bashTimeoutMs?: number;
+    };
+
 export type AgentOptions = {
   apiKey?: string;
   baseURL?: string;
@@ -378,6 +385,7 @@ export type AgentOptions = {
   maxTurns?: number;
   tools?: Array<ToolDefinition<any>>;
   skills?: SkillDefinition[];
+  workspace?: AgentWorkspaceOptions;
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
   modelClient?: ModelClient;
   tracer?: ContextTracer;
@@ -615,6 +623,76 @@ export function createAgent(options: AgentOptions): Agent {
   return new Agent(options);
 }
 
+type NormalizedAgentWorkspace = {
+  cwd: string;
+  toolsOptions: ClaudeCodeToolsOptions;
+};
+
+function applyAgentWorkspaceOptions(options: AgentOptions): AgentOptions {
+  const workspace = normalizeAgentWorkspaceOptions(options.workspace);
+  if (!workspace) return options;
+  const workspaceTools = createClaudeCodeTools(workspace.toolsOptions);
+  return {
+    ...options,
+    systemPrompt: joinPromptSections([
+      options.systemPrompt,
+      formatAgentWorkspaceInstructions(workspace.cwd),
+    ]),
+    tools: mergeToolsByName(workspaceTools, options.tools ?? []),
+  };
+}
+
+function normalizeAgentWorkspaceOptions(workspace: AgentWorkspaceOptions | undefined): NormalizedAgentWorkspace | undefined {
+  if (!workspace) return undefined;
+  if (typeof workspace === "string") {
+    const cwd = resolve(workspace);
+    return {
+      cwd,
+      toolsOptions: { cwd },
+    };
+  }
+  const cwd = resolve(workspace.cwd);
+  return {
+    cwd,
+    toolsOptions: {
+      cwd,
+      ...(workspace.allowedDirectories ? { allowedDirectories: workspace.allowedDirectories } : {}),
+      ...(workspace.bashTimeoutMs ? { bashTimeoutMs: workspace.bashTimeoutMs } : {}),
+    },
+  };
+}
+
+function formatAgentWorkspaceInstructions(cwd: string): string {
+  return [
+    "Workspace:",
+    `Your private workspace is: ${cwd}`,
+    "Use workspace tools for durable files, code, generated reports, logs, and test evidence.",
+    "Keep file changes inside your workspace unless another explicitly granted tool allows a different location.",
+    "Reply in natural language with the important workspace paths and a brief verification summary when handing off work.",
+    "Do not use structured artifact reference objects as the collaboration protocol; use text, paths, evidence, and follow-up.",
+  ].join("\n");
+}
+
+function joinPromptSections(sections: Array<string | undefined>): string {
+  return sections
+    .map(section => section?.trim())
+    .filter((section): section is string => Boolean(section))
+    .join("\n\n");
+}
+
+function mergeToolsByName(...groups: Array<Array<ToolDefinition<any>>>): Array<ToolDefinition<any>> {
+  const merged: Array<ToolDefinition<any>> = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const item of group) {
+      if (seen.has(item.name)) continue;
+      seen.add(item.name);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 export function createJsonlContextTracer(options: JsonlContextTracerOptions): ContextTracer {
   if (!options.path && !options.dir) {
     throw new Error("createJsonlContextTracer requires either path or dir");
@@ -773,7 +851,6 @@ export function teamMember(input: TeamMemberInput): TeamMemberDefinition {
     agent: input.agent,
     ...(input.focus ? { focus: input.focus } : {}),
     ...(input.mailboxId ? { mailboxId: input.mailboxId } : {}),
-    ...(input.workspace ? { workspace: input.workspace } : {}),
   };
 }
 
@@ -1248,10 +1325,11 @@ export class Agent {
     if (!options.model) {
       throw new Error("AgentOptions.model is required");
     }
+    const configuredOptions = applyAgentWorkspaceOptions(options);
     this.options = {
-      maxTokens: 4096,
+      maxTokens: 16384,
       maxTurns: 50,
-      ...options,
+      ...configuredOptions,
     };
     this.modelClient =
       options.modelClient ??
@@ -2072,6 +2150,7 @@ function formatTeamMemberDelegateDescription(member: TeamMemberDefinition): stri
     `Role: ${member.role}.`,
     ...(member.focus ? [`Focus: ${member.focus}.`] : []),
     "Pass a clear task. The member will return a final result.",
+    "Ask for durable deliverables to be written in the member's own workspace and reported in natural language with important workspace paths and verification notes.",
   ];
   return details.join(" ");
 }
@@ -2123,6 +2202,8 @@ function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: Tea
     `thread: ${message.threadId}`,
     "",
     "Return the final result as assistant text. If you have AgentLike tools, you may use them to ask or hand off work to other AgentLike workers.",
+    "Write durable deliverables in your own workspace. When handing off results, mention the important workspace paths and a brief verification summary in natural language.",
+    "Do not use structured artifact reference objects as the collaboration protocol.",
     "",
     "--- delegated task ---",
     message.content,
@@ -2336,6 +2417,8 @@ function renderTeamTaskPrompt(member: TeamMemberDefinition, message: TeamMessage
     `work_item_role: ${message.workItemRole ?? ""}`,
     "",
     ...closeLoopInstructions,
+    "Write durable deliverables in your own workspace. In final replies, mention the important workspace paths and a brief verification summary in natural language.",
+    "Do not use structured artifact reference objects as the collaboration protocol.",
     "",
     "--- message content ---",
     message.content,

@@ -3,23 +3,22 @@ title: 内置工具
 description: 可选启用 Claude Code 风格的文件和 Shell 工具。
 ---
 
-SDK 提供一组可选的 Claude Code 风格工具。它们默认不会启用，必须由宿主应用显式传入。
+SDK 提供一组可选的 Claude Code 风格工具。它们默认不会启用。对于真正干活的 agent，优先使用 `createAgent({ workspace })`：它会给这个 agent 增加私有 workspace 工具，并注入“用自然语言汇报路径和验证结果”的交付说明。
 
 ```ts
-import {
-  createAgent,
-  createClaudeCodeTools,
-} from "claude-team-agent-sdk";
+import { createAgent } from "claude-team-agent-sdk";
 
 const agent = createAgent({
   apiKey,
   model,
-  tools: createClaudeCodeTools({
+  workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
-  }),
+  },
 });
 ```
+
+当你只想手动控制工具列表，而不是给 agent 绑定 workspace 身份时，可以直接使用 `createClaudeCodeTools()`。
 
 ## 工具列表
 

@@ -3,19 +3,19 @@ title: Team
 description: Build coordination with AgentLike delegate tools and mailbox-based teams.
 ---
 
-The SDK keeps team coordination centered on one idea: every callable unit is an `AgentLike`.
+The SDK keeps team coordination centered on one interface: every callable boundary is an `AgentLike`.
 
 - `agentTool()` exposes another `AgentLike` as a tool with explicit action modes.
-- `createTeam()` describes named members, inboxes, replies, and team tools.
+- `createTeam()` wraps a lead agent with named member tools, inboxes, replies, and runtime wiring.
 - `createTeamRunner()` is the advanced runtime behind mailbox-backed delegation.
 
-`Agent` and `Team` satisfy the same `AgentLike` shape: they expose `query()` and `prompt()`. From the outside, a team can look like one agent; inside, it can contain a whole organization.
+`Agent` and `Team` satisfy the same `AgentLike` shape: they expose `query()` and `prompt()`. An `Agent` is the working subject with its own role, skills, tools, and workspace. A `Team` is a callable doorway to its lead, with the team's mailbox and member tools behind that lead.
 
-The team API adds persistent collaboration semantics, but it is still intentionally small: it is not a distributed scheduler or workflow engine.
+The team API adds persistent collaboration semantics, but it is still intentionally small: it is not a separate agent personality, distributed scheduler, or workflow engine.
 
-## Team as AgentLike
+## Team as lead wrapper
 
-Use `createTeam()` when you want to talk to one `AgentLike` while it coordinates with named members internally. The team automatically injects member `agentTool()` tools for its members and drives the runtime when you call `team.query()` or `team.prompt()`.
+Use `createTeam()` when you want to talk to the lead while that lead coordinates named members internally. The team automatically injects member `agentTool()` tools into the lead and drives the runtime when you call `team.query()` or `team.prompt()`.
 
 ```ts
 import {
@@ -30,6 +30,7 @@ const researcher = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt: "You research agent SDK architecture and report concise findings.",
+  workspace: ".agent-workspaces/researcher",
 });
 
 const team = createTeam({
@@ -39,6 +40,7 @@ const team = createTeam({
     baseURL: "https://api.deepseek.com/anthropic",
     model: "deepseek-v4-flash",
     systemPrompt: "You lead engineering work. Delegate research tasks to researcher.",
+    workspace: ".agent-workspaces/engineering-lead",
   }),
   members: [
     teamMember({
@@ -57,6 +59,8 @@ for await (const event of team.query("Ask the researcher to inspect the SDK desi
 ```
 
 `team.query()` streams both the lead agent's normal SDK messages and team runtime events such as `team_message`, `team_agent`, and nested `agent_message` events. `team.prompt()` consumes that stream and returns only the final result.
+
+Workspaces belong to agents, not teams or member definitions. Give each working agent its own `createAgent({ workspace })`, then have agents mention important workspace paths and verification notes in natural-language mailbox replies.
 
 ## Mailbox team
 
@@ -86,6 +90,7 @@ const team = createTeam({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseURL: "https://api.deepseek.com/anthropic",
         model: "deepseek-v4-flash",
+        workspace: ".agent-workspaces/researcher",
       }),
     }),
   ],
@@ -103,7 +108,7 @@ await team.prompt("Ask the researcher to inspect the SDK design.");
 | `handoff` | Assign work and get an acceptance receipt immediately. |
 | `observe` | Start observable long-running work if the host runtime supports it. |
 
-Member agents that can accept tools also receive mailbox tools for assigned work:
+Member agents that can accept tools also receive mailbox tools for assigned work. If a member creates files, code, logs, or other durable deliverables, it should write them in its own workspace and report the relevant paths in `team_reply` or `team_followup` text.
 
 | Tool | Purpose |
 | --- | --- |
@@ -148,7 +153,7 @@ Hosts that need distributed execution can provide their own `TeamMailbox` adapte
 
 ## Nested teams
 
-Because `teamMember().agent` accepts any `AgentLike`, a team can be a member of another team. This is how you model CEO -> Head Team -> Executor Agent without hard-coding that hierarchy into the SDK.
+Because `teamMember().agent` accepts any `AgentLike`, a team wrapper can be a member of another team wrapper. This is how you model CEO -> Head Team -> Executor Agent without hard-coding that hierarchy into the SDK.
 
 ```ts
 import {
@@ -157,11 +162,12 @@ import {
   teamMember,
 } from "claude-team-agent-sdk";
 
-const createDeepSeekAgent = (systemPrompt: string) => createAgent({
+const createDeepSeekAgent = (systemPrompt: string, workspace: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt,
+  workspace,
 });
 
 const ceoAgent = createDeepSeekAgent(
@@ -170,6 +176,7 @@ const ceoAgent = createDeepSeekAgent(
     "Clarify product goals, decide which department owns the work, and ask for concise progress reports.",
     "Do not implement engineering details yourself.",
   ].join("\n"),
+  ".agent-workspaces/ceo",
 );
 const engineeringHeadAgent = createDeepSeekAgent(
   [
@@ -177,6 +184,7 @@ const engineeringHeadAgent = createDeepSeekAgent(
     "Break engineering goals into backend and frontend work, route tasks to the right executor, and report outcomes upstream.",
     "Keep architecture decisions explicit.",
   ].join("\n"),
+  ".agent-workspaces/engineering-head",
 );
 const backendAgent = createDeepSeekAgent(
   [
@@ -184,6 +192,7 @@ const backendAgent = createDeepSeekAgent(
     "Handle APIs, data models, storage, integrations, and server-side correctness.",
     "Escalate product or UI decisions instead of guessing.",
   ].join("\n"),
+  ".agent-workspaces/backend",
 );
 const frontendAgent = createDeepSeekAgent(
   [
@@ -191,6 +200,7 @@ const frontendAgent = createDeepSeekAgent(
     "Handle UI flows, client state, accessibility, and browser behavior.",
     "Escalate API contract questions instead of inventing them.",
   ].join("\n"),
+  ".agent-workspaces/frontend",
 );
 
 const engineeringTeam = createTeam({
@@ -216,7 +226,7 @@ const companyTeam = createTeam({
 });
 ```
 
-The CEO sees `engineeringTeam` as one member. The engineering team can internally route work to backend or frontend.
+The CEO sees `engineeringTeam` as one member, but that member is still a callable wrapper around the engineering lead. The CEO is talking to the engineering lead; the engineering lead can internally route work to backend or frontend.
 
 ## Routing loops
 

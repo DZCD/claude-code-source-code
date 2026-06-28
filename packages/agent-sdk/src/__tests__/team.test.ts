@@ -53,6 +53,23 @@ describe("team", () => {
     });
 
     expect(team.tools.map(tool => tool.name)).toEqual(["researcher"]);
+    expect(team.tools[0]?.description).toContain("workspace paths");
+    expect(team.tools[0]?.description).toContain("natural language");
+  });
+
+  test("teamMember does not keep a workspace identity field", async () => {
+    const member = teamMember({
+      name: "researcher",
+      role: "executor",
+      workspace: "/tmp/should-not-belong-to-member",
+      agent: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: { async createMessage() { return textAssistant("idle"); } },
+      }),
+    } as Parameters<typeof teamMember>[0] & { workspace: string });
+
+    expect("workspace" in member).toBe(false);
   });
 
   test("team.query automatically drives member delegation without an explicit runner", async () => {
@@ -386,6 +403,8 @@ describe("team", () => {
                 }
                 const text = String(messages.at(-1)?.content ?? "");
                 expect(text).toContain("message_id: first");
+                expect(text).toContain("Write durable deliverables in your own workspace");
+                expect(text).toContain("workspace paths");
                 return toolUseAssistant("toolu_1", "team_reply", {
                   message_id: "first",
                   content: "Research handled.",

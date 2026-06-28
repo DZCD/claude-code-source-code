@@ -13,7 +13,7 @@ const agent = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   systemPrompt: "You are a concise engineering assistant.",
-  maxTokens: 4096,
+  maxTokens: 16384,
   maxTurns: 50,
 });
 ```
@@ -34,7 +34,7 @@ const agent = createAgent({
 
 ## System prompt
 
-Use `systemPrompt` to define an agent's stable role, responsibility, and boundaries. This is especially important in team setups where each `AgentLike` needs a different job description.
+Use `systemPrompt` to define an agent's stable role, responsibility, and boundaries. This is especially important in team setups where each working `Agent` needs a different job description.
 
 ```ts
 const backendAgent = createAgent({
@@ -48,6 +48,21 @@ const backendAgent = createAgent({
   ].join("\n"),
 });
 ```
+
+## Workspace
+
+Use `workspace` when an agent should create durable files, code, reports, logs, or test evidence. The workspace belongs to that agent, not to a `Team` or `teamMember()` definition.
+
+```ts
+const backendAgent = createAgent({
+  apiKey,
+  model,
+  systemPrompt: "You are the backend executor agent.",
+  workspace: ".agent-workspaces/backend",
+});
+```
+
+When `workspace` is set, the SDK automatically adds workspace tools and instructions telling the agent to report important paths and verification notes in natural language.
 
 ## Abort a request
 

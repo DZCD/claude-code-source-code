@@ -19,7 +19,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `connectMCPStreamableHTTPServer(url, options)` | 连接远程 Streamable HTTP MCP server，支持 OAuth。 |
 | `createJsonlContextTracer(options)` | 创建用于 agent 运行上下文事件的 JSONL trace sink。 |
 | `teamMember(options)` | 创建团队成员定义。 |
-| `createTeam(options)` | 创建一个带 lead、members、mailbox 和内置 runtime 的 `AgentLike` 团队。 |
+| `createTeam(options)` | 创建一个围绕 lead 的可调用 team wrapper，包含 members、mailbox 和内置 runtime。 |
 | `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。 |
 | `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
 | `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
@@ -50,6 +50,7 @@ const result = await agent.prompt(prompt);
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
+| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 该 agent 私有 workspace。会自动为这个 agent 增加 workspace 工具和交付说明。 |
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
 | `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
 | `tracer` | `ContextTracer` | 可选的 agent 上下文事件 trace sink。 |
@@ -92,8 +93,9 @@ await agent.prompt("Trace this run.", { stream: false });
 | --- | --- |
 | `SDKMessage` | SDK 输出事件的 union 类型。 |
 | `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
-| `AgentLike` | `Agent` 和 `Team` 都实现的最小可调用接口。 |
+| `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口。 |
 | `AgentOptions` | Agent 构造参数。 |
+| `AgentWorkspaceOptions` | `AgentOptions.workspace` 接收的字符串路径或 workspace 配置对象。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
@@ -107,7 +109,7 @@ await agent.prompt("Trace this run.", { stream: false });
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
 | `MCPStdioConnection` | 已连接的 stdio MCP server。 |
 | `MCPStreamableHTTPConnection` | 已连接的远程 MCP server，包含 auth/session helpers。 |
-| `Team` | 带 lead、members、成员 AgentLike 工具和高级 mailbox 控制能力的 AgentLike 团队。 |
+| `Team` | 围绕 lead 的可调用 wrapper，包含 members、成员 AgentLike 工具和高级 mailbox 控制能力。 |
 | `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的高级 runtime。 |
 | `TeamRunnerMessage` | root SDK 事件和 team runner 活动事件的 union 类型。 |
 | `TeamMemberDefinition` | 带 role 和 `AgentLike` 的团队成员。 |
