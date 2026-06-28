@@ -51,18 +51,31 @@ const backendAgent = createAgent({
 
 ## Workspace
 
-Use `workspace` when an agent should create durable files, code, reports, logs, or test evidence. The workspace belongs to that agent, not to a `Team` or `teamMember()` definition.
+Every agent gets a private workspace for durable files, code, reports, logs, and test evidence. The workspace belongs to that agent, not to a `Team` or `teamMember()` definition.
+
+By default, the SDK stores agent work under `~/.agent/workspaces/<agent-name>`. If the agent has no `name`, it uses `~/.agent/workspaces/agent-<session-id>`.
 
 ```ts
 const backendAgent = createAgent({
   apiKey,
+  name: "backend",
   model,
   systemPrompt: "You are the backend executor agent.",
+});
+```
+
+Use `workspace` only when the host wants to override the default location:
+
+```ts
+const backendAgent = createAgent({
+  apiKey,
+  name: "backend",
+  model,
   workspace: ".agent-workspaces/backend",
 });
 ```
 
-When `workspace` is set, the SDK automatically adds workspace tools and instructions telling the agent to report important paths and verification notes in natural language.
+The SDK automatically adds workspace tools and instructions telling the agent to report important paths and verification notes in natural language.
 
 ## Abort a request
 

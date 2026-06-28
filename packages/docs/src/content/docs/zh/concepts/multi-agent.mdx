@@ -60,7 +60,7 @@ for await (const event of team.query("请让 researcher 检查 SDK 设计。")) 
 
 `team.query()` 会同时输出 lead agent 的普通 SDK 消息，以及 `team_message`、`team_agent`、嵌套 `agent_message` 等团队 runtime 事件。只需要最终结果时，使用 `team.prompt()`。
 
-workspace 属于 agent，不属于 Team 或 team member 定义。给每个真正干活的 agent 配置自己的 `createAgent({ workspace })`，然后让 agent 在 mailbox 回复里用自然语言说明重要 workspace 路径和验证结果。
+workspace 属于 agent，不属于 Team 或 team member 定义。每个 agent 都会在 `~/.agent/workspaces` 下获得默认 workspace；只有宿主想覆盖默认位置时才需要传入 `workspace`。agent 应该在 mailbox 回复里用自然语言说明重要 workspace 路径和验证结果。
 
 ## Mailbox team
 

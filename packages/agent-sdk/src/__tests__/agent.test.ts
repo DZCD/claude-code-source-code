@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import {
@@ -86,7 +86,7 @@ describe("agent-sdk", () => {
       type: "system",
       subtype: "init",
       model: "claude-test",
-      tools: [],
+      tools: ["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"],
     });
     expect(messages[1]).toMatchObject({
       type: "assistant",
@@ -221,9 +221,9 @@ describe("agent-sdk", () => {
 
     await collect(agent.query("Build the API"));
 
-    expect(seenSystemPrompts).toEqual([
-      "You are the backend executor. Only handle API and database work.",
-    ]);
+    expect(seenSystemPrompts[0]).toContain("You are the backend executor. Only handle API and database work.");
+    expect(seenSystemPrompts[0]).toContain("Your private workspace is:");
+    expect(seenSystemPrompts[0]).toContain(join(homedir(), ".agent", "workspaces", "agent-"));
   });
 
   test("workspace option gives the agent private workspace tools and instructions", async () => {
@@ -284,6 +284,43 @@ describe("agent-sdk", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("defaults the agent workspace to ~/.agent/workspaces/name when omitted", async () => {
+    const seenRequests: Array<{
+      systemPrompt?: string;
+      toolNames: string[];
+    }> = [];
+    const modelClient: ModelClient = {
+      async createMessage({ systemPrompt, tools }) {
+        seenRequests.push({
+          systemPrompt,
+          toolNames: tools.map(tool => tool.name),
+        });
+        return textAssistant("handled");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "Backend Agent",
+      model: "claude-test",
+      modelClient,
+    });
+
+    await collect(agent.query("Use the default workspace."));
+
+    const expectedWorkspace = join(homedir(), ".agent", "workspaces", "Backend_Agent");
+    expect(seenRequests[0]?.toolNames).toEqual([
+      "Read",
+      "Write",
+      "Edit",
+      "LS",
+      "Glob",
+      "Grep",
+      "Bash",
+    ]);
+    expect(seenRequests[0]?.systemPrompt).toContain("Your private workspace is:");
+    expect(seenRequests[0]?.systemPrompt).toContain(expectedWorkspace);
   });
 
   test("uses 16384 as the default maxTokens for model requests and traces", async () => {

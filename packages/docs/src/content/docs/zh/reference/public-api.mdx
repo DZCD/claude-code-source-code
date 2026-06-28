@@ -50,7 +50,7 @@ const result = await agent.prompt(prompt);
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
-| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 该 agent 私有 workspace。会自动为这个 agent 增加 workspace 工具和交付说明。 |
+| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。默认是 `~/.agent/workspaces/<agent-name>` 或 `~/.agent/workspaces/agent-<session-id>`。 |
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
 | `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
 | `tracer` | `ContextTracer` | 可选的 agent 上下文事件 trace sink。 |
@@ -95,7 +95,7 @@ await agent.prompt("Trace this run.", { stream: false });
 | `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
 | `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口。 |
 | `AgentOptions` | Agent 构造参数。 |
-| `AgentWorkspaceOptions` | `AgentOptions.workspace` 接收的字符串路径或 workspace 配置对象。 |
+| `AgentWorkspaceOptions` | `AgentOptions.workspace` 接收的字符串路径或 workspace 配置对象，用于覆盖默认 workspace。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |

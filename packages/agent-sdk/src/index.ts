@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
   dirname,
   basename,
@@ -623,14 +624,15 @@ export function createAgent(options: AgentOptions): Agent {
   return new Agent(options);
 }
 
+const DEFAULT_AGENT_WORKSPACE_ROOT = join(homedir(), ".agent", "workspaces");
+
 type NormalizedAgentWorkspace = {
   cwd: string;
   toolsOptions: ClaudeCodeToolsOptions;
 };
 
-function applyAgentWorkspaceOptions(options: AgentOptions): AgentOptions {
-  const workspace = normalizeAgentWorkspaceOptions(options.workspace);
-  if (!workspace) return options;
+function applyAgentWorkspaceOptions(options: AgentOptions, sessionId: string): AgentOptions {
+  const workspace = normalizeAgentWorkspaceOptions(options, sessionId);
   const workspaceTools = createClaudeCodeTools(workspace.toolsOptions);
   return {
     ...options,
@@ -642,8 +644,16 @@ function applyAgentWorkspaceOptions(options: AgentOptions): AgentOptions {
   };
 }
 
-function normalizeAgentWorkspaceOptions(workspace: AgentWorkspaceOptions | undefined): NormalizedAgentWorkspace | undefined {
-  if (!workspace) return undefined;
+function normalizeAgentWorkspaceOptions(options: AgentOptions, sessionId: string): NormalizedAgentWorkspace {
+  const workspace = options.workspace;
+  if (!workspace) {
+    const name = options.name?.trim() ? options.name : `agent-${sessionId}`;
+    const cwd = join(DEFAULT_AGENT_WORKSPACE_ROOT, sanitizeWorkspaceSegment(name));
+    return {
+      cwd,
+      toolsOptions: { cwd },
+    };
+  }
   if (typeof workspace === "string") {
     const cwd = resolve(workspace);
     return {
@@ -1325,7 +1335,7 @@ export class Agent {
     if (!options.model) {
       throw new Error("AgentOptions.model is required");
     }
-    const configuredOptions = applyAgentWorkspaceOptions(options);
+    const configuredOptions = applyAgentWorkspaceOptions(options, this.sessionId);
     this.options = {
       maxTokens: 16384,
       maxTurns: 50,
@@ -1937,6 +1947,11 @@ function escapeXmlAttribute(value: string): string {
 function sanitizeToolName(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
   return sanitized || "mcp_tool";
+}
+
+function sanitizeWorkspaceSegment(name: string): string {
+  const sanitized = name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
+  return sanitized || "agent";
 }
 
 class AsyncMessageQueue<T> {

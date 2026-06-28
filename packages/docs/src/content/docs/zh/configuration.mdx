@@ -51,18 +51,31 @@ const backendAgent = createAgent({
 
 ## Workspace
 
-当 agent 需要创建持久化文件、代码、报告、日志或测试证据时，使用 `workspace`。workspace 属于这个 agent，不属于 `Team` 或 `teamMember()` 定义。
+每个 agent 默认都有自己的私有 workspace，用于存储持久化文件、代码、报告、日志和测试证据。workspace 属于这个 agent，不属于 `Team` 或 `teamMember()` 定义。
+
+默认路径是 `~/.agent/workspaces/<agent-name>`。如果 agent 没有 `name`，则使用 `~/.agent/workspaces/agent-<session-id>`。
 
 ```ts
 const backendAgent = createAgent({
   apiKey,
+  name: "backend",
   model,
   systemPrompt: "你是 backend 执行 agent。",
+});
+```
+
+只有当宿主想覆盖默认位置时，才需要显式传入 `workspace`：
+
+```ts
+const backendAgent = createAgent({
+  apiKey,
+  name: "backend",
+  model,
   workspace: ".agent-workspaces/backend",
 });
 ```
 
-设置 `workspace` 后，SDK 会自动给这个 agent 增加 workspace 工具，并注入说明：交付时用自然语言汇报重要路径和验证结果。
+SDK 会自动给 agent 增加 workspace 工具，并注入说明：交付时用自然语言汇报重要路径和验证结果。
 
 ## 中断请求
 

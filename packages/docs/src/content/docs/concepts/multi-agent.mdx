@@ -60,7 +60,7 @@ for await (const event of team.query("Ask the researcher to inspect the SDK desi
 
 `team.query()` streams both the lead agent's normal SDK messages and team runtime events such as `team_message`, `team_agent`, and nested `agent_message` events. `team.prompt()` consumes that stream and returns only the final result.
 
-Workspaces belong to agents, not teams or member definitions. Give each working agent its own `createAgent({ workspace })`, then have agents mention important workspace paths and verification notes in natural-language mailbox replies.
+Workspaces belong to agents, not teams or member definitions. Every agent gets a default workspace under `~/.agent/workspaces`; pass `workspace` only when the host wants to override that location. Agents should mention important workspace paths and verification notes in natural-language mailbox replies.
 
 ## Mailbox team
 
