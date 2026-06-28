@@ -10,6 +10,7 @@ import {
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
@@ -633,6 +634,7 @@ type NormalizedAgentWorkspace = {
 
 function applyAgentWorkspaceOptions(options: AgentOptions, sessionId: string): AgentOptions {
   const workspace = normalizeAgentWorkspaceOptions(options, sessionId);
+  mkdirSync(workspace.cwd, { recursive: true });
   const workspaceTools = createClaudeCodeTools(workspace.toolsOptions);
   return {
     ...options,

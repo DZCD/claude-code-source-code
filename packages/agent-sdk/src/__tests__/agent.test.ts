@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -281,6 +281,23 @@ describe("agent-sdk", () => {
       expect(seenRequests[0]?.systemPrompt).toContain("Your private workspace is:");
       expect(seenRequests[0]?.systemPrompt).toContain(dir);
       expect(seenRequests[0]?.systemPrompt).toContain("Reply in natural language with the important workspace paths");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("creates the configured workspace directory when the agent is created", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-sdk-workspace-root-"));
+    const workspace = join(dir, "missing", "agent-workspace");
+    try {
+      createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        workspace,
+        modelClient: clientFromResponses([textAssistant("handled")]),
+      });
+
+      expect((await stat(workspace)).isDirectory()).toBe(true);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
