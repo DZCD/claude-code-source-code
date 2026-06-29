@@ -188,7 +188,12 @@ const tracer: ContextTracer = {
 ## 脱敏
 
 Trace 事件可能包含 prompt、模型上下文、工具输入和工具输出。写入 JSONL 前可以
-使用 `redact` 执行本地策略：
+使用 `redact` 执行本地策略。
+
+`redact` 是你传给 SDK 的回调函数。JSONL tracer 在写入每个 trace event 前，
+会先把 event 传给这个回调。回调可以返回原 event、返回修改后的副本，或者返回
+`undefined` 来跳过这个 event。这只会改变写入 trace 文件的内容，不会改变真正
+发给模型的请求。
 
 ```ts
 const tracer = createJsonlContextTracer({
@@ -208,4 +213,20 @@ const tracer = createJsonlContextTracer({
 });
 ```
 
-从 `redact` 返回 `undefined` 可以跳过整个事件。
+这个例子会在持久化前把 `model_request.data.messages` 替换成
+`"[redacted]"`。这个字段通常可能包含用户 prompt、对话历史和工具结果，所以常常
+是本地隐私策略优先处理的位置。其它事件类型会原样写入。
+
+从 `redact` 返回 `undefined` 可以跳过整个事件：
+
+```ts
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+  redact(event) {
+    if (event.type === "tool_result") {
+      return undefined;
+    }
+    return event;
+  },
+});
+```

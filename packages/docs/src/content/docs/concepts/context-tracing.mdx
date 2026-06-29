@@ -194,7 +194,13 @@ runs fail.
 ## Redaction
 
 Trace entries can contain prompts, model context, tool inputs, and tool outputs.
-Use `redact` for local policy before writing JSONL:
+Use `redact` for local policy before writing JSONL.
+
+`redact` is a callback that you provide. Before the JSONL tracer writes each
+trace event, the SDK passes the event to this callback. The callback can return
+the original event, return a modified copy, or return `undefined` to skip the
+event. This only changes what is written to the trace file; it does not change
+the request sent to the model.
 
 ```ts
 const tracer = createJsonlContextTracer({
@@ -214,4 +220,21 @@ const tracer = createJsonlContextTracer({
 });
 ```
 
-Return `undefined` from `redact` to skip an event entirely.
+In this example, `model_request.data.messages` is replaced with `"[redacted]"`
+before persistence. That field can contain the user prompt, conversation
+history, and tool results, so it is often the first place to apply a local
+privacy policy. Other event types are returned unchanged.
+
+Return `undefined` from `redact` to skip an event entirely:
+
+```ts
+const tracer = createJsonlContextTracer({
+  path: ".agent-runs/session.jsonl",
+  redact(event) {
+    if (event.type === "tool_result") {
+      return undefined;
+    }
+    return event;
+  },
+});
+```
