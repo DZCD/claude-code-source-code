@@ -146,7 +146,6 @@ code you provide, not SDK exports:
 const tracer = {
   async onEvent(event) {
     // TODO: Replace with your own storage/logging code.
-    await writeTraceSomewhere(event);
   },
 };
 ```

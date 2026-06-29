@@ -180,11 +180,9 @@ import type { ContextTracer } from "claude-team-agent-sdk";
 const tracer: ContextTracer = {
   async onEvent(event) {
     // TODO: Replace with your own database insert.
-    await writeTraceToDatabase(event);
   },
   async flush() {
     // TODO: Replace with your own buffered-write flush.
-    await flushTraceWrites();
   },
 };
 ```
