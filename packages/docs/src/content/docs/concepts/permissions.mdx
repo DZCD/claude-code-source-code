@@ -1,11 +1,15 @@
 ---
 title: Permissions
-description: Intercept tool calls before execution.
+description: Intercept tool calls before execution and apply host policy.
 ---
 
-The permission callback runs before every tool call. Return `allow` to execute the tool, or `deny` to send an error tool result back to the model.
+Permission callbacks let the host application decide whether a tool call should run. Use them for file writes, shell commands, external APIs, payments, deletion, or any operation where the host owns the policy.
+
+The callback runs after the model asks to call a registered tool and before the tool input is parsed or the tool handler executes. Return `{ behavior: "allow" }` to run the tool, or return `{ behavior: "deny", message }` to block it.
 
 ```ts
+import { createAgent, createClaudeCodeTools } from "claude-team-agent-sdk";
+
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
@@ -27,4 +31,51 @@ const agent = createAgent({
 });
 ```
 
-Denied tools do not throw by default. The model receives a `tool_result` with `is_error: true`, so it can explain the limitation or choose another path.
+## Deny Is Not A Crash
+
+Denied tools do not throw by default. The SDK sends the model a `tool_result` with `is_error: true` and the denial message as its content.
+
+That lets the model:
+
+- Explain that the operation was blocked by host policy.
+- Try another allowed tool.
+- Ask the user for a different path or additional approval.
+
+## Request Shape
+
+The permission callback receives:
+
+| Field | Meaning |
+| --- | --- |
+| `toolName` | The registered tool name the model wants to call. |
+| `input` | The raw tool input from the model. Treat it as untrusted data. |
+| `toolUseId` | The id for this tool call. |
+
+## Input-Aware Policies
+
+You can inspect `request.input` before allowing a tool. Keep the policy in your application code; the SDK only calls it.
+
+```ts
+import type { AgentOptions } from "claude-team-agent-sdk";
+
+const permission: AgentOptions["permission"] = async request => {
+  if (request.toolName === "Bash") {
+    const command = String(request.input.command ?? "");
+
+    if (command.includes("rm -rf")) {
+      return {
+        behavior: "deny",
+        message: "Destructive shell commands are disabled for this session.",
+      };
+    }
+  }
+
+  return { behavior: "allow" };
+};
+```
+
+## Boundaries
+
+Permissions are an approval layer, not a full sandbox. They do not rewrite model output, hide prompt content, or validate every custom tool argument for you.
+
+For built-in file tools, combine permissions with `allowedDirectories` so file access stays inside the workspace you configured. For `Bash` and custom tools that call external systems, enforce the real safety boundary in the host environment as well: expose only the tools you need, validate inputs, use scoped credentials, and redact sensitive values before logging.
