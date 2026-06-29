@@ -31,6 +31,31 @@ const agent = createAgent({
 });
 ```
 
+## 如何允许
+
+如果没有传 `permission` 回调，所有已注册工具调用都会被允许。传了回调后，返回 `{ behavior: "allow" }` 就表示允许当前这一次工具调用。
+
+上面的例子是 deny-list 策略：命中 `Bash` 就拒绝，最后的 `return { behavior: "allow" }` 表示其它工具都放行。
+
+如果你想写 allow-list 策略，可以反过来判断：
+
+```ts
+import type { AgentOptions } from "claude-team-agent-sdk";
+
+const readOnlyTools = new Set(["Read", "LS", "Glob", "Grep"]);
+
+const permission: AgentOptions["permission"] = async request => {
+  if (readOnlyTools.has(request.toolName)) {
+    return { behavior: "allow" };
+  }
+
+  return {
+    behavior: "deny",
+    message: "Only read-only tools are allowed for this session.",
+  };
+};
+```
+
 ## 拒绝不是崩溃
 
 当回调返回 `deny` 时，SDK 不会直接抛出异常结束整个 agent loop。它会把拒绝原因作为错误 `tool_result` 回给模型。

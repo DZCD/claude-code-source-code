@@ -31,6 +31,31 @@ const agent = createAgent({
 });
 ```
 
+## Allowing Tools
+
+If you do not pass a `permission` callback, every registered tool call is allowed. When you do pass one, returning `{ behavior: "allow" }` approves the current tool call.
+
+The example above is a deny-list policy: it blocks `Bash`, then allows everything else with the final `return { behavior: "allow" }`.
+
+For an allow-list policy, invert the condition:
+
+```ts
+import type { AgentOptions } from "claude-team-agent-sdk";
+
+const readOnlyTools = new Set(["Read", "LS", "Glob", "Grep"]);
+
+const permission: AgentOptions["permission"] = async request => {
+  if (readOnlyTools.has(request.toolName)) {
+    return { behavior: "allow" };
+  }
+
+  return {
+    behavior: "deny",
+    message: "Only read-only tools are allowed for this session.",
+  };
+};
+```
+
 ## Deny Is Not A Crash
 
 Denied tools do not throw by default. The SDK sends the model a `tool_result` with `is_error: true` and the denial message as its content.
