@@ -166,16 +166,19 @@ for await (const event of team.query("请 engineering 检查 tracing 设计。",
 
 ## 自定义 sink
 
-`ContextTracer` 很小，宿主可以写入自己的数据库或可观测性系统。
+`ContextTracer` 很小，宿主可以写入自己的数据库或可观测性系统。下面这些函数
+是宿主应用自己实现的代码，不是 SDK 导出的 API：
 
 ```ts
 import type { ContextTracer } from "claude-team-agent-sdk";
 
 const tracer: ContextTracer = {
   async onEvent(event) {
+    // TODO: 替换成你自己的数据库写入逻辑。
     await writeTraceToDatabase(event);
   },
   async flush() {
+    // TODO: 替换成你自己的缓冲区 flush 逻辑。
     await flushTraceWrites();
   },
 };

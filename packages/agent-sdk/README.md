@@ -139,11 +139,13 @@ model turns, child `tool` runs for SDK tool calls, and run events for auxiliary
 trace events.
 
 Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
-storage, or host-specific observability:
+storage, or host-specific observability. The functions below are application
+code you provide, not SDK exports:
 
 ```ts
 const tracer = {
   async onEvent(event) {
+    // TODO: Replace with your own storage/logging code.
     await writeTraceSomewhere(event);
   },
 };

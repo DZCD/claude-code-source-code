@@ -171,16 +171,19 @@ teams or nested teams.
 ## Custom sinks
 
 `ContextTracer` is intentionally small so hosts can write to their own storage or
-observability pipeline.
+observability pipeline. The functions below are application code you provide,
+not SDK exports:
 
 ```ts
 import type { ContextTracer } from "claude-team-agent-sdk";
 
 const tracer: ContextTracer = {
   async onEvent(event) {
+    // TODO: Replace with your own database insert.
     await writeTraceToDatabase(event);
   },
   async flush() {
+    // TODO: Replace with your own buffered-write flush.
     await flushTraceWrites();
   },
 };
