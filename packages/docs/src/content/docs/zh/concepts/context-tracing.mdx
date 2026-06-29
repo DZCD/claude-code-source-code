@@ -1,11 +1,11 @@
 ---
 title: 上下文追踪
-description: 用 JSONL 记录 agent 运行、工具调用和团队委托上下文。
+description: 记录 agent 运行、工具调用和团队委托上下文。
 ---
 
 上下文追踪让宿主应用在不改变 agent loop 的情况下观察运行过程。SDK 会通过
-很小的 `ContextTracer` 接口输出结构化事件，内置 JSONL tracer 会把每个事件
-写成一行 JSON。
+很小的 `ContextTracer` 接口输出结构化事件。内置 tracer 可以把事件写成本地
+JSONL，也可以把事件投影到 LangSmith。
 
 追踪是 append-only 的可观测性能力，不等于 resume。当前 `Agent` 的对话状态仍然
 只在实例生命周期内保存在内存中。
@@ -59,6 +59,52 @@ await agent.prompt("记住我的名字是 Ada。", {
 const tracer = createJsonlContextTracer({
   dir: ".agent-runs",
 });
+```
+
+## LangSmith tracer
+
+需要把 SDK 运行显示成 LangSmith trace 时，可以使用
+`createLangSmithContextTracer()`。宿主应用自行安装 `langsmith`，并把它的
+`RunTree` 构造器传给 tracer。
+
+```ts
+import { RunTree } from "langsmith/run_trees";
+import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createLangSmithContextTracer({
+  RunTree,
+  projectName: "agent-sdk",
+  tags: ["local-debug"],
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+```
+
+SDK 不 import LangSmith，也不把它作为硬依赖。LangSmith tracer 和 JSONL tracer
+一样只是实现 `ContextTracer`，所以 agent loop 不需要知道具体观测后端。
+
+LangSmith 会收到这样的投影：
+
+| SDK 事件序列 | LangSmith 投影 |
+| --- | --- |
+| `run_start` 到 `result` | 根 `chain` run。 |
+| `model_request` 到 `assistant_message` | 子 `llm` run。 |
+| `tool_use` 到 `tool_result` | 子 `tool` run。 |
+| `team_message` 和其它辅助事件 | 当前 chain 上的 run event。 |
+
+可以用 `createCompositeContextTracer()` 把同一份 trace stream 同时发送到多个
+sink：
+
+```ts
+const tracer = createCompositeContextTracer([
+  createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
+  createLangSmithContextTracer({ RunTree, projectName: "agent-sdk" }),
+]);
 ```
 
 ## 事件类型

@@ -92,6 +92,42 @@ for await (const event of team.query("Ask engineering to investigate.", {
 }
 ```
 
+## LangSmith Context Tracing
+
+Install `langsmith` in the host application and pass its `RunTree` constructor
+to the SDK tracer. The SDK does not take a hard dependency on LangSmith; it only
+uses the public `ContextTracer` sink interface.
+
+```ts
+import { RunTree } from "langsmith/run_trees";
+import {
+  createAgent,
+  createCompositeContextTracer,
+  createJsonlContextTracer,
+  createLangSmithContextTracer,
+} from "claude-team-agent-sdk";
+
+const tracer = createCompositeContextTracer([
+  createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
+  createLangSmithContextTracer({
+    RunTree,
+    projectName: "agent-sdk",
+    tags: ["local-debug"],
+  }),
+]);
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+```
+
+LangSmith receives one root `chain` run per SDK query, child `llm` runs for
+model turns, child `tool` runs for SDK tool calls, and run events for auxiliary
+trace events.
+
 Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
 storage, or host-specific observability:
 

@@ -8,8 +8,11 @@ import {
   MaxTurnsError,
   ToolExecutionError,
   createAgent,
+  createCompositeContextTracer,
   createJsonlContextTracer,
+  createLangSmithContextTracer,
   tool,
+  type ContextTraceEvent,
   type ModelClient,
   type SDKMessage,
 } from "../index.js";
@@ -65,6 +68,102 @@ async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[
     messages.push(message);
   }
   return messages;
+}
+
+type FakeRunConfig = {
+  name: string;
+  run_type?: string;
+  id?: string;
+  project_name?: string;
+  parent_run?: FakeRunTree;
+  start_time?: number | string;
+  metadata?: Record<string, unknown>;
+  tags?: string[];
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  error?: string;
+  client?: unknown;
+};
+
+class FakeRunTree {
+  static runs: FakeRunTree[] = [];
+  static operations: Array<{ type: string; run: string; options?: unknown }> = [];
+
+  id?: string;
+  name: string;
+  run_type: string;
+  project_name?: string;
+  parent_run?: FakeRunTree;
+  child_runs: FakeRunTree[] = [];
+  start_time?: number | string;
+  metadata: Record<string, unknown>;
+  tags?: string[];
+  inputs: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  error?: string;
+  events: unknown[] = [];
+  client?: unknown;
+
+  constructor(config: FakeRunConfig) {
+    this.id = config.id;
+    this.name = config.name;
+    this.run_type = config.run_type ?? "chain";
+    this.project_name = config.project_name;
+    this.parent_run = config.parent_run;
+    this.start_time = config.start_time;
+    this.metadata = config.metadata ?? {};
+    this.tags = config.tags;
+    this.inputs = config.inputs ?? {};
+    this.outputs = config.outputs;
+    this.error = config.error;
+    this.client = config.client;
+    FakeRunTree.runs.push(this);
+  }
+
+  createChild(config: FakeRunConfig): FakeRunTree {
+    const child = new FakeRunTree({ ...config, parent_run: this });
+    this.child_runs.push(child);
+    return child;
+  }
+
+  async postRun(excludeChildRuns?: boolean): Promise<void> {
+    FakeRunTree.operations.push({
+      type: "post",
+      run: this.name,
+      options: { excludeChildRuns },
+    });
+  }
+
+  async end(
+    outputs?: Record<string, unknown>,
+    error?: string,
+    _endTime?: number,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    this.outputs = outputs;
+    this.error = error;
+    if (metadata) {
+      this.metadata = { ...this.metadata, ...metadata };
+    }
+    FakeRunTree.operations.push({ type: "end", run: this.name });
+  }
+
+  async patchRun(options?: { excludeInputs?: boolean }): Promise<void> {
+    FakeRunTree.operations.push({
+      type: "patch",
+      run: this.name,
+      options,
+    });
+  }
+
+  addEvent(event: unknown): void {
+    this.events.push(event);
+  }
+
+  static reset(): void {
+    FakeRunTree.runs = [];
+    FakeRunTree.operations = [];
+  }
 }
 
 describe("agent-sdk", () => {
@@ -202,6 +301,178 @@ describe("agent-sdk", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("fans out context trace events to composite tracers", async () => {
+    const seen: string[] = [];
+    const event: ContextTraceEvent = {
+      version: 1,
+      timestamp: "2026-06-29T00:00:00.000Z",
+      session_id: "session_1",
+      run_id: "11111111-1111-4111-8111-111111111111",
+      seq: 1,
+      source: { kind: "agent", name: "agent" },
+      type: "run_start",
+      data: { model: "claude-test", tools: [] },
+    };
+    const tracer = createCompositeContextTracer([
+      {
+        onEvent(input) {
+          seen.push(`first:${input.type}`);
+        },
+        async flush() {
+          seen.push("first:flush");
+        },
+        async close() {
+          seen.push("first:close");
+        },
+      },
+      {
+        onEvent(input) {
+          seen.push(`second:${input.type}`);
+        },
+        async flush() {
+          seen.push("second:flush");
+        },
+        async close() {
+          seen.push("second:close");
+        },
+      },
+    ]);
+
+    await tracer.onEvent(event);
+    await tracer.flush?.();
+    await tracer.close?.();
+
+    expect(seen).toEqual([
+      "first:run_start",
+      "second:run_start",
+      "first:flush",
+      "second:flush",
+      "first:close",
+      "second:close",
+    ]);
+  });
+
+  test("maps agent context trace events to LangSmith chain and llm runs", async () => {
+    FakeRunTree.reset();
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+      tags: ["test-suite"],
+      metadata: { environment: "test" },
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "researcher",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("hello")]),
+    });
+
+    await collect(agent.query("Say hello", { stream: false, tracer }));
+    await tracer.flush?.();
+
+    const root = FakeRunTree.runs.find(run => run.run_type === "chain");
+    const llm = FakeRunTree.runs.find(run => run.run_type === "llm");
+    expect(root).toMatchObject({
+      name: "researcher",
+      run_type: "chain",
+      project_name: "agent-sdk-tests",
+      inputs: {
+        message: {
+          role: "user",
+          content: "Say hello",
+        },
+      },
+      outputs: {
+        subtype: "success",
+        result: "hello",
+      },
+      metadata: {
+        environment: "test",
+        sdk_session_id: expect.any(String),
+        sdk_run_id: expect.any(String),
+        sdk_source_kind: "agent",
+        sdk_source_name: "researcher",
+        model: "claude-test",
+      },
+    });
+    expect(root?.tags).toEqual(expect.arrayContaining([
+      "claude-team-agent-sdk",
+      "test-suite",
+      "source:agent",
+    ]));
+    expect(llm).toMatchObject({
+      run_type: "llm",
+      parent_run: root,
+      inputs: {
+        model: "claude-test",
+        stream: false,
+      },
+      outputs: {
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }],
+        },
+      },
+      metadata: {
+        sdk_event_type: "model_request",
+        sdk_parent_run_id: undefined,
+      },
+    });
+    expect(FakeRunTree.operations).toEqual(expect.arrayContaining([
+      { type: "post", run: "researcher", options: { excludeChildRuns: true } },
+      { type: "patch", run: "researcher", options: { excludeInputs: false } },
+    ]));
+  });
+
+  test("maps SDK tool use events to LangSmith tool runs without agent loop changes", async () => {
+    FakeRunTree.reset();
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([
+        toolUseAssistant("toolu_1", "calculator", { expr: "2+2" }),
+        textAssistant("The answer is 4"),
+      ]),
+      tools: [
+        tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => ({
+          content: "4",
+        })),
+      ],
+    });
+
+    await collect(agent.query("What is 2+2?", { stream: false, tracer }));
+    await tracer.flush?.();
+
+    const root = FakeRunTree.runs.find(run => run.run_type === "chain");
+    const toolRun = FakeRunTree.runs.find(run => run.run_type === "tool");
+    const llmRuns = FakeRunTree.runs.filter(run => run.run_type === "llm");
+    expect(llmRuns).toHaveLength(2);
+    expect(toolRun).toMatchObject({
+      name: "calculator",
+      run_type: "tool",
+      parent_run: root,
+      inputs: {
+        input: { expr: "2+2" },
+      },
+      outputs: {
+        content: "4",
+        is_error: false,
+      },
+      metadata: {
+        tool_use_id: "toolu_1",
+        tool_name: "calculator",
+      },
+    });
+    expect(root?.outputs).toMatchObject({
+      subtype: "success",
+      result: "The answer is 4",
+    });
   });
 
   test("passes systemPrompt to the model client", async () => {

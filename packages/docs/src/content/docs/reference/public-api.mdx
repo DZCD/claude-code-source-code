@@ -18,6 +18,8 @@ description: Stable exports exposed by the SDK package.
 | `connectMCPStdioServer(server, options)` | Connects a stdio MCP server and returns SDK tools plus a close handle. |
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
 | `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
+| `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
+| `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. |
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. |
@@ -67,11 +69,18 @@ const result = await agent.prompt(prompt);
 ## Context tracing
 
 ```ts
-import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+import {
+  createAgent,
+  createCompositeContextTracer,
+  createJsonlContextTracer,
+  createLangSmithContextTracer,
+} from "claude-team-agent-sdk";
+import { RunTree } from "langsmith/run_trees";
 
-const tracer = createJsonlContextTracer({
-  path: ".agent-runs/session.jsonl",
-});
+const tracer = createCompositeContextTracer([
+  createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
+  createLangSmithContextTracer({ RunTree, projectName: "agent-sdk" }),
+]);
 
 const agent = createAgent({
   model: "deepseek-v4-flash",
@@ -88,6 +97,11 @@ for one file per `session_id`. It also accepts `redact(event)` for local
 filtering before persistence and `failOnError` for hosts that want trace write
 failures to fail the agent run.
 
+`createLangSmithContextTracer()` accepts a LangSmith-compatible `RunTree`
+constructor or `runTree(config)` factory. The SDK does not depend on LangSmith
+directly; hosts install `langsmith` and pass `RunTree` from
+`langsmith/run_trees`.
+
 ## Types
 
 | Export | Description |
@@ -102,6 +116,9 @@ failures to fail the agent run.
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |
 | `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
+| `LangSmithContextTracerOptions` | Options for the LangSmith tracer adapter. |
+| `LangSmithRunTreeLike` | Minimal structural interface expected from LangSmith `RunTree`. |
+| `LangSmithRunTreeConfig` | Minimal run configuration object passed to a LangSmith-compatible run tree. |
 | `ToolDefinition` | Tool shape passed to an agent. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
 | `AgentToolOptions` | Description and target mailbox options for `agentTool()`. |

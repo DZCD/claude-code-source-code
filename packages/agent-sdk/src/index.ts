@@ -129,6 +129,76 @@ export type JsonlContextTracerOptions = {
   failOnError?: boolean;
 };
 
+export type LangSmithKVMap = Record<string, unknown>;
+
+export type LangSmithRunTreeConfig = {
+  name: string;
+  run_type?: string;
+  id?: string;
+  project_name?: string;
+  parent_run?: LangSmithRunTreeLike;
+  parent_run_id?: string;
+  child_runs?: LangSmithRunTreeLike[];
+  start_time?: number | string;
+  end_time?: number | string;
+  extra?: LangSmithKVMap;
+  metadata?: LangSmithKVMap;
+  tags?: string[];
+  error?: string;
+  serialized?: object;
+  inputs?: LangSmithKVMap;
+  outputs?: LangSmithKVMap;
+  client?: unknown;
+  tracingEnabled?: boolean;
+  attachments?: unknown;
+};
+
+export type LangSmithRunEvent = {
+  name?: string;
+  time?: string;
+  message?: string;
+  kwargs?: LangSmithKVMap;
+  [key: string]: unknown;
+};
+
+export type LangSmithRunTreeLike = {
+  id?: string;
+  name: string;
+  run_type: string;
+  parent_run?: LangSmithRunTreeLike;
+  child_runs?: LangSmithRunTreeLike[];
+  inputs?: LangSmithKVMap;
+  outputs?: LangSmithKVMap;
+  error?: string;
+  metadata?: LangSmithKVMap;
+  tags?: string[];
+  events?: LangSmithKVMap[];
+  createChild(config: LangSmithRunTreeConfig): LangSmithRunTreeLike;
+  postRun?(excludeChildRuns?: boolean): Promise<void> | void;
+  end?(
+    outputs?: LangSmithKVMap,
+    error?: string,
+    endTime?: number,
+    metadata?: LangSmithKVMap,
+  ): Promise<void> | void;
+  patchRun?(options?: { excludeInputs?: boolean }): Promise<void> | void;
+  addEvent?(event: LangSmithRunEvent | string): void;
+};
+
+export type LangSmithRunTreeConstructor = new (config: any) => LangSmithRunTreeLike;
+
+export type LangSmithContextTracerOptions = {
+  RunTree?: LangSmithRunTreeConstructor;
+  runTree?: (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike;
+  projectName?: string;
+  name?: string;
+  client?: unknown;
+  tags?: string[];
+  metadata?: LangSmithKVMap;
+  redact?: (event: ContextTraceEvent) => ContextTraceEvent | undefined;
+  failOnError?: boolean;
+};
+
 type ToolCapableAgentLike = AgentLike & {
   addTools(tools: Array<ToolDefinition<any>>): void;
 };
@@ -743,6 +813,115 @@ export function createJsonlContextTracer(options: JsonlContextTracerOptions): Co
     },
   };
   return tracer;
+}
+
+export function createCompositeContextTracer(tracers: Array<ContextTracer | undefined | null>): ContextTracer {
+  const active = tracers.filter((tracer): tracer is ContextTracer => Boolean(tracer));
+  return {
+    failOnError: active.some(tracer => tracer.failOnError),
+    async onEvent(event) {
+      for (const tracer of active) {
+        try {
+          await tracer.onEvent(event);
+        } catch (error) {
+          if (tracer.failOnError) throw error;
+        }
+      }
+    },
+    async flush() {
+      for (const tracer of active) {
+        if (!tracer.flush) continue;
+        try {
+          await tracer.flush();
+        } catch (error) {
+          if (tracer.failOnError) throw error;
+        }
+      }
+    },
+    async close() {
+      for (const tracer of active) {
+        if (!tracer.close) continue;
+        try {
+          await tracer.close();
+        } catch (error) {
+          if (tracer.failOnError) throw error;
+        }
+      }
+    },
+  };
+}
+
+type LangSmithTraceRunState = {
+  root: LangSmithRunTreeLike;
+  initialInputRecorded: boolean;
+  modelRequests: number;
+  toolUses: number;
+  pendingModel?: LangSmithRunTreeLike;
+  pendingTools: Map<string, LangSmithRunTreeLike>;
+};
+
+export function createLangSmithContextTracer(options: LangSmithContextTracerOptions): ContextTracer {
+  if (!options.RunTree && !options.runTree) {
+    throw new Error("createLangSmithContextTracer requires either RunTree or runTree");
+  }
+
+  const makeRunTree = options.runTree ?? ((config: LangSmithRunTreeConfig) => new options.RunTree!(config));
+  const runs = new Map<string, LangSmithTraceRunState>();
+  let queue = Promise.resolve();
+
+  async function handleEvent(rawEvent: ContextTraceEvent): Promise<void> {
+    const event = options.redact ? options.redact(rawEvent) : rawEvent;
+    if (!event) return;
+
+    if (event.type === "run_start") {
+      await startLangSmithRootRun(event, options, makeRunTree, runs);
+      return;
+    }
+
+    const state = await ensureLangSmithRootRun(event, options, makeRunTree, runs);
+    if (event.type === "user_message") {
+      recordLangSmithUserMessage(state, event);
+      return;
+    }
+    if (event.type === "model_request") {
+      await startLangSmithModelRun(state, event, options);
+      return;
+    }
+    if (event.type === "assistant_message") {
+      await finishLangSmithModelRun(state, event);
+      return;
+    }
+    if (event.type === "tool_use") {
+      await startLangSmithToolRun(state, event, options);
+      return;
+    }
+    if (event.type === "tool_result") {
+      await finishLangSmithToolRun(state, event);
+      return;
+    }
+    if (event.type === "result") {
+      await finishLangSmithRootRun(state, event);
+      return;
+    }
+    recordLangSmithRunEvent(state.root, event);
+  }
+
+  return {
+    failOnError: options.failOnError,
+    onEvent(event) {
+      queue = queue.then(
+        () => handleEvent(event),
+        () => handleEvent(event),
+      );
+      return queue;
+    },
+    async flush() {
+      await queue;
+    },
+    async close() {
+      await queue;
+    },
+  };
 }
 
 export function skill(input: SkillInput): SkillDefinition {
@@ -2686,6 +2865,299 @@ function extractText(message: AssistantModelMessage): string {
 
 function abortErrorIfNeeded(signal: AbortSignal | undefined): AbortError | undefined {
   return signal?.aborted ? new AbortError("Operation aborted") : undefined;
+}
+
+async function startLangSmithRootRun(
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+  makeRunTree: (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike,
+  runs: Map<string, LangSmithTraceRunState>,
+): Promise<LangSmithTraceRunState> {
+  const existing = runs.get(event.run_id);
+  if (existing) return existing;
+
+  const parent = event.parent_run_id ? runs.get(event.parent_run_id)?.root : undefined;
+  const config: LangSmithRunTreeConfig = {
+    name: options.name ?? langSmithSourceName(event.source),
+    run_type: "chain",
+    ...(isUuidLike(event.run_id) ? { id: event.run_id } : {}),
+    ...(options.projectName ? { project_name: options.projectName } : {}),
+    ...(parent ? { parent_run: parent } : {}),
+    start_time: event.timestamp,
+    inputs: {},
+    metadata: langSmithMetadata(event, options, {
+      model: event.data.model,
+      tools: event.data.tools,
+    }),
+    tags: langSmithTags(event, options),
+    ...(options.client ? { client: options.client } : {}),
+  };
+  const root = parent ? parent.createChild(config) : makeRunTree(config);
+  const state: LangSmithTraceRunState = {
+    root,
+    initialInputRecorded: false,
+    modelRequests: 0,
+    toolUses: 0,
+    pendingTools: new Map(),
+  };
+  runs.set(event.run_id, state);
+  await root.postRun?.(true);
+  return state;
+}
+
+async function ensureLangSmithRootRun(
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+  makeRunTree: (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike,
+  runs: Map<string, LangSmithTraceRunState>,
+): Promise<LangSmithTraceRunState> {
+  return runs.get(event.run_id) ?? startLangSmithRootRun(
+    {
+      ...event,
+      type: "run_start",
+      data: {},
+    },
+    options,
+    makeRunTree,
+    runs,
+  );
+}
+
+function recordLangSmithUserMessage(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+): void {
+  const message = event.data.message;
+  if (!state.initialInputRecorded) {
+    state.root.inputs = { message: jsonSafeValue(message) };
+    state.initialInputRecorded = true;
+    return;
+  }
+  recordLangSmithRunEvent(state.root, event);
+}
+
+async function startLangSmithModelRun(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+): Promise<void> {
+  state.modelRequests++;
+  const model = typeof event.data.model === "string" ? event.data.model : "model";
+  const run = state.root.createChild({
+    name: `${model} turn ${state.modelRequests}`,
+    run_type: "llm",
+    start_time: event.timestamp,
+    inputs: jsonSafeRecord(event.data),
+    metadata: langSmithMetadata(event, options, {
+      sdk_event_type: "model_request",
+      model: event.data.model,
+      max_tokens: event.data.max_tokens,
+      stream: event.data.stream,
+    }),
+    tags: langSmithTags(event, options, ["run:llm"]),
+  });
+  state.pendingModel = run;
+  await run.postRun?.(true);
+}
+
+async function finishLangSmithModelRun(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+): Promise<void> {
+  const run = state.pendingModel;
+  if (!run) {
+    recordLangSmithRunEvent(state.root, event);
+    return;
+  }
+  state.pendingModel = undefined;
+  await run.end?.(
+    { message: jsonSafeValue(event.data.message) },
+    undefined,
+    Date.parse(event.timestamp),
+    {
+      sdk_end_event_type: "assistant_message",
+      sdk_end_seq: event.seq,
+    },
+  );
+  await run.patchRun?.({ excludeInputs: false });
+}
+
+async function startLangSmithToolRun(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+): Promise<void> {
+  state.toolUses++;
+  const toolUseId = typeof event.data.id === "string"
+    ? event.data.id
+    : `tool_${state.toolUses}`;
+  const toolName = typeof event.data.name === "string"
+    ? event.data.name
+    : "tool";
+  const run = state.root.createChild({
+    name: toolName,
+    run_type: "tool",
+    start_time: event.timestamp,
+    inputs: {
+      input: jsonSafeValue(event.data.input),
+    },
+    metadata: langSmithMetadata(event, options, {
+      sdk_event_type: "tool_use",
+      tool_use_id: toolUseId,
+      tool_name: toolName,
+    }),
+    tags: langSmithTags(event, options, ["run:tool", `tool:${toolName}`]),
+  });
+  state.pendingTools.set(toolUseId, run);
+  await run.postRun?.(true);
+}
+
+async function finishLangSmithToolRun(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+): Promise<void> {
+  const toolUseId = typeof event.data.tool_use_id === "string"
+    ? event.data.tool_use_id
+    : undefined;
+  const run = toolUseId ? state.pendingTools.get(toolUseId) : undefined;
+  if (!run) {
+    recordLangSmithRunEvent(state.root, event);
+    return;
+  }
+  state.pendingTools.delete(toolUseId!);
+  const isError = event.data.is_error === true;
+  await run.end?.(
+    {
+      content: jsonSafeValue(event.data.content),
+      is_error: isError,
+    },
+    isError ? langSmithErrorMessage(event.data) : undefined,
+    Date.parse(event.timestamp),
+    {
+      sdk_end_event_type: "tool_result",
+      sdk_end_seq: event.seq,
+    },
+  );
+  await run.patchRun?.({ excludeInputs: false });
+}
+
+async function finishLangSmithRootRun(
+  state: LangSmithTraceRunState,
+  event: ContextTraceEvent,
+): Promise<void> {
+  const isError = event.data.is_error === true;
+  await state.root.end?.(
+    jsonSafeRecord(event.data),
+    isError ? langSmithErrorMessage(event.data) : undefined,
+    Date.parse(event.timestamp),
+    {
+      sdk_end_event_type: "result",
+      sdk_end_seq: event.seq,
+    },
+  );
+  await state.root.patchRun?.({ excludeInputs: false });
+}
+
+function recordLangSmithRunEvent(
+  run: LangSmithRunTreeLike,
+  event: ContextTraceEvent,
+): void {
+  run.addEvent?.({
+    name: event.type,
+    time: event.timestamp,
+    kwargs: {
+      sdk_trace_version: event.version,
+      sdk_trace_seq: event.seq,
+      sdk_session_id: event.session_id,
+      sdk_run_id: event.run_id,
+      sdk_parent_run_id: event.parent_run_id,
+      source: jsonSafeValue(event.source),
+      data: jsonSafeValue(event.data),
+    },
+  });
+}
+
+function langSmithSourceName(source: AgentRuntimeSource): string {
+  return source.name ?? source.member ?? source.team ?? source.kind;
+}
+
+function langSmithMetadata(
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+  extra: LangSmithKVMap = {},
+): LangSmithKVMap {
+  return {
+    ...(options.metadata ?? {}),
+    sdk_trace_version: event.version,
+    sdk_trace_seq: event.seq,
+    sdk_session_id: event.session_id,
+    sdk_run_id: event.run_id,
+    sdk_parent_run_id: event.parent_run_id,
+    sdk_source_kind: event.source.kind,
+    sdk_source_name: event.source.name,
+    sdk_source_team: event.source.team,
+    sdk_source_member: event.source.member,
+    sdk_source_mailbox: event.source.mailbox,
+    ...extra,
+  };
+}
+
+function langSmithTags(
+  event: ContextTraceEvent,
+  options: LangSmithContextTracerOptions,
+  extra: string[] = [],
+): string[] {
+  const tags = new Set([
+    "claude-team-agent-sdk",
+    "context-trace",
+    `source:${event.source.kind}`,
+    ...extra,
+    ...(options.tags ?? []),
+  ]);
+  if (event.source.team) tags.add(`team:${event.source.team}`);
+  if (event.source.member) tags.add(`member:${event.source.member}`);
+  if (event.source.mailbox) tags.add(`mailbox:${event.source.mailbox}`);
+  return [...tags];
+}
+
+function jsonSafeRecord(value: unknown): LangSmithKVMap {
+  const safe = jsonSafeValue(value);
+  if (safe && typeof safe === "object" && !Array.isArray(safe)) {
+    return safe as LangSmithKVMap;
+  }
+  return { value: safe };
+}
+
+function jsonSafeValue(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value, (_key, inner) => {
+      if (inner instanceof Error) {
+        return {
+          name: inner.name,
+          message: inner.message,
+        };
+      }
+      return inner;
+    }));
+  } catch {
+    return String(value);
+  }
+}
+
+function langSmithErrorMessage(data: Record<string, unknown>): string {
+  const error = data.error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+  if (typeof data.result === "string" && data.result) return data.result;
+  if (typeof data.content === "string" && data.content) return data.content;
+  return "LangSmith traced SDK event marked as error";
+}
+
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 const traceSequences = new WeakMap<ContextTracer, number>();

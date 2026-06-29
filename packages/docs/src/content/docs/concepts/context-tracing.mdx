@@ -1,11 +1,11 @@
 ---
 title: Context Tracing
-description: Record JSONL traces for agent runs, tool calls, and delegated team work.
+description: Record context traces for agent runs, tool calls, and delegated team work.
 ---
 
 Context tracing lets a host observe an agent run without changing the agent loop.
-The SDK emits structured trace events through a small `ContextTracer` interface,
-and the built-in JSONL tracer writes one event per line.
+The SDK emits structured trace events through a small `ContextTracer` interface.
+Built-in tracers can write JSONL locally or project those events into LangSmith.
 
 Tracing is append-only observability. It is not resume support: agents still keep
 conversation state in memory for the lifetime of the `Agent` instance.
@@ -60,6 +60,53 @@ If you pass `dir` instead of `path`, the tracer writes one file per session:
 const tracer = createJsonlContextTracer({
   dir: ".agent-runs",
 });
+```
+
+## LangSmith tracer
+
+Use `createLangSmithContextTracer()` when you want SDK runs to appear as
+LangSmith traces. Install `langsmith` in the host application and pass its
+`RunTree` constructor into the tracer.
+
+```ts
+import { RunTree } from "langsmith/run_trees";
+import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
+
+const tracer = createLangSmithContextTracer({
+  RunTree,
+  projectName: "agent-sdk",
+  tags: ["local-debug"],
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+```
+
+The SDK does not import LangSmith or add it as a hard dependency. The tracer
+implements the same `ContextTracer` interface as JSONL, so the agent loop stays
+closed to provider-specific changes.
+
+LangSmith receives:
+
+| SDK event sequence | LangSmith projection |
+| --- | --- |
+| `run_start` to `result` | Root `chain` run. |
+| `model_request` to `assistant_message` | Child `llm` run. |
+| `tool_use` to `tool_result` | Child `tool` run. |
+| `team_message` and other auxiliary events | Run events on the active chain. |
+
+Use `createCompositeContextTracer()` to send the same trace stream to multiple
+sinks:
+
+```ts
+const tracer = createCompositeContextTracer([
+  createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
+  createLangSmithContextTracer({ RunTree, projectName: "agent-sdk" }),
+]);
 ```
 
 ## Event types
