@@ -38,6 +38,28 @@ const result = await agent.prompt("What is 2+2?");
 console.log(result.result);
 ```
 
+## Send multimodal input
+
+For image or document input, pass a content block array instead of embedding
+media in a string. The SDK forwards Anthropic-compatible `image` and `document`
+blocks through the agent loop.
+
+```ts
+const result = await agent.prompt([
+  { type: "text", text: "Summarize this screenshot." },
+  {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data: imageBase64,
+    },
+  },
+]);
+
+console.log(result.result);
+```
+
 ## Choose streaming behavior
 
 `query()` and `prompt()` describe how your app consumes SDK output. The `stream` option controls whether the underlying model request uses streaming.

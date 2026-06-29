@@ -36,6 +36,26 @@ Pass `{ stream: false }` to disable model streaming for a query:
 const result = await agent.prompt("Say hello", { stream: false });
 ```
 
+## Multimodal Input
+
+Pass Anthropic-compatible content blocks for image or document prompts:
+
+```ts
+const result = await agent.prompt([
+  { type: "text", text: "Summarize this screenshot." },
+  {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data: imageBase64,
+    },
+  },
+]);
+
+console.log(result.result);
+```
+
 ## JSONL Context Tracing
 
 Pass a `ContextTracer` to observe an agent run without changing the agent loop.

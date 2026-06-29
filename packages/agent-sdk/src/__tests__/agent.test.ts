@@ -612,4 +612,74 @@ describe("agent-sdk", () => {
       result: "done",
     });
   });
+
+  test("Anthropic client serializes image and document user blocks unchanged", async () => {
+    let requestBody: any;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestBody = await request.json();
+        return Response.json({
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          model: "claude-test",
+          content: [{ type: "text", text: "received" }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+      });
+
+      await collect(agent.query([
+        { type: "text", text: "Compare these files." },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "iVBORw0KGgo=",
+          },
+        },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: "JVBERi0xLjQK",
+          },
+        },
+      ], { stream: false }));
+
+      expect(requestBody.messages[0].content).toEqual([
+        { type: "text", text: "Compare these files." },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "iVBORw0KGgo=",
+          },
+        },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: "JVBERi0xLjQK",
+          },
+        },
+      ]);
+    } finally {
+      server.stop(true);
+    }
+  });
 });

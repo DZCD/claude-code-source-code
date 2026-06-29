@@ -133,4 +133,48 @@ describe("skills", () => {
       },
     ]);
   });
+
+  test("matches skills from text blocks in multimodal prompts", async () => {
+    let seenMessages: ModelMessage[] = [];
+    const modelClient: ModelClient = {
+      async createMessage({ messages }) {
+        seenMessages = messages;
+        return textAssistant("reviewed");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+      skills: [
+        skill({
+          name: "code-review",
+          description: "Review code changes and screenshots",
+          instructions: "Always inspect visual context before summarizing.",
+        }),
+      ],
+    });
+
+    await agent.prompt([
+      { type: "text", text: "Please review this screenshot." },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "iVBORw0KGgo=",
+        },
+      },
+    ]);
+
+    expect(seenMessages[0]?.role).toBe("user");
+    expect(String(seenMessages[0]?.content)).toContain("<skill name=\"code-review\">");
+    expect(seenMessages[1]).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "Please review this screenshot." },
+        { type: "image" },
+      ],
+    });
+  });
 });

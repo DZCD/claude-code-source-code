@@ -38,6 +38,27 @@ const result = await agent.prompt("2 + 2 等于多少？");
 console.log(result.result);
 ```
 
+## 发送多模态输入
+
+图片或文档输入要传 content block 数组，不要塞进普通字符串。SDK 会在 agent loop
+中原样转发 Anthropic 兼容的 `image` 和 `document` block。
+
+```ts
+const result = await agent.prompt([
+  { type: "text", text: "请总结这张截图。" },
+  {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data: imageBase64,
+    },
+  },
+]);
+
+console.log(result.result);
+```
+
 ## 选择流式行为
 
 `query()` 和 `prompt()` 描述的是你的应用如何消费 SDK 输出；`stream` 选项控制的是底层模型请求是否使用流式调用。

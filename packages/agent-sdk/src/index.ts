@@ -1,4 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type {
+  DocumentBlockParam,
+  ImageBlockParam,
+  TextBlockParam,
+} from "@anthropic-ai/sdk/resources/messages.mjs";
 import { Client as MCPProtocolClient } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
@@ -25,7 +30,9 @@ import {
 import { toJSONSchema } from "zod/v4";
 import { z } from "zod/v4";
 
-export type TextBlock = { type: "text"; text: string };
+export type TextBlock = TextBlockParam;
+export type ImageBlock = ImageBlockParam;
+export type DocumentBlock = DocumentBlockParam;
 export type ToolUseBlock = {
   type: "tool_use";
   id: string;
@@ -38,7 +45,12 @@ export type ToolResultBlock = {
   content: string | ContentBlock[];
   is_error?: boolean;
 };
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export type ContentBlock =
+  | TextBlock
+  | ImageBlock
+  | DocumentBlock
+  | ToolUseBlock
+  | ToolResultBlock;
 
 export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
 
@@ -1626,8 +1638,9 @@ export class Agent {
   private selectSkills(prompt: string | ContentBlock[]): SkillDefinition[] {
     const skills = this.options.skills ?? [];
     if (skills.length === 0) return [];
-    if (typeof prompt !== "string") return [];
-    const normalizedPrompt = normalizeForMatch(prompt);
+    const promptText = promptTextForMatching(prompt);
+    if (!promptText) return [];
+    const normalizedPrompt = normalizeForMatch(promptText);
     return skills.filter(definition => {
       const haystack = normalizeForMatch(`${definition.name} ${definition.description}`);
       return haystack
@@ -1818,14 +1831,15 @@ function toAnthropicMessage(message: ModelMessage) {
       typeof message.content === "string"
         ? message.content
         : message.content.map(block => {
-            if (block.type === "text") return block;
-            if (block.type === "tool_use") return block;
-            return {
-              type: "tool_result" as const,
-              tool_use_id: block.tool_use_id,
-              content: block.content,
-              ...(block.is_error ? { is_error: true } : {}),
-            };
+            if (block.type === "tool_result") {
+              return {
+                type: "tool_result" as const,
+                tool_use_id: block.tool_use_id,
+                content: block.content,
+                ...(block.is_error ? { is_error: true } : {}),
+              };
+            }
+            return block;
           }),
   };
 }
@@ -1922,6 +1936,14 @@ function stripQuotes(value: string): string {
 
 function normalizeForMatch(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function promptTextForMatching(prompt: string | ContentBlock[]): string {
+  if (typeof prompt === "string") return prompt;
+  return prompt
+    .filter((block): block is TextBlock => block.type === "text")
+    .map(block => block.text)
+    .join("\n");
 }
 
 function formatSkillInstructions(skills: SkillDefinition[]): string {
