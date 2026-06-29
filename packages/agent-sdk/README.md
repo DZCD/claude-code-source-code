@@ -96,9 +96,12 @@ for await (const event of team.query("Ask engineering to investigate.", {
 
 Install `langsmith` in the host application and pass its `RunTree` constructor
 to the SDK tracer. The SDK does not take a hard dependency on LangSmith; it only
-uses the public `ContextTracer` sink interface.
+uses the public `ContextTracer` sink interface. You can either let LangSmith
+read `LANGSMITH_API_KEY` from the environment or pass a configured `Client`
+explicitly.
 
 ```ts
+import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import {
   createAgent,
@@ -107,10 +110,17 @@ import {
   createLangSmithContextTracer,
 } from "claude-team-agent-sdk";
 
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
+
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
     RunTree,
+    client: langsmithClient,
     projectName: "agent-sdk",
     tags: ["local-debug"],
   }),

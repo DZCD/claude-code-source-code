@@ -66,14 +66,24 @@ const tracer = createJsonlContextTracer({
 
 Use `createLangSmithContextTracer()` when you want SDK runs to appear as
 LangSmith traces. Install `langsmith` in the host application and pass its
-`RunTree` constructor into the tracer.
+`RunTree` constructor into the tracer. You can either let LangSmith read
+`LANGSMITH_API_KEY` from the environment or pass a configured `Client`
+explicitly.
 
 ```ts
+import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
 
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
+
 const tracer = createLangSmithContextTracer({
   RunTree,
+  client: langsmithClient,
   projectName: "agent-sdk",
   tags: ["local-debug"],
 });

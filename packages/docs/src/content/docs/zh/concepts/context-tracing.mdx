@@ -65,14 +65,23 @@ const tracer = createJsonlContextTracer({
 
 需要把 SDK 运行显示成 LangSmith trace 时，可以使用
 `createLangSmithContextTracer()`。宿主应用自行安装 `langsmith`，并把它的
-`RunTree` 构造器传给 tracer。
+`RunTree` 构造器传给 tracer。可以让 LangSmith 从环境变量读取
+`LANGSMITH_API_KEY`，也可以显式传入配置好的 `Client`。
 
 ```ts
+import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
 
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
+
 const tracer = createLangSmithContextTracer({
   RunTree,
+  client: langsmithClient,
   projectName: "agent-sdk",
   tags: ["local-debug"],
 });

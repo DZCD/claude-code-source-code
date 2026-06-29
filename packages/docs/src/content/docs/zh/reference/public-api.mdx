@@ -75,11 +75,22 @@ import {
   createJsonlContextTracer,
   createLangSmithContextTracer,
 } from "claude-team-agent-sdk";
+import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
+
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
 
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
-  createLangSmithContextTracer({ RunTree, projectName: "agent-sdk" }),
+  createLangSmithContextTracer({
+    RunTree,
+    client: langsmithClient,
+    projectName: "agent-sdk",
+  }),
 ]);
 
 const agent = createAgent({
@@ -98,7 +109,9 @@ await agent.prompt("Trace this run.", { stream: false });
 
 `createLangSmithContextTracer()` 接收 LangSmith 兼容的 `RunTree` 构造器或
 `runTree(config)` 工厂函数。SDK 不直接依赖 LangSmith；宿主应用安装
-`langsmith`，并从 `langsmith/run_trees` 传入 `RunTree`。
+`langsmith`，并从 `langsmith/run_trees` 传入 `RunTree`。认证可以来自
+LangSmith SDK 的环境变量，例如 `LANGSMITH_API_KEY`，也可以来自显式传入的
+LangSmith `Client`。
 
 ## 核心类型
 
