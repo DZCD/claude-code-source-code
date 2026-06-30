@@ -96,12 +96,18 @@ for await (const event of team.query("Ask engineering to investigate.", {
 
 Install `langsmith` in the host application and pass its `RunTree` constructor
 to the SDK tracer. The SDK does not take a hard dependency on LangSmith; it only
-uses the public `ContextTracer` sink interface. You can either let LangSmith
-read `LANGSMITH_API_KEY` from the environment or pass a configured `Client`
-explicitly.
+uses the public `ContextTracer` sink interface.
+
+Configure LangSmith with its standard environment variables:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=<your-langsmith-api-key>
+LANGSMITH_PROJECT=<your-langsmith-project>
+```
 
 ```ts
-import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import {
   createAgent,
@@ -110,18 +116,11 @@ import {
   createLangSmithContextTracer,
 } from "claude-team-agent-sdk";
 
-const langsmithClient = new Client({
-  apiKey: process.env.LANGSMITH_API_KEY,
-  apiUrl: process.env.LANGSMITH_ENDPOINT,
-  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
-});
-
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
     RunTree,
-    client: langsmithClient,
-    projectName: "agent-sdk",
+    projectName: process.env.LANGSMITH_PROJECT,
     tags: ["local-debug"],
   }),
 ]);
@@ -131,6 +130,29 @@ const agent = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   tracer,
+});
+```
+
+If you want to construct the LangSmith client yourself, pass a `Client`
+explicitly. `workspaceId` is optional and only selects a LangSmith workspace; it
+is not the tracing project name.
+
+```ts
+import { Client } from "langsmith";
+import { RunTree } from "langsmith/run_trees";
+import { createLangSmithContextTracer } from "claude-team-agent-sdk";
+
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  // Optional: only when your LangSmith account requires an explicit workspace.
+  // workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
+
+const tracer = createLangSmithContextTracer({
+  RunTree,
+  client: langsmithClient,
+  projectName: process.env.LANGSMITH_PROJECT,
 });
 ```
 

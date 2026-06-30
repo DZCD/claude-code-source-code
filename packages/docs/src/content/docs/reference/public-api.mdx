@@ -75,21 +75,13 @@ import {
   createJsonlContextTracer,
   createLangSmithContextTracer,
 } from "claude-team-agent-sdk";
-import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
-
-const langsmithClient = new Client({
-  apiKey: process.env.LANGSMITH_API_KEY,
-  apiUrl: process.env.LANGSMITH_ENDPOINT,
-  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
-});
 
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
     RunTree,
-    client: langsmithClient,
-    projectName: "agent-sdk",
+    projectName: process.env.LANGSMITH_PROJECT,
   }),
 ]);
 
@@ -111,9 +103,11 @@ failures to fail the agent run.
 `createLangSmithContextTracer()` accepts a LangSmith-compatible `RunTree`
 constructor or `runTree(config)` factory. The SDK does not depend on LangSmith
 directly; hosts install `langsmith` and pass `RunTree` from
-`langsmith/run_trees`. Authentication can come from the LangSmith SDK's
-environment variables, such as `LANGSMITH_API_KEY`, or from an explicit
-LangSmith `Client` passed as `client`.
+`langsmith/run_trees`. Configure LangSmith with its standard environment
+variables: `LANGSMITH_TRACING`, `LANGSMITH_ENDPOINT`, `LANGSMITH_API_KEY`, and
+`LANGSMITH_PROJECT`. If you want to construct the LangSmith client yourself,
+pass an explicit `Client` as `client`; `workspaceId` is only for selecting a
+LangSmith workspace and is not the project name.
 
 ## Types
 

@@ -65,24 +65,24 @@ const tracer = createJsonlContextTracer({
 
 需要把 SDK 运行显示成 LangSmith trace 时，可以使用
 `createLangSmithContextTracer()`。宿主应用自行安装 `langsmith`，并把它的
-`RunTree` 构造器传给 tracer。可以让 LangSmith 从环境变量读取
-`LANGSMITH_API_KEY`，也可以显式传入配置好的 `Client`。
+`RunTree` 构造器传给 tracer。
+
+按 LangSmith 官方方式配置环境变量：
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=<your-langsmith-api-key>
+LANGSMITH_PROJECT=<your-langsmith-project>
+```
 
 ```ts
-import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
 
-const langsmithClient = new Client({
-  apiKey: process.env.LANGSMITH_API_KEY,
-  apiUrl: process.env.LANGSMITH_ENDPOINT,
-  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
-});
-
 const tracer = createLangSmithContextTracer({
   RunTree,
-  client: langsmithClient,
-  projectName: "agent-sdk",
+  projectName: process.env.LANGSMITH_PROJECT,
   tags: ["local-debug"],
 });
 
@@ -91,6 +91,28 @@ const agent = createAgent({
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
   tracer,
+});
+```
+
+如果你想自己构造 LangSmith client，也可以显式传入 `Client`。`workspaceId`
+是可选的，只用于选择 LangSmith workspace；它不是 trace project 名。
+
+```ts
+import { Client } from "langsmith";
+import { RunTree } from "langsmith/run_trees";
+import { createLangSmithContextTracer } from "claude-team-agent-sdk";
+
+const langsmithClient = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
+  // 可选：只有 LangSmith 账号需要显式指定 workspace 时才传。
+  // workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
+});
+
+const tracer = createLangSmithContextTracer({
+  RunTree,
+  client: langsmithClient,
+  projectName: process.env.LANGSMITH_PROJECT,
 });
 ```
 
@@ -112,7 +134,10 @@ sink：
 ```ts
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
-  createLangSmithContextTracer({ RunTree, projectName: "agent-sdk" }),
+  createLangSmithContextTracer({
+    RunTree,
+    projectName: process.env.LANGSMITH_PROJECT,
+  }),
 ]);
 ```
 
