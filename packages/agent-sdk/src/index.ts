@@ -76,6 +76,7 @@ export type AgentRuntimeDelegateInput = {
   task: string;
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
+  workspaceGrants?: WorkspaceGrantInput[];
 };
 
 export type AgentRuntimeDelegateResult = {
@@ -84,10 +85,52 @@ export type AgentRuntimeDelegateResult = {
   request: TeamMessage;
   reply?: TeamMessage;
   result?: SDKResultMessage;
+  workspaceGrants?: WorkspaceGrant[];
+};
+
+// Access values are operation categories, not tool names. "write" covers
+// Write, Edit, and obvious shell writes.
+export type WorkspaceAccess = "read" | "write" | "execute";
+
+export type WorkspaceGrantInput = {
+  root: string;
+  access?: WorkspaceAccess[];
+  reason?: string;
+  expiresAt?: number;
+};
+
+export type WorkspaceGrant = WorkspaceGrantInput & {
+  kind: "workspace";
+  root: string;
+  access: WorkspaceAccess[];
+  grantor?: AgentRuntimeSource;
+  grantee?: AgentRuntimeSource;
+  workItemId?: string;
+};
+
+export type RuntimePermissions = {
+  workspaceGrants?: WorkspaceGrantInput[];
+};
+
+export type PermissionDenialReasonCode =
+  | "outside_allowed_roots"
+  | "grant_not_authorized"
+  | "expired_grant";
+
+export type PermissionDenial = {
+  status: "permission_denied";
+  tool: string;
+  operation: WorkspaceAccess;
+  requestedPath?: string;
+  reasonCode: PermissionDenialReasonCode;
+  reason: string;
+  allowedRoots: string[];
+  suggestedNextStep: string;
 };
 
 export type AgentRuntimeContext = {
   source: AgentRuntimeSource;
+  permissions: RuntimePermissions;
   delegate(input: AgentRuntimeDelegateInput): Promise<AgentRuntimeDelegateResult>;
   emit(message: TeamRunnerMessage): void;
 };
@@ -240,7 +283,12 @@ export type ToolResult = {
 
 export type ToolHandler<TInput = unknown> = (
   input: TInput,
-  context: { signal?: AbortSignal; toolUseId: string; runtime?: AgentRuntimeContext },
+  context: {
+    signal?: AbortSignal;
+    toolUseId: string;
+    runtime?: AgentRuntimeContext;
+    permissions?: RuntimePermissions;
+  },
 ) => Promise<ToolResult> | ToolResult;
 
 export type ToolDefinition<TInput = unknown> = {
@@ -485,6 +533,7 @@ export type QueryOptions = {
   stream?: boolean;
   signal?: AbortSignal;
   runtime?: AgentRuntimeContext;
+  permissions?: RuntimePermissions;
   tracer?: ContextTracer;
 };
 
@@ -582,6 +631,15 @@ export class ToolExecutionError extends AgentSDKError {}
 export class MaxTurnsError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
 
+export class ToolPermissionDeniedError extends AgentSDKError {
+  readonly denial: PermissionDenial;
+
+  constructor(denial: PermissionDenial) {
+    super(denial.reason);
+    this.denial = denial;
+  }
+}
+
 export function tool<TSchema>(
   name: string,
   description: string,
@@ -603,6 +661,7 @@ export function tool<TSchema>(
 export type DelegateToolOptions = {
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
+  workspaceGrants?: WorkspaceGrantInput[];
 };
 
 export type AgentToolMode = "ask" | "handoff" | "observe";
@@ -612,6 +671,12 @@ export const agentToolInputSchema = z.object({
   task: z.string(),
   expectedOutput: z.string().optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
+  workspaceGrants: z.array(z.object({
+    root: z.string(),
+    access: z.array(z.enum(["read", "write", "execute"])).optional(),
+    reason: z.string().optional(),
+    expiresAt: z.number().optional(),
+  })).optional(),
 });
 
 export type AgentToolInput = z.infer<typeof agentToolInputSchema>;
@@ -637,6 +702,10 @@ export function agentTool(
         throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
       }
 
+      if (input.workspaceGrants?.length && !context.runtime) {
+        throw new Error(`agentTool("${toolName}") workspaceGrants require an AgentRuntime so grants can be authorized and reported.`);
+      }
+
       if (input.mode === "handoff") {
         if (!context.runtime) {
           throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
@@ -648,6 +717,7 @@ export function agentTool(
           task,
           wait: "accepted",
           targetMailboxId: options.targetMailboxId,
+          workspaceGrants: input.workspaceGrants,
         });
         return { content: result.content };
       }
@@ -660,6 +730,7 @@ export function agentTool(
           task,
           wait: "result",
           targetMailboxId: options.targetMailboxId,
+          workspaceGrants: input.workspaceGrants,
         });
         return { content: result.content };
       }
@@ -697,6 +768,7 @@ export function delegateTool(
         task: input.task,
         wait: options.wait,
         targetMailboxId: options.targetMailboxId,
+        workspaceGrants: options.workspaceGrants,
       });
       return { content: result.content };
     },
@@ -764,6 +836,22 @@ function formatAgentWorkspaceInstructions(cwd: string): string {
     "Keep file changes inside your workspace unless another explicitly granted tool allows a different location.",
     "Reply in natural language with the important workspace paths and a brief verification summary when handing off work.",
     "Do not use structured artifact reference objects as the collaboration protocol; use text, paths, evidence, and follow-up.",
+  ].join("\n");
+}
+
+function formatRuntimePermissionInstructions(permissions: RuntimePermissions | undefined): string | undefined {
+  const grants = activeWorkspaceGrants(permissions);
+  if (grants.length === 0) return undefined;
+  return [
+    "Runtime workspace access for this task:",
+    ...grants.flatMap((grant, index) => [
+      `- grant ${index + 1}: ${grant.root}`,
+      `  access: ${grant.access.join(", ")}`,
+      ...(grant.reason ? [`  reason: ${grant.reason}`] : []),
+      ...(grant.grantor?.name ? [`  granted_by: ${grant.grantor.name}`] : []),
+      ...(grant.workItemId ? [`  work_item: ${grant.workItemId}`] : []),
+    ]),
+    "Read-only tools may inspect any path. Workspace grants are required for writing outside your private workspace; if a write tool returns permission_denied, write under an allowed root or ask your manager/host for a write grant.",
   ].join("\n");
 }
 
@@ -1379,14 +1467,14 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
   return [
     tool(
       "Read",
-      "Read a file from the workspace. Supports optional 1-based line offset and limit.",
+      "Read a file. Supports optional 1-based line offset and limit.",
       z.object({
         file_path: z.string(),
         offset: z.number().int().positive().optional(),
         limit: z.number().int().positive().optional(),
       }),
       async input => {
-        const path = resolveAllowedPath(input.file_path, roots);
+        const path = resolveToolPath(input.file_path, cwd);
         const content = await readFile(path, "utf8");
         if (input.offset === undefined && input.limit === undefined) {
           return { content };
@@ -1404,8 +1492,8 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
         file_path: z.string(),
         content: z.string(),
       }),
-      async input => {
-        const path = resolveAllowedPath(input.file_path, roots);
+      async (input, context) => {
+        const path = resolveAuthorizedPath(input.file_path, roots, context, "Write", "write");
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, input.content, "utf8");
         return { content: `Wrote ${relative(cwd, path)}` };
@@ -1420,8 +1508,8 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
         new_string: z.string(),
         replace_all: z.boolean().optional(),
       }),
-      async input => {
-        const path = resolveAllowedPath(input.file_path, roots);
+      async (input, context) => {
+        const path = resolveAuthorizedPath(input.file_path, roots, context, "Edit", "write");
         const content = await readFile(path, "utf8");
         if (!content.includes(input.old_string)) {
           throw new Error(`old_string was not found in ${input.file_path}`);
@@ -1435,12 +1523,12 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
     ),
     tool(
       "LS",
-      "List files and directories in a workspace directory.",
+      "List files and directories.",
       z.object({
         path: z.string().optional(),
       }),
       async input => {
-        const path = resolveAllowedPath(input.path ?? ".", roots);
+        const path = resolveToolPath(input.path ?? ".", cwd);
         const entries = await readdir(path, { withFileTypes: true });
         const output = entries
           .map(entry => `${entry.name}${entry.isDirectory() ? "/" : ""}`)
@@ -1451,15 +1539,15 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
     ),
     tool(
       "Glob",
-      "Find workspace files matching a glob pattern.",
+      "Find files matching a glob pattern.",
       z.object({
         pattern: z.string(),
         path: z.string().optional(),
       }),
       async input => {
-        const base = resolveAllowedPath(input.path ?? ".", roots);
+        const base = resolveToolPath(input.path ?? ".", cwd);
         const matcher = globToRegExp(input.pattern);
-        const files = await listFiles(base, roots);
+        const files = await listFiles(base);
         const output = files
           .map(file => normalizeSlash(relative(base, file)))
           .filter(file => matcher.test(file))
@@ -1470,17 +1558,17 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
     ),
     tool(
       "Grep",
-      "Search workspace file contents with a regular expression.",
+      "Search file contents with a regular expression.",
       z.object({
         pattern: z.string(),
         path: z.string().optional(),
         include: z.string().optional(),
       }),
       async input => {
-        const base = resolveAllowedPath(input.path ?? ".", roots);
+        const base = resolveToolPath(input.path ?? ".", cwd);
         const matcher = input.include ? globToRegExp(input.include) : null;
         const regexp = new RegExp(input.pattern);
-        const files = await listFiles(base, roots);
+        const files = await listFiles(base);
         const lines: string[] = [];
         for (const file of files) {
           const rel = normalizeSlash(relative(base, file));
@@ -1502,7 +1590,8 @@ export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Arr
         command: z.string(),
         timeout_ms: z.number().int().positive().optional(),
       }),
-      async input => {
+      async (input, context) => {
+        authorizeShellCommand(input.command, roots, context);
         const output = await runShell(input.command, {
           cwd,
           timeoutMs: input.timeout_ms ?? options.bashTimeoutMs ?? 30_000,
@@ -1549,6 +1638,11 @@ export class Agent {
       kind: "agent",
       name: this.options.name ?? "agent",
     };
+    const effectivePermissions = options.runtime?.permissions ?? options.permissions;
+    const systemPrompt = joinPromptSections([
+      this.options.systemPrompt,
+      formatRuntimePermissionInstructions(effectivePermissions),
+    ]);
     const traceBase = {
       session_id: this.sessionId,
       run_id: runId,
@@ -1631,13 +1725,14 @@ export class Agent {
           max_tokens: this.options.maxTokens,
           messages: modelMessages,
           tools: modelTools.map(tool => tool.name),
+          permissions: traceRuntimePermissions(effectivePermissions),
           stream,
         },
       });
       try {
         assistant = await this.modelClient.createMessage({
           model: this.options.model,
-          systemPrompt: this.options.systemPrompt,
+          systemPrompt,
           maxTokens: this.options.maxTokens,
           messages: modelMessages,
           tools: modelTools,
@@ -1711,7 +1806,7 @@ export class Agent {
             input: block.input,
           },
         });
-        const result = await this.runTool(block, options.signal, options.runtime);
+        const result = await this.runTool(block, options.signal, options.runtime, options.permissions);
         if (result.error && !firstToolError) {
           firstToolError = result.error;
         }
@@ -1833,6 +1928,7 @@ export class Agent {
     block: ToolUseBlock,
     signal: AbortSignal | undefined,
     runtime: AgentRuntimeContext | undefined,
+    permissions: RuntimePermissions | undefined,
   ): Promise<{ block: ToolResultBlock; error?: Error }> {
     const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
     if (!definition) {
@@ -1868,6 +1964,7 @@ export class Agent {
         signal,
         toolUseId: block.id,
         runtime,
+        permissions: runtime?.permissions ?? permissions,
       });
       return {
         block: {
@@ -1877,6 +1974,17 @@ export class Agent {
         },
       };
     } catch (error) {
+      if (error instanceof ToolPermissionDeniedError) {
+        return {
+          block: {
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: formatPermissionDeniedToolResult(error.denial),
+            is_error: true,
+          },
+          error,
+        };
+      }
       const wrapped = new ToolExecutionError(`Tool ${block.name} failed: ${errorMessage(error)}`, {
         cause: error,
       });
@@ -2205,8 +2313,10 @@ function createTeamRunnerRuntime(input: {
   depth: number;
   queryOptions: QueryOptions;
 }): AgentRuntimeContext {
+  const permissions: RuntimePermissions = normalizeRuntimePermissions(input.queryOptions.permissions);
   return {
     source: input.source,
+    permissions,
     emit: input.emit,
     async delegate(delegateInput) {
       if (input.depth >= input.maxDelegateDepth) {
@@ -2215,8 +2325,21 @@ function createTeamRunnerRuntime(input: {
 
       const targetMailbox = delegateInput.targetMailboxId ?? sanitizeToolName(delegateInput.name);
       const callerMailbox = input.source.mailbox ?? input.source.name ?? "manager";
+      const targetSource: AgentRuntimeSource = {
+        kind: "team_member",
+        name: delegateInput.name,
+        member: delegateInput.name,
+        mailbox: targetMailbox,
+      };
+      const workspaceGrants = authorizeDelegatedWorkspaceGrants({
+        requested: delegateInput.workspaceGrants ?? [],
+        parentPermissions: permissions,
+        grantor: input.source,
+        grantee: targetSource,
+      });
       const request = await input.mailbox.send(callerMailbox, targetMailbox, delegateInput.task, {
         workItemRole: "delegation",
+        ...(workspaceGrants.length > 0 ? { metadata: { workspaceGrants } } : {}),
       });
       input.emit({
         type: "team_message",
@@ -2229,8 +2352,9 @@ function createTeamRunnerRuntime(input: {
       if (delegateInput.wait === "accepted") {
         return {
           status: "accepted",
-          content: formatDelegateAccepted(request),
+          content: formatDelegateAccepted(request, workspaceGrants),
           request,
+          workspaceGrants,
         };
       }
 
@@ -2244,22 +2368,21 @@ function createTeamRunnerRuntime(input: {
         message,
       });
 
-      const targetSource: AgentRuntimeSource = {
-        kind: "team_member",
-        name: delegateInput.name,
-        member: delegateInput.name,
-        mailbox: targetMailbox,
-      };
       input.emit({
         type: "team_agent",
         subtype: "started",
         source: targetSource,
       });
 
+      const childPermissions: RuntimePermissions = { workspaceGrants };
       const childRuntime = createTeamRunnerRuntime({
         ...input,
         source: targetSource,
         depth: input.depth + 1,
+        queryOptions: {
+          ...input.queryOptions,
+          permissions: childPermissions,
+        },
       });
       let finalResult: SDKResultMessage | undefined;
       for await (const agentMessage of delegateInput.agent.query(renderDelegateTaskPrompt(delegateInput, message), {
@@ -2267,6 +2390,7 @@ function createTeamRunnerRuntime(input: {
         signal: input.queryOptions.signal,
         tracer: input.queryOptions.tracer,
         runtime: childRuntime,
+        permissions: childPermissions,
       })) {
         if (isNestedTeamRunnerMessage(agentMessage)) {
           input.emit(agentMessage);
@@ -2357,6 +2481,7 @@ function createTeamRunnerRuntime(input: {
         request: message,
         reply,
         result: finalResult,
+        workspaceGrants,
       };
     },
   };
@@ -2382,6 +2507,7 @@ function formatAgentToolDescription(description: string): string {
     '- mode="handoff": assign work and receive an acceptance receipt immediately; requires a team/runtime context.',
     '- mode="observe": request observable long-running work; currently unsupported and will return a clear error.',
     "Provide a clear task, expected output, and acceptance criteria when useful.",
+    "If the target needs to write in a shared workspace, include workspaceGrants with root, access, and reason. The runtime will only grant write access that the caller is already allowed to delegate, and the result will say which grants were accepted or why they were denied. Read-only tools do not require workspace grants.",
   ].join("\n");
 }
 
@@ -2409,6 +2535,7 @@ function isNestedTeamRunnerMessage(message: AgentLikeEvent): message is Exclude<
 }
 
 function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: TeamMessage): string {
+  const workspaceGrants = workspaceGrantsFromMessage(message);
   return [
     "You are handling delegated work sent through an agent mailbox.",
     "",
@@ -2422,19 +2549,58 @@ function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: Tea
     "Return the final result as assistant text. If you have AgentLike tools, you may use them to ask or hand off work to other AgentLike workers.",
     "Write durable deliverables in your own workspace. When handing off results, mention the important workspace paths and a brief verification summary in natural language.",
     "Do not use structured artifact reference objects as the collaboration protocol.",
+    ...(workspaceGrants.length > 0
+      ? ["", formatWorkspaceGrantsForPrompt(workspaceGrants)]
+      : []),
     "",
     "--- delegated task ---",
     message.content,
   ].join("\n");
 }
 
-function formatDelegateAccepted(message: TeamMessage): string {
+function formatDelegateAccepted(message: TeamMessage, workspaceGrants: WorkspaceGrant[] = []): string {
   return JSON.stringify({
     status: "accepted",
     message_id: message.id,
     thread_id: message.threadId,
     to: message.to,
+    ...(workspaceGrants.length > 0
+      ? { workspaceGrants: workspaceGrants.map(formatWorkspaceGrantForReceipt) }
+      : {}),
   }, null, 2);
+}
+
+function workspaceGrantsFromMessage(message: TeamMessage): WorkspaceGrant[] {
+  const value = message.metadata?.workspaceGrants;
+  if (!Array.isArray(value)) return [];
+  return normalizeWorkspaceGrantInputs(value.filter(isWorkspaceGrantInput));
+}
+
+function isWorkspaceGrantInput(value: unknown): value is WorkspaceGrantInput {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.root === "string";
+}
+
+function formatWorkspaceGrantsForPrompt(grants: WorkspaceGrant[]): string {
+  return [
+    "Workspace access granted for this delegated task:",
+    ...grants.flatMap((grant, index) => [
+      `- grant ${index + 1}: ${grant.root}`,
+      `  access: ${grant.access.join(", ")}`,
+      ...(grant.reason ? [`  reason: ${grant.reason}`] : []),
+      "  Use this shared workspace only for the delegated task. Read-only tools may inspect any path; write tools must stay under an allowed root or granted shared workspace.",
+    ]),
+  ].join("\n");
+}
+
+function formatWorkspaceGrantForReceipt(grant: WorkspaceGrant): Record<string, unknown> {
+  return {
+    root: grant.root,
+    access: grant.access,
+    ...(grant.reason ? { reason: grant.reason } : {}),
+    ...(grant.expiresAt ? { expiresAt: grant.expiresAt } : {}),
+  };
 }
 
 function createTeamTools(options: {
@@ -2579,8 +2745,12 @@ async function drainTeam(input: {
 
       try {
         const mustUseTeamTools = isToolCapableAgentLike(member.agent);
+        const messagePermissions: RuntimePermissions = {
+          workspaceGrants: workspaceGrantsFromMessage(message),
+        };
         const result = await member.agent.prompt(renderTeamTaskPrompt(member, message), {
           signal: input.options.signal,
+          permissions: messagePermissions,
         });
         const current = await input.mailbox.get(message.id);
         if (result.is_error) {
@@ -2608,6 +2778,7 @@ async function drainTeam(input: {
 
 function renderTeamTaskPrompt(member: TeamMemberDefinition, message: TeamMessage): string {
   const canUseTeamTools = isToolCapableAgentLike(member.agent);
+  const workspaceGrants = workspaceGrantsFromMessage(message);
   const closeLoopInstructions = canUseTeamTools
     ? [
         "You must close the loop through team tools:",
@@ -2637,6 +2808,9 @@ function renderTeamTaskPrompt(member: TeamMemberDefinition, message: TeamMessage
     ...closeLoopInstructions,
     "Write durable deliverables in your own workspace. In final replies, mention the important workspace paths and a brief verification summary in natural language.",
     "Do not use structured artifact reference objects as the collaboration protocol.",
+    ...(workspaceGrants.length > 0
+      ? ["", formatWorkspaceGrantsForPrompt(workspaceGrants)]
+      : []),
     "",
     "--- message content ---",
     message.content,
@@ -3218,6 +3392,17 @@ function traceResultData(result: SDKResultMessage): Record<string, unknown> {
   };
 }
 
+function traceRuntimePermissions(permissions: RuntimePermissions | undefined): Record<string, unknown> {
+  return {
+    workspaceGrants: activeWorkspaceGrants(permissions).map(grant => ({
+      root: grant.root,
+      access: grant.access,
+      ...(grant.reason ? { reason: grant.reason } : {}),
+      ...(grant.workItemId ? { workItemId: grant.workItemId } : {}),
+    })),
+  };
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -3234,6 +3419,13 @@ type AllowedRoots = {
   directories: string[];
 };
 
+const WORKSPACE_ACCESS_VALUES: WorkspaceAccess[] = ["read", "write", "execute"];
+const DEFAULT_WORKSPACE_GRANT_ACCESS: WorkspaceAccess[] = ["write"];
+
+type WorkspaceAuthorizationContext = {
+  permissions?: RuntimePermissions;
+};
+
 function normalizeAllowedDirectories(options: ClaudeCodeToolsOptions): AllowedRoots {
   const cwd = resolve(options.cwd ?? process.cwd());
   const directories = (options.allowedDirectories && options.allowedDirectories.length > 0
@@ -3243,17 +3435,190 @@ function normalizeAllowedDirectories(options: ClaudeCodeToolsOptions): AllowedRo
   return { cwd, directories };
 }
 
-function resolveAllowedPath(inputPath: string, roots: AllowedRoots): string {
+function resolveAuthorizedPath(
+  inputPath: string,
+  roots: AllowedRoots,
+  context: WorkspaceAuthorizationContext | undefined,
+  toolName: string,
+  operation: WorkspaceAccess,
+): string {
   const path = isAbsolute(inputPath)
     ? resolve(inputPath)
     : resolve(roots.cwd, inputPath);
-  if (!roots.directories.some(root => path === root || path.startsWith(root + sep))) {
-    throw new Error(`Path ${inputPath} is outside allowed directories`);
+  const allowedRoots = allowedWorkspaceRootsForOperation(roots.directories, context?.permissions, operation);
+  if (!allowedRoots.some(root => pathInRoot(path, root))) {
+    throw new ToolPermissionDeniedError(createPathPermissionDenial({
+      toolName,
+      operation,
+      requestedPath: path,
+      allowedRoots,
+    }));
   }
   return path;
 }
 
-async function listFiles(root: string, roots: AllowedRoots): Promise<string[]> {
+function resolveToolPath(inputPath: string, cwd: string): string {
+  return isAbsolute(inputPath)
+    ? resolve(inputPath)
+    : resolve(cwd, inputPath);
+}
+
+function allowedWorkspaceRootsForOperation(
+  baseRoots: string[],
+  permissions: RuntimePermissions | undefined,
+  operation: WorkspaceAccess,
+): string[] {
+  const roots = [
+    ...baseRoots,
+    ...activeWorkspaceGrants(permissions)
+      .filter(grant => grant.access.includes(operation))
+      .map(grant => grant.root),
+  ];
+  return uniqueNormalizedPaths(roots);
+}
+
+function activeWorkspaceGrants(permissions: RuntimePermissions | undefined): WorkspaceGrant[] {
+  const now = Date.now();
+  return normalizeRuntimePermissions(permissions).workspaceGrants
+    .filter(grant => grant.expiresAt === undefined || grant.expiresAt > now);
+}
+
+function normalizeRuntimePermissions(permissions: RuntimePermissions | undefined): { workspaceGrants: WorkspaceGrant[] } {
+  return {
+    workspaceGrants: normalizeWorkspaceGrantInputs(permissions?.workspaceGrants ?? []),
+  };
+}
+
+function normalizeWorkspaceGrantInputs(grants: WorkspaceGrantInput[]): WorkspaceGrant[] {
+  return grants.map(grant => normalizeWorkspaceGrantInput(grant));
+}
+
+function normalizeWorkspaceGrantInput(
+  grant: WorkspaceGrantInput,
+  metadata: {
+    grantor?: AgentRuntimeSource;
+    grantee?: AgentRuntimeSource;
+    workItemId?: string;
+  } = {},
+): WorkspaceGrant {
+  return {
+    ...grant,
+    ...metadata,
+    kind: "workspace",
+    root: resolve(grant.root),
+    access: normalizeWorkspaceAccess(grant.access),
+  };
+}
+
+function normalizeWorkspaceAccess(access: WorkspaceAccess[] | undefined): WorkspaceAccess[] {
+  const requested = access && access.length > 0 ? access : DEFAULT_WORKSPACE_GRANT_ACCESS;
+  return WORKSPACE_ACCESS_VALUES.filter(item => requested.includes(item));
+}
+
+function uniqueNormalizedPaths(paths: string[]): string[] {
+  return [...new Set(paths.map(path => resolve(path)))];
+}
+
+function pathInRoot(path: string, root: string): boolean {
+  const normalizedPath = resolve(path);
+  const normalizedRoot = resolve(root);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(normalizedRoot + sep);
+}
+
+function createPathPermissionDenial(input: {
+  toolName: string;
+  operation: WorkspaceAccess;
+  requestedPath: string;
+  allowedRoots: string[];
+}): PermissionDenial {
+  return {
+    status: "permission_denied",
+    tool: input.toolName,
+    operation: input.operation,
+    requestedPath: input.requestedPath,
+    reasonCode: "outside_allowed_roots",
+    reason: `Path ${input.requestedPath} is outside allowed ${input.operation} roots.`,
+    allowedRoots: input.allowedRoots,
+    suggestedNextStep: suggestedNextStepForDenial("outside_allowed_roots", input.operation, input.allowedRoots.length > 0),
+  };
+}
+
+function createGrantPermissionDenial(input: {
+  toolName: string;
+  operation: WorkspaceAccess;
+  requestedPath: string;
+  allowedRoots: string[];
+}): PermissionDenial {
+  return {
+    status: "permission_denied",
+    tool: input.toolName,
+    operation: input.operation,
+    requestedPath: input.requestedPath,
+    reasonCode: "grant_not_authorized",
+    reason: `Cannot grant ${input.operation} access to ${input.requestedPath}; the caller does not have delegable access to that path.`,
+    allowedRoots: input.allowedRoots,
+    suggestedNextStep: suggestedNextStepForDenial("grant_not_authorized", input.operation, input.allowedRoots.length > 0),
+  };
+}
+
+function authorizeDelegatedWorkspaceGrants(input: {
+  requested: WorkspaceGrantInput[];
+  parentPermissions: RuntimePermissions;
+  grantor: AgentRuntimeSource;
+  grantee: AgentRuntimeSource;
+}): WorkspaceGrant[] {
+  return input.requested.map(requested => {
+    const normalized = normalizeWorkspaceGrantInput(requested, {
+      grantor: input.grantor,
+      grantee: input.grantee,
+    });
+    for (const operation of normalized.access) {
+      if (operation !== "write") continue;
+      const allowedRoots = allowedWorkspaceRootsForOperation([], input.parentPermissions, operation);
+      if (!allowedRoots.some(root => pathInRoot(normalized.root, root))) {
+        throw new ToolPermissionDeniedError(createGrantPermissionDenial({
+          toolName: input.grantee.name ?? input.grantee.member ?? "agentTool",
+          operation,
+          requestedPath: normalized.root,
+          allowedRoots,
+        }));
+      }
+    }
+    return normalized;
+  });
+}
+
+function suggestedNextStepForDenial(
+  reasonCode: PermissionDenialReasonCode,
+  operation: WorkspaceAccess,
+  hasAllowedRoots: boolean,
+): string {
+  if (reasonCode === "grant_not_authorized") {
+    return "Ask the host or your manager for a shared workspace grant before delegating this access.";
+  }
+  if (reasonCode === "outside_allowed_roots" && hasAllowedRoots) {
+    return `Use an allowed ${operation} root, or ask your manager to grant access to the required shared workspace.`;
+  }
+  return `Ask your manager to grant ${operation} access to the required shared workspace.`;
+}
+
+function formatPermissionDeniedToolResult(denial: PermissionDenial): string {
+  const operationRootsKey = `allowed${capitalize(denial.operation)}Roots`;
+  return JSON.stringify({
+    status: denial.status,
+    tool: denial.tool,
+    ...(denial.requestedPath ? { requestedPath: denial.requestedPath } : {}),
+    reason: denial.reason,
+    [operationRootsKey]: denial.allowedRoots,
+    suggestedNextStep: denial.suggestedNextStep,
+  }, null, 2);
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+async function listFiles(root: string): Promise<string[]> {
   const rootStat = await stat(root);
   if (!rootStat.isDirectory()) {
     return [root];
@@ -3262,9 +3627,9 @@ async function listFiles(root: string, roots: AllowedRoots): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name === "node_modules" || entry.name === ".git") continue;
-    const fullPath = resolveAllowedPath(join(root, entry.name), roots);
+    const fullPath = join(root, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await listFiles(fullPath, roots)));
+      files.push(...(await listFiles(fullPath)));
     } else if (entry.isFile()) {
       files.push(fullPath);
     }
@@ -3305,6 +3670,140 @@ function globToRegExp(pattern: string): RegExp {
 
 function escapeRegExp(char: string): string {
   return /[\\^$+?.()|[\]{}]/.test(char) ? `\\${char}` : char;
+}
+
+type ShellPathCheck = {
+  path: string;
+  operation: WorkspaceAccess;
+};
+
+function authorizeShellCommand(
+  command: string,
+  roots: AllowedRoots,
+  context: WorkspaceAuthorizationContext | undefined,
+): void {
+  for (const check of extractShellPathChecks(command)) {
+    if (check.operation !== "write") continue;
+    resolveAuthorizedPath(check.path, roots, context, "Bash", check.operation);
+  }
+}
+
+function extractShellPathChecks(command: string): ShellPathCheck[] {
+  const checks: ShellPathCheck[] = [];
+  for (const redirectedPath of extractShellRedirectPaths(command)) {
+    checks.push({ path: redirectedPath, operation: "write" });
+  }
+
+  for (const segment of command.split(/&&|\|\||;/)) {
+    const words = shellWords(segment);
+    if (words.length === 0) continue;
+    const commandName = basename(words[0] ?? "");
+    const args = commandArgsWithoutRedirections(words.slice(1));
+    if (["mkdir", "touch", "rm", "rmdir"].includes(commandName)) {
+      for (const path of nonFlagArgs(args)) {
+        checks.push({ path, operation: "write" });
+      }
+      continue;
+    }
+    if (commandName === "cp") {
+      const paths = nonFlagArgs(args);
+      if (paths.at(-1)) {
+        checks.push({ path: paths.at(-1)!, operation: "write" });
+      }
+      continue;
+    }
+    if (commandName === "mv") {
+      for (const path of nonFlagArgs(args)) {
+        checks.push({ path, operation: "write" });
+      }
+    }
+  }
+
+  return checks.filter(check => looksLikePath(check.path));
+}
+
+function extractShellRedirectPaths(command: string): string[] {
+  const paths: string[] = [];
+  const redirectPattern = /(?:^|\s)(?:>>|&>|\d?>)\s*("[^"]+"|'[^']+'|[^\s]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = redirectPattern.exec(command)) !== null) {
+    const path = stripShellQuotes(match[1] ?? "");
+    if (path) paths.push(path);
+  }
+  return paths;
+}
+
+function shellWords(segment: string): string[] {
+  const words: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|[^\s]+/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(segment.trim())) !== null) {
+    words.push(stripShellQuotes(match[0]));
+  }
+  return words;
+}
+
+function nonFlagArgs(args: string[]): string[] {
+  const result: string[] = [];
+  let afterDoubleDash = false;
+  for (const arg of args) {
+    if (afterDoubleDash) {
+      result.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      afterDoubleDash = true;
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      result.push(arg);
+    }
+  }
+  return result;
+}
+
+function commandArgsWithoutRedirections(args: string[]): string[] {
+  const result: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (/^(?:\d?>|>>|&>)$/.test(arg)) {
+      index++;
+      continue;
+    }
+    if (/^(?:\d?>|>>|&>)/.test(arg)) {
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
+}
+
+function firstNonFlagArg(args: string[]): string | undefined {
+  return nonFlagArgs(args)[0];
+}
+
+function stripShellQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function looksLikePath(value: string): boolean {
+  if (!value) return false;
+  if (value.includes("$")) return false;
+  return (
+    value === "." ||
+    value === ".." ||
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.includes("/")
+  );
 }
 
 function runShell(

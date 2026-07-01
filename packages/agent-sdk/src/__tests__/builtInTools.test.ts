@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createClaudeCodeTools } from "../index.js";
@@ -58,14 +58,74 @@ describe("Claude Code built-in tools", () => {
     expect(await readFile(join(cwd, "src/app.txt"), "utf8")).toBe("hello sdk");
   });
 
-  test("file tools reject paths outside allowed directories", async () => {
+  test("read-only file tools can inspect outside allowed directories", async () => {
+    const cwd = await tempWorkspace();
+    const outside = await tempWorkspace();
+    await mkdir(join(outside, "src"));
+    const outsideFile = join(outside, "secret.txt");
+    await writeFile(outsideFile, "secret");
+    await writeFile(join(outside, "src/app.ts"), "export const answer = 42\n");
+
+    const read = await findTool("Read", cwd).handler({ file_path: outsideFile }, { toolUseId: "toolu_1" });
+    const ls = await findTool("LS", cwd).handler({ path: outside }, { toolUseId: "toolu_2" });
+    const glob = await findTool("Glob", cwd).handler(
+      { path: outside, pattern: "*.txt" },
+      { toolUseId: "toolu_3" },
+    );
+    const grep = await findTool("Grep", cwd).handler(
+      { path: outside, pattern: "answer" },
+      { toolUseId: "toolu_4" },
+    );
+
+    expect(read.content).toBe("secret");
+    expect(String(ls.content)).toContain("secret.txt");
+    expect(String(glob.content)).toContain("secret.txt");
+    expect(String(grep.content)).toContain("src/app.ts:1:export const answer = 42");
+  });
+
+  test("write tools reject paths outside allowed directories", async () => {
     const cwd = await tempWorkspace();
     const outside = join(await tempWorkspace(), "secret.txt");
     await writeFile(outside, "secret");
 
     await expect(
-      findTool("Read", cwd).handler({ file_path: outside }, { toolUseId: "toolu_1" }),
-    ).rejects.toThrow("outside allowed directories");
+      findTool("Write", cwd).handler(
+        { file_path: outside, content: "nope" },
+        { toolUseId: "toolu_1" },
+      ),
+    ).rejects.toThrow("outside allowed write roots");
+    await expect(
+      findTool("Edit", cwd).handler(
+        { file_path: outside, old_string: "secret", new_string: "nope" },
+        { toolUseId: "toolu_2" },
+      ),
+    ).rejects.toThrow("outside allowed write roots");
+  });
+
+  test("write tools can use runtime workspace grants", async () => {
+    const cwd = await tempWorkspace();
+    const shared = await tempWorkspace();
+    const sharedFile = join(shared, "server.js");
+
+    await findTool("Write", cwd).handler(
+      { file_path: sharedFile, content: "shared" },
+      {
+        toolUseId: "toolu_1",
+        permissions: {
+          workspaceGrants: [{
+            root: shared,
+            access: ["write"],
+            reason: "shared backend workspace",
+          }],
+        },
+      },
+    );
+    const result = await findTool("Read", cwd).handler(
+      { file_path: sharedFile },
+      { toolUseId: "toolu_2" },
+    );
+
+    expect(result.content).toBe("shared");
   });
 
   test("LS, Glob, and Grep inspect workspace files", async () => {
@@ -97,5 +157,52 @@ describe("Claude Code built-in tools", () => {
     );
 
     expect(result.content).toContain("sdk");
+  });
+
+  test("Bash rejects obvious writes outside allowed roots", async () => {
+    const cwd = await tempWorkspace();
+    const outside = join(await tempWorkspace(), "escape.txt");
+
+    await expect(
+      findTool("Bash", cwd).handler(
+        { command: `printf nope > ${outside}`, timeout_ms: 2000 },
+        { toolUseId: "toolu_1" },
+      ),
+    ).rejects.toThrow("outside allowed write roots");
+  });
+
+  test("Bash allows obvious reads outside allowed roots", async () => {
+    const cwd = await tempWorkspace();
+    const outside = join(await tempWorkspace(), "outside.txt");
+    await writeFile(outside, "visible");
+
+    const result = await findTool("Bash", cwd).handler(
+      { command: `cat ${outside}`, timeout_ms: 2000 },
+      { toolUseId: "toolu_1" },
+    );
+
+    expect(result.content).toContain("visible");
+  });
+
+  test("Bash allows obvious writes inside runtime workspace grants", async () => {
+    const cwd = await tempWorkspace();
+    const shared = await tempWorkspace();
+    const output = join(shared, "out.txt");
+
+    await findTool("Bash", cwd).handler(
+      { command: `printf sdk > ${output}`, timeout_ms: 2000 },
+      {
+        toolUseId: "toolu_1",
+        permissions: {
+          workspaceGrants: [{
+            root: shared,
+            access: ["write"],
+            reason: "shared shell workspace",
+          }],
+        },
+      },
+    );
+
+    expect(await readFile(output, "utf8")).toBe("sdk");
   });
 });

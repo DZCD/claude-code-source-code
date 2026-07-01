@@ -254,6 +254,55 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("returns structured permission_denied tool results for workspace tools", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agent-sdk-private-"));
+    const outsideDir = await mkdtemp(join(tmpdir(), "agent-sdk-outside-"));
+    const outsideFile = join(outsideDir, "server.js");
+    let calls = 0;
+
+    try {
+      const modelClient: ModelClient = {
+        async createMessage({ messages }) {
+          calls++;
+          if (calls === 1) {
+            return toolUseAssistant("toolu_1", "Write", {
+              file_path: outsideFile,
+              content: "escape",
+            });
+          }
+          const content = messages.at(-1)?.content;
+          const toolResult = Array.isArray(content)
+            ? content.find(block => block.type === "tool_result")
+            : undefined;
+          const result = String(toolResult?.content ?? "");
+          expect(result).toContain('"status": "permission_denied"');
+          expect(result).toContain('"tool": "Write"');
+          expect(result).toContain('"requestedPath"');
+          expect(result).toContain('"allowedWriteRoots"');
+          expect(result).toContain('"suggestedNextStep"');
+          return textAssistant("I will ask for a grant or use an allowed root.");
+        },
+      };
+      const agent = createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        workspace: cwd,
+        modelClient,
+      });
+
+      const messages = await collect(agent.query("Write outside the workspace.", { stream: false }));
+
+      expect(messages.at(-1)).toMatchObject({
+        type: "result",
+        subtype: "success",
+        result: "I will ask for a grant or use an allowed root.",
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test("writes agent context trace entries to jsonl", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-sdk-trace-"));
     const tracePath = join(dir, "trace.jsonl");

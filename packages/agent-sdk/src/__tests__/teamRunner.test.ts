@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   agentTool,
   createAgent,
@@ -89,6 +91,140 @@ describe("team runner", () => {
     expect(messages.find(message => message.type === "result")).toMatchObject({
       type: "result",
       result: "CEO accepted the handoff",
+    });
+  });
+
+  test("agentTool passes authorized workspace grants to delegated agents", async () => {
+    const sharedRoot = join(tmpdir(), "agent-sdk-shared-root");
+    const backendRoot = join(sharedRoot, "backend");
+    let childSawGrant = false;
+    const backendAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage({ systemPrompt, messages }) {
+          childSawGrant = true;
+          expect(systemPrompt).toContain("Runtime workspace access for this task");
+          expect(systemPrompt).toContain(backendRoot);
+          expect(systemPrompt).toContain("Read-only tools may inspect any path");
+          expect(String(messages.at(0)?.content ?? "")).toContain("Workspace access granted for this delegated task");
+          expect(String(messages.at(0)?.content ?? "")).toContain("reason: backend implementation");
+          return textAssistant("Backend done");
+        },
+      },
+    });
+
+    let rootCalls = 0;
+    const rootAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage({ messages }) {
+          rootCalls++;
+          if (rootCalls === 1) {
+            return toolUseAssistant("toolu_1", "backend", {
+              mode: "ask",
+              task: "Implement the backend in the shared workspace.",
+              workspaceGrants: [{
+                root: backendRoot,
+                access: ["write"],
+                reason: "backend implementation",
+              }],
+            });
+          }
+          const result = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
+          expect(result).toContain("Backend done");
+          return textAssistant("Root final");
+        },
+      },
+      tools: [
+        agentTool("backend", backendAgent, {
+          description: "Delegate backend implementation.",
+        }),
+      ],
+    });
+    const mailbox = createMemoryMailbox();
+    const runner = createTeamRunner({ root: rootAgent, mailbox });
+
+    const messages = await collect(runner.query("Use backend.", {
+      permissions: {
+        workspaceGrants: [{
+          root: sharedRoot,
+          access: ["write"],
+          reason: "project shared workspace",
+        }],
+      },
+    }));
+    const backendInbox = await mailbox.inbox("backend", { status: "all" });
+
+    expect(childSawGrant).toBe(true);
+    expect(backendInbox[0]?.metadata?.workspaceGrants).toEqual([
+      expect.objectContaining({
+        root: backendRoot,
+        access: ["write"],
+        reason: "backend implementation",
+      }),
+    ]);
+    expect(messages.find(message => message.type === "result")).toMatchObject({
+      type: "result",
+      result: "Root final",
+    });
+  });
+
+  test("agentTool denies workspace grants the caller cannot delegate", async () => {
+    const sharedRoot = join(tmpdir(), "agent-sdk-unowned-shared-root");
+    let backendCalls = 0;
+    const backendAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          backendCalls++;
+          return textAssistant("Backend should not run");
+        },
+      },
+    });
+
+    let rootCalls = 0;
+    const rootAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage({ messages }) {
+          rootCalls++;
+          if (rootCalls === 1) {
+            return toolUseAssistant("toolu_1", "backend", {
+              mode: "ask",
+              task: "Use an unowned shared workspace.",
+              workspaceGrants: [{
+                root: sharedRoot,
+                access: ["write"],
+                reason: "unowned grant",
+              }],
+            });
+          }
+          const result = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
+          expect(result).toContain('"status": "permission_denied"');
+          expect(result).toContain('"tool": "backend"');
+          expect(result).toContain('"allowedWriteRoots"');
+          expect(result).toContain("shared workspace grant");
+          return textAssistant("Root saw the permission denial");
+        },
+      },
+      tools: [
+        agentTool("backend", backendAgent, {
+          description: "Delegate backend implementation.",
+        }),
+      ],
+    });
+    const runner = createTeamRunner({ root: rootAgent, mailbox: createMemoryMailbox() });
+
+    const messages = await collect(runner.query("Use backend."));
+
+    expect(backendCalls).toBe(0);
+    expect(messages.find(message => message.type === "result")).toMatchObject({
+      type: "result",
+      result: "Root saw the permission denial",
     });
   });
 

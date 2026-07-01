@@ -408,6 +408,37 @@ an explicit action contract: `mode: "ask"` waits for the member result,
 `mode: "observe"` reports unsupported unless a host runtime provides
 observation support.
 
+Team member tools can also request explicit shared workspace write grants:
+
+```ts
+for await (const event of team.query(
+  "Ask backend to implement the API in the shared repo.",
+  {
+    permissions: {
+      workspaceGrants: [{
+        root: "/work/shared/txt-notebook-app",
+        access: ["write"],
+        reason: "Project shared workspace",
+      }],
+    },
+  },
+)) {
+  console.log(event);
+}
+```
+
+When the lead calls a member tool, it may include `workspaceGrants` scoped to
+that member, for example `/work/shared/txt-notebook-app/backend`. The runtime
+only accepts write grants that are covered by the caller's current permissions. The
+accepted grants are written to mailbox metadata, included in the child agent's
+task/system context, and enforced by the built-in write tools. Read-only tools
+such as `Read`, `LS`, `Glob`, and `Grep` can inspect any path the host process
+can read and do not require workspace grants. If a write tool is denied, the
+model receives a structured `permission_denied` tool result with the requested
+path, allowed roots, and a deterministic suggested next step.
+Grant `access` values are operation categories, not tool names; `write` covers
+`Write`, `Edit`, and obvious Bash writes.
+
 Advanced mailbox controls remain available through `team.send()`,
 `team.drain()`, and `team.mailbox`. Member agents that can accept tools receive
 `team_send`, `team_inbox`, `team_read`, `team_reply`, `team_followup`, and
@@ -587,9 +618,11 @@ const agent = createAgent({
 });
 ```
 
-These tools are not enabled by default. They can read, write, edit, search, and
-execute shell commands in the configured workspace, so production hosts should
-pair them with a permission callback.
+These tools are not enabled by default. `Read`, `LS`, `Glob`, and `Grep` are
+read-only observation tools and are not gated by workspace grants. `Write`,
+`Edit`, and obvious Bash writes are gated to the configured workspace roots and
+task-scoped shared workspace grants, so production hosts should pair write and
+shell access with a permission callback.
 
 ## Multi-turn Session
 
