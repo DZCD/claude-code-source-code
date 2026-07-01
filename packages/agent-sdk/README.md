@@ -437,6 +437,11 @@ path, allowed roots, and a deterministic suggested next step.
 Grant `access` values are operation categories, not tool names; `write` covers
 `Write`, `Edit`, and obvious Bash writes.
 
+Managers should choose one workspace strategy explicitly when delegating:
+ask the member to write deliverables in its own private workspace and report
+paths, or provide `workspaceGrants: [{ root, access: ["write"], reason }]` for
+every shared or manager-owned root named as a write destination.
+
 Advanced mailbox controls remain available through `team.send()`,
 `team.drain()`, and `team.mailbox`. Member agents that can accept tools receive
 `team_send`, `team_inbox`, `team_read`, `team_reply`, `team_followup`, and
@@ -620,7 +625,8 @@ These tools are not enabled by default. `Read`, `LS`, `Glob`, and `Grep` are
 read-only observation tools and are not gated by workspace grants. `Write`,
 `Edit`, and obvious Bash writes are gated to the configured workspace roots and
 task-scoped shared workspace grants, so production hosts should pair write and
-shell access with a permission callback.
+shell access with a permission callback. Shell redirects to `/dev/null` are
+treated as discard targets, not workspace writes.
 
 ## Multi-turn Session
 

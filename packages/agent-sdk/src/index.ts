@@ -685,7 +685,7 @@ export const agentToolInputSchema = z.object({
   acceptanceCriteria: z.array(z.string()).optional(),
   workspaceGrants: z.array(z.object({
     root: z.string(),
-    access: z.array(z.enum(["read", "write", "execute"])).optional(),
+    access: z.array(z.enum(["write"])).optional(),
     reason: z.string().optional(),
     expiresAt: z.number().optional(),
   })).optional(),
@@ -2506,7 +2506,8 @@ function formatTeamMemberDelegateDescription(member: TeamMemberDefinition): stri
     `Role: ${member.role}.`,
     ...(member.focus ? [`Focus: ${member.focus}.`] : []),
     "Pass a clear task. The member will return a final result.",
-    "Ask for durable deliverables to be written in the member's own workspace and reported in natural language with important workspace paths and verification notes.",
+    "By default, ask for durable deliverables to be written in the member's own private workspace and reported in natural language with important workspace paths and verification notes.",
+    "If you instruct the member to write into any shared or manager-owned path, include workspaceGrants with access=[\"write\"] for that exact shared root. Do not name a write destination outside the member's workspace unless you also grant it.",
   ];
   return details.join(" ");
 }
@@ -2521,6 +2522,7 @@ function formatAgentToolDescription(description: string): string {
     '- mode="observe": request observable long-running work; currently unsupported and will return a clear error.',
     "Provide a clear task, expected output, and acceptance criteria when useful.",
     "If the target needs to write in a shared workspace, include workspaceGrants with root, access, and reason. The runtime will only grant write access that the caller is already allowed to delegate, and the result will say which grants were accepted or why they were denied. Read-only tools do not require workspace grants.",
+    "Choose one workspace strategy explicitly: either ask the target to write deliverables in its own private workspace and report paths, or provide workspaceGrants for every shared/manager-owned root you ask it to write under.",
   ].join("\n");
 }
 
@@ -3738,6 +3740,7 @@ function authorizeShellCommand(
 ): void {
   for (const check of extractShellPathChecks(command)) {
     if (check.operation !== "write") continue;
+    if (isShellDiscardTarget(check.path, roots.cwd)) continue;
     resolveAuthorizedPath(check.path, roots, context, "Bash", check.operation);
   }
 }
@@ -3774,6 +3777,12 @@ function extractShellPathChecks(command: string): ShellPathCheck[] {
   }
 
   return checks.filter(check => looksLikePath(check.path));
+}
+
+function isShellDiscardTarget(inputPath: string, cwd: string): boolean {
+  const stripped = stripShellQuotes(inputPath);
+  const path = isAbsolute(stripped) ? resolve(stripped) : resolve(cwd, stripped);
+  return path === "/dev/null";
 }
 
 function extractShellRedirectPaths(command: string): string[] {

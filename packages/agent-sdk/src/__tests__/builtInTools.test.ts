@@ -184,6 +184,17 @@ describe("Claude Code built-in tools", () => {
     expect(result.content).toContain("visible");
   });
 
+  test("Bash allows redirects to /dev/null", async () => {
+    const cwd = await tempWorkspace();
+
+    const result = await findTool("Bash", cwd).handler(
+      { command: "kill %1 2>/dev/null || true", timeout_ms: 2000 },
+      { toolUseId: "toolu_1" },
+    );
+
+    expect(result.content).toBe("");
+  });
+
   test("Bash allows obvious writes inside runtime workspace grants", async () => {
     const cwd = await tempWorkspace();
     const shared = await tempWorkspace();
