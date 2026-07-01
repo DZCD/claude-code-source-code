@@ -415,6 +415,7 @@ describe("agent-sdk", () => {
       apiKey: "test-key",
       name: "researcher",
       model: "claude-test",
+      systemPrompt: "You are the research lead. Keep answers concise.",
       modelClient: clientFromResponses([textAssistant("hello")]),
     });
 
@@ -456,6 +457,17 @@ describe("agent-sdk", () => {
       parent_run: root,
       inputs: {
         model: "claude-test",
+        systemPrompt: expect.stringContaining("You are the research lead. Keep answers concise."),
+        messages: [
+          {
+            role: "system",
+            content: expect.stringContaining("You are the research lead. Keep answers concise."),
+          },
+          {
+            role: "user",
+            content: "Say hello",
+          },
+        ],
         stream: false,
       },
       outputs: {

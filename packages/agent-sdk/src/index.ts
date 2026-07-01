@@ -1723,6 +1723,7 @@ export class Agent {
         data: {
           model: this.options.model,
           max_tokens: this.options.maxTokens,
+          ...(systemPrompt ? { systemPrompt } : {}),
           messages: modelMessages,
           tools: modelTools.map(tool => tool.name),
           permissions: traceRuntimePermissions(effectivePermissions),
@@ -3121,7 +3122,7 @@ async function startLangSmithModelRun(
     name: `${model} turn ${state.modelRequests}`,
     run_type: "llm",
     start_time: event.timestamp,
-    inputs: jsonSafeRecord(event.data),
+    inputs: langSmithModelInputs(event.data),
     metadata: langSmithMetadata(event, options, {
       sdk_event_type: "model_request",
       model: event.data.model,
@@ -3300,6 +3301,28 @@ function jsonSafeRecord(value: unknown): LangSmithKVMap {
     return safe as LangSmithKVMap;
   }
   return { value: safe };
+}
+
+function langSmithModelInputs(data: Record<string, unknown>): LangSmithKVMap {
+  const inputs = jsonSafeRecord(data);
+  const systemPrompt = typeof inputs.systemPrompt === "string" && inputs.systemPrompt.trim()
+    ? inputs.systemPrompt
+    : undefined;
+  if (!systemPrompt) return inputs;
+
+  const messages = Array.isArray(inputs.messages) ? inputs.messages : [];
+  const firstMessage = messages[0];
+  if (isRecord(firstMessage) && firstMessage.role === "system") return inputs;
+
+  inputs.messages = [
+    { role: "system", content: systemPrompt },
+    ...messages,
+  ];
+  return inputs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function jsonSafeValue(value: unknown): unknown {
