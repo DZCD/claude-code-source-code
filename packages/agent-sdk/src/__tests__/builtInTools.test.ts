@@ -188,11 +188,11 @@ describe("Claude Code built-in tools", () => {
     const cwd = await tempWorkspace();
 
     const result = await findTool("Bash", cwd).handler(
-      { command: "kill %1 2>/dev/null || true", timeout_ms: 2000 },
+      { command: "kill 517 2>/dev/null; echo \"Server stopped\"", timeout_ms: 2000 },
       { toolUseId: "toolu_1" },
     );
 
-    expect(result.content).toBe("");
+    expect(result.content).toContain("Server stopped");
   });
 
   test("Bash allows obvious writes inside runtime workspace grants", async () => {

@@ -3780,7 +3780,7 @@ function extractShellPathChecks(command: string): ShellPathCheck[] {
 }
 
 function isShellDiscardTarget(inputPath: string, cwd: string): boolean {
-  const stripped = stripShellQuotes(inputPath);
+  const stripped = normalizeShellRedirectTarget(inputPath);
   const path = isAbsolute(stripped) ? resolve(stripped) : resolve(cwd, stripped);
   return path === "/dev/null";
 }
@@ -3790,10 +3790,18 @@ function extractShellRedirectPaths(command: string): string[] {
   const redirectPattern = /(?:^|\s)(?:>>|&>|\d?>)\s*("[^"]+"|'[^']+'|[^\s]+)/g;
   let match: RegExpExecArray | null;
   while ((match = redirectPattern.exec(command)) !== null) {
-    const path = stripShellQuotes(match[1] ?? "");
+    const path = normalizeShellRedirectTarget(match[1] ?? "");
     if (path) paths.push(path);
   }
   return paths;
+}
+
+function normalizeShellRedirectTarget(raw: string): string {
+  const trimmed = raw.trim();
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return stripShellQuotes(trimmed);
+  }
+  return stripShellQuotes(trimmed).replace(/[;&|]+$/g, "");
 }
 
 function shellWords(segment: string): string[] {
