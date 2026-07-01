@@ -174,6 +174,14 @@ export type JsonlContextTracerOptions = {
 
 export type LangSmithKVMap = Record<string, unknown>;
 
+export type LangSmithWriteReplicaConfig = {
+  projectName?: string;
+  apiUrl?: string;
+  apiKey?: string;
+  workspaceId?: string;
+  client?: unknown;
+};
+
 export type LangSmithRunTreeConfig = {
   name: string;
   run_type?: string;
@@ -192,6 +200,7 @@ export type LangSmithRunTreeConfig = {
   inputs?: LangSmithKVMap;
   outputs?: LangSmithKVMap;
   client?: unknown;
+  replicas?: LangSmithWriteReplicaConfig[];
   tracingEnabled?: boolean;
   attachments?: unknown;
 };
@@ -235,6 +244,9 @@ export type LangSmithContextTracerOptions = {
   runTree?: (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike;
   projectName?: string;
   name?: string;
+  apiUrl?: string;
+  apiKey?: string;
+  workspaceId?: string;
   client?: unknown;
   tags?: string[];
   metadata?: LangSmithKVMap;
@@ -3065,7 +3077,7 @@ async function startLangSmithRootRun(
       tools: event.data.tools,
     }),
     tags: langSmithTags(event, options),
-    ...(options.client ? { client: options.client } : {}),
+    ...langSmithConnectionConfig(options),
   };
   const root = parent ? parent.createChild(config) : makeRunTree(config);
   const state: LangSmithTraceRunState = {
@@ -3254,6 +3266,25 @@ function recordLangSmithRunEvent(
 
 function langSmithSourceName(source: AgentRuntimeSource): string {
   return source.name ?? source.member ?? source.team ?? source.kind;
+}
+
+function langSmithConnectionConfig(options: LangSmithContextTracerOptions): Pick<LangSmithRunTreeConfig, "client" | "replicas"> {
+  const replica = langSmithWriteReplica(options);
+  return {
+    ...(options.client ? { client: options.client } : {}),
+    ...(replica ? { replicas: [replica] } : {}),
+  };
+}
+
+function langSmithWriteReplica(options: LangSmithContextTracerOptions): LangSmithWriteReplicaConfig | undefined {
+  if (!options.apiUrl && !options.apiKey && !options.workspaceId) return undefined;
+  return {
+    ...(options.projectName ? { projectName: options.projectName } : {}),
+    ...(options.apiUrl ? { apiUrl: options.apiUrl } : {}),
+    ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+    ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+    ...(options.client ? { client: options.client } : {}),
+  };
 }
 
 function langSmithMetadata(

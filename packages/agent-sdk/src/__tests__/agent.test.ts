@@ -83,6 +83,7 @@ type FakeRunConfig = {
   outputs?: Record<string, unknown>;
   error?: string;
   client?: unknown;
+  replicas?: Array<Record<string, unknown>>;
 };
 
 class FakeRunTree {
@@ -103,6 +104,7 @@ class FakeRunTree {
   error?: string;
   events: unknown[] = [];
   client?: unknown;
+  replicas?: Array<Record<string, unknown>>;
 
   constructor(config: FakeRunConfig) {
     this.id = config.id;
@@ -117,6 +119,7 @@ class FakeRunTree {
     this.outputs = config.outputs;
     this.error = config.error;
     this.client = config.client;
+    this.replicas = config.replicas;
     FakeRunTree.runs.push(this);
   }
 
@@ -534,6 +537,35 @@ describe("agent-sdk", () => {
       subtype: "success",
       result: "The answer is 4",
     });
+  });
+
+  test("passes LangSmith workspace connection options to RunTree replicas", async () => {
+    FakeRunTree.reset();
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+      apiUrl: "https://api.smith.langchain.com",
+      apiKey: "test-langsmith-key",
+      workspaceId: "workspace-123",
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "workspace-check",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("ok")]),
+    });
+
+    await collect(agent.query("Trace with workspace", { stream: false, tracer }));
+
+    const root = FakeRunTree.runs.find(run => run.run_type === "chain");
+    expect(root?.replicas).toEqual([
+      {
+        projectName: "agent-sdk-tests",
+        apiUrl: "https://api.smith.langchain.com",
+        apiKey: "test-langsmith-key",
+        workspaceId: "workspace-123",
+      },
+    ]);
   });
 
   test("passes systemPrompt to the model client", async () => {

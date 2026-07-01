@@ -74,6 +74,8 @@ LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=<your-langsmith-api-key>
 LANGSMITH_PROJECT=<your-langsmith-project>
+# 只有组织级或多 workspace API key 才需要。
+LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 ```
 
 ```ts
@@ -83,6 +85,7 @@ import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk
 const tracer = createLangSmithContextTracer({
   RunTree,
   projectName: process.env.LANGSMITH_PROJECT,
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   tags: ["local-debug"],
 });
 
@@ -94,25 +97,20 @@ const agent = createAgent({
 });
 ```
 
-如果你想自己构造 LangSmith client，也可以显式传入 `Client`。`workspaceId`
-是可选的，只用于选择 LangSmith workspace；它不是 trace project 名。
+如果你更想显式传值，也可以直接传给 SDK tracer。`workspaceId` 是可选的，
+只用于选择 LangSmith workspace；它不是 trace project 名。
 
 ```ts
-import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import { createLangSmithContextTracer } from "claude-team-agent-sdk";
 
-const langsmithClient = new Client({
-  apiKey: process.env.LANGSMITH_API_KEY,
-  apiUrl: process.env.LANGSMITH_ENDPOINT,
-  // 可选：只有 LangSmith 账号需要显式指定 workspace 时才传。
-  // workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
-});
-
 const tracer = createLangSmithContextTracer({
   RunTree,
-  client: langsmithClient,
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
   projectName: process.env.LANGSMITH_PROJECT,
+  // 可选：只有 LangSmith 要求显式指定 workspace 时才传。
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
 });
 ```
 
@@ -137,6 +135,7 @@ const tracer = createCompositeContextTracer([
   createLangSmithContextTracer({
     RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
+    workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),
 ]);
 ```

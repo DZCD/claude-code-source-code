@@ -105,6 +105,8 @@ LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=<your-langsmith-api-key>
 LANGSMITH_PROJECT=<your-langsmith-project>
+# Required only for org-scoped or multi-workspace API keys.
+LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 ```
 
 ```ts
@@ -121,6 +123,7 @@ const tracer = createCompositeContextTracer([
   createLangSmithContextTracer({
     RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
+    workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
     tags: ["local-debug"],
   }),
 ]);
@@ -133,26 +136,21 @@ const agent = createAgent({
 });
 ```
 
-If you want to construct the LangSmith client yourself, pass a `Client`
-explicitly. `workspaceId` is optional and only selects a LangSmith workspace; it
-is not the tracing project name.
+If you prefer explicit values over environment variables, pass them to the SDK
+tracer. `workspaceId` is optional and only selects a LangSmith workspace; it is
+not the tracing project name.
 
 ```ts
-import { Client } from "langsmith";
 import { RunTree } from "langsmith/run_trees";
 import { createLangSmithContextTracer } from "claude-team-agent-sdk";
 
-const langsmithClient = new Client({
-  apiKey: process.env.LANGSMITH_API_KEY,
-  apiUrl: process.env.LANGSMITH_ENDPOINT,
-  // Optional: only when your LangSmith account requires an explicit workspace.
-  // workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
-});
-
 const tracer = createLangSmithContextTracer({
   RunTree,
-  client: langsmithClient,
+  apiKey: process.env.LANGSMITH_API_KEY,
+  apiUrl: process.env.LANGSMITH_ENDPOINT,
   projectName: process.env.LANGSMITH_PROJECT,
+  // Optional: only when LangSmith requires an explicit workspace.
+  workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
 });
 ```
 

@@ -82,6 +82,7 @@ const tracer = createCompositeContextTracer([
   createLangSmithContextTracer({
     RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
+    workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),
 ]);
 
@@ -103,9 +104,11 @@ await agent.prompt("Trace this run.", { stream: false });
 `runTree(config)` 工厂函数。SDK 不直接依赖 LangSmith；宿主应用安装
 `langsmith`，并从 `langsmith/run_trees` 传入 `RunTree`。按 LangSmith 官方方式
 配置 `LANGSMITH_TRACING`、`LANGSMITH_ENDPOINT`、`LANGSMITH_API_KEY` 和
-`LANGSMITH_PROJECT`。如果你想自己构造 LangSmith client，也可以通过 `client`
-显式传入 `Client`；`workspaceId` 只用于选择 LangSmith workspace，不是
-project 名。
+`LANGSMITH_PROJECT`。只有组织级或多 workspace API key 才需要
+`LANGSMITH_WORKSPACE_ID`。也可以把 `apiKey`、`apiUrl` 和 `workspaceId`
+直接传给 `createLangSmithContextTracer()`；`workspaceId` 只用于选择
+LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith client，
+可以通过 `client` 显式传入 `Client`。
 
 ## 核心类型
 
