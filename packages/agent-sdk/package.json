@@ -1,6 +1,6 @@
 {
   "name": "claude-team-agent-sdk",
-  "version": "0.9.1",
+  "version": "0.9.10",
   "description": "[agent-like]Lightweight Claude agent SDK with custom tools and streaming events",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,11 +18,13 @@
   "scripts": {
     "build": "rm -rf ./dist && bun build ./src/index.ts --outdir ./dist --target node --format esm && tsc -p tsconfig.json",
     "test": "bun test ./src/__tests__",
-    "test:integration:deepseek": "DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash} bun test ./src/__tests__/integration.test.ts"
+    "test:integration:deepseek": "DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash} bun test ./src/__tests__/integration.test.ts",
+    "docs:deploy": "cd ../docs && bun run deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "langsmith": "0.7.14",
     "zod": "^4.3.6"
   },
   "devDependencies": {

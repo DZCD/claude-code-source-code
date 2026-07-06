@@ -64,8 +64,8 @@ const tracer = createJsonlContextTracer({
 ## LangSmith tracer
 
 需要把 SDK 运行显示成 LangSmith trace 时，可以使用
-`createLangSmithContextTracer()`。宿主应用自行安装 `langsmith`，并把它的
-`RunTree` 构造器传给 tracer。
+`createLangSmithContextTracer()`。SDK 现在直接依赖 `langsmith`，并复用它的
+官方 `RunTree` 类型；把 `RunTree` 构造器传给 tracer 即可。
 
 按 LangSmith 官方方式配置环境变量：
 
@@ -114,8 +114,8 @@ const tracer = createLangSmithContextTracer({
 });
 ```
 
-SDK 不 import LangSmith，也不把它作为硬依赖。LangSmith tracer 和 JSONL tracer
-一样只是实现 `ContextTracer`，所以 agent loop 不需要知道具体观测后端。
+LangSmith tracer 和 JSONL tracer 一样只是实现 `ContextTracer`，所以 agent loop
+不需要知道具体观测后端。
 
 LangSmith 会收到这样的投影：
 

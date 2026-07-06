@@ -129,6 +129,119 @@ describe("team", () => {
     expect(events.at(-1)).toMatchObject({ type: "result", result: "Engineering final." });
   });
 
+  test("team.query continues after handoff until the lead delivers final output", async () => {
+    const researcherAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return textAssistant("Research handoff complete.");
+        },
+      },
+    });
+    let leadCalls = 0;
+    const team = createTeam({
+      name: "engineering",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage({ messages }) {
+            leadCalls++;
+            if (leadCalls === 1) {
+              return toolUseAssistant("toolu_1", "researcher", {
+                mode: "handoff",
+                task: "Research the async runtime design.",
+              });
+            }
+            if (leadCalls === 2) {
+              const receipt = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
+              expect(receipt).toContain('"status": "accepted"');
+              return textAssistant("Assigned to researcher.");
+            }
+            const update = String(messages.at(-1)?.content ?? "");
+            expect(update).toContain("Research handoff complete.");
+            return textAssistant("Engineering final after handoff.");
+          },
+        },
+      }),
+      members: [
+        teamMember({
+          name: "researcher",
+          role: "executor",
+          focus: "Research agent architecture",
+          agent: researcherAgent,
+        }),
+      ],
+      mailbox: createMemoryMailbox(),
+    });
+
+    const events = await collect(team.query("Ask the researcher asynchronously."));
+
+    expect(leadCalls).toBe(3);
+    expect(events.some(event =>
+      event.type === "agent_message" &&
+      event.source.kind === "root" &&
+      event.message.type === "result" &&
+      event.message.result === "Assigned to researcher."
+    )).toBe(true);
+    expect(events.find(event => event.type === "result")).toMatchObject({
+      type: "result",
+      result: "Engineering final after handoff.",
+    });
+  });
+
+  test("team.prompt waits through handoff and returns only the lead final result", async () => {
+    const researcherAgent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return textAssistant("Research prompt handoff complete.");
+        },
+      },
+    });
+    let leadCalls = 0;
+    const team = createTeam({
+      name: "engineering",
+      lead: createAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        modelClient: {
+          async createMessage() {
+            leadCalls++;
+            if (leadCalls === 1) {
+              return toolUseAssistant("toolu_1", "researcher", {
+                mode: "handoff",
+                task: "Research prompt semantics.",
+              });
+            }
+            if (leadCalls === 2) {
+              return textAssistant("Assigned to researcher.");
+            }
+            return textAssistant("Engineering prompt final.");
+          },
+        },
+      }),
+      members: [
+        teamMember({
+          name: "researcher",
+          role: "executor",
+          agent: researcherAgent,
+        }),
+      ],
+      mailbox: createMemoryMailbox(),
+    });
+
+    const result = await team.prompt("Ask the researcher asynchronously.");
+
+    expect(leadCalls).toBe(3);
+    expect(result).toMatchObject({
+      type: "result",
+      result: "Engineering prompt final.",
+    });
+  });
+
   test("nested teams are driven when talking directly to the parent team", async () => {
     const backendAgent = createAgent({
       apiKey: "test-key",

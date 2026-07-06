@@ -1,0 +1,105 @@
+---
+title: 团队 - 委派模式
+description: 把短生命周期的 `AgentLike` 子智能体当作一次性工具调用。
+---
+
+Supervisor（主智能体）委派子智能体，适合“一次性找个专家帮忙”。用户仍然只和主智能体对话；主智能体在需要时调用一个临时子智能体，让它完成一个明确任务，再把子智能体的最终答案以 `tool_result` 形式取回。
+
+这个模式适合：
+
+- `explore` 子智能体：读取代码库并报告相关发现。
+- `plan` 子智能体：给出实现方案。
+- `review` 子智能体：检查一次 patch。
+- `implement` 子智能体：真正动手写代码，产出一个明确的 artifact，并汇报改了什么、如何验证。
+
+这个模式中，子智能体只为一次请求运行，返回一个结果，然后由 supervisor 决定下一步。
+
+## 基本结构
+
+```ts
+import {
+  agentTool,
+  createAgent,
+} from "claude-team-agent-sdk";
+
+const explorer = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: [
+    "你是 explore 子智能体。",
+    "检查仓库，找出相关文件，并输出简洁发现。",
+    "不要修改代码。",
+  ].join("\n"),
+  workspace: ".agent-workspaces/explorer",
+});
+
+const supervisor = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "supervisor",
+  systemPrompt: "你负责监督任务，并在需要时调用专门的子智能体。",
+  tools: [
+    agentTool("explore", explorer, {
+      description: "让一个临时 explore 子智能体检查代码库并报告发现。",
+    }),
+  ],
+});
+
+const result = await supervisor.prompt("找出 SDK team delegation 涉及的模块。");
+console.log(result.result);
+```
+
+当 supervisor 智能体用 `mode: "ask"` 调用 `explore` 工具时，SDK 会调用 `explorer.prompt(...)`。`explorer` 的最终结果会成为 supervisor 这一轮的 `tool_result`，然后 supervisor 继续自己的 agent loop。
+
+## 工具输入
+
+`agentTool()` 把子智能体包装成一个**普通工具**——返回的就是一个 `ToolDefinition`，用法和任何自定义 tool 一样，丢进 `createAgent` 的 `tools` 即可。对 supervisor 模型来说，它和别的工具毫无区别；唯一的不同在内部：模型调用它时，SDK 不执行代码，而是转去运行被包装的子智能体，再把结果作为工具结果返回。
+
+这个工具暴露给模型的是一套标准输入：
+
+```ts
+{
+  mode: "ask",
+  task: "检查 SDK team runtime，并总结相关文件。",
+  expectedOutput: "简洁的文件地图和实现笔记",
+  acceptanceCriteria: [
+    "提到 runner 入口",
+    "提到 mailbox 状态转换"
+  ]
+}
+```
+
+对于一次性 supervisor 委派，优先使用 `mode: "ask"`。
+
+| 模式 | 在 supervisor 委派中的含义 |
+| --- | --- |
+| `ask` | 立即运行子 `AgentLike`，并把它的最终答案作为当前工具结果返回。 |
+| `handoff` | 需要 team runtime。没有 runtime 时会返回明确错误。异步 handoff 应该使用 mailbox team。 |
+| `observe` | 预留给可观察长任务。当前除非宿主 runtime 提供支持，否则会报告 unsupported。 |
+
+> 这里的 **team runtime** 指驱动 mailbox 持久团队的运行时——它维护消息队列、保存任务状态，并负责 `handoff` 之后成员的生命周期。本模式是一次性委派，默认没有 runtime，所以 `handoff` / `observe` 基本用不上；需要它们时请改用 [Mailbox Team 持久团队](/zh/concepts/mailbox-team/)。
+
+## Workspace
+
+每个子智能体都有自己的 workspace。对于报告、日志、生成文件或代码等持久交付物，让子智能体写在自己的 workspace 下，并在最终文本里说明关键路径。
+
+`workspace` 是可选的。不传时 SDK 会按智能体的 `name` 自动分配一个默认工作区 `~/.agent/workspaces/<name>/`（没有 `name` 则用 `agent-<sessionId>`），并在首次运行时自动创建。**大多数情况下直接用默认即可**——它已经按智能体隔离，而且落在仓库目录之外，不会污染项目。只有当你想把产物放到指定位置（例如仓库内某个目录）时，才需要显式传 `workspace`，就像下面这样：
+
+```ts
+const reviewer = createAgent({
+  model: "deepseek-v4-flash",
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  systemPrompt: "检查 patch，并把 review notes 写入你的 workspace。",
+  workspace: ".agent-workspaces/reviewer",
+});
+```
+
+## 什么时候用 mailbox team
+
+本模式里子智能体的交付物就是一段自然语言 `tool_result`（说明做了什么、产物在 workspace 的哪个路径、怎么验证）——没有持久状态、消息队列或结构化事件协议。
+
+当工作需要**留在团队里**——持久状态、具名成员 mailbox、可回复/可跟进、可持久化，或需要嵌套团队——请改用 [Mailbox Team 持久团队](/zh/concepts/mailbox-team/)。一句话区分：**Supervisor 委派**是“现在调用这个 helper 拿一个结果”；**mailbox team** 是“把任务放进 mailbox，由成员按消息流完成并回报”，过程中还产出 `team_message` / `team_agent` 等结构化事件，供 tracing 和 UI 使用。

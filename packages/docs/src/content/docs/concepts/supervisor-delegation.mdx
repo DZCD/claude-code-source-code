@@ -1,0 +1,105 @@
+---
+title: Supervisor delegation
+description: Use one-shot AgentLike child agents as tools.
+---
+
+Supervisor delegation is for "ask a specialist once." The user keeps talking only to the supervisor. When useful, the supervisor calls a temporary child agent through a tool, gives it one clear task, and receives the child agent's final answer as the `tool_result`.
+
+Use this for short-lived child agents such as:
+
+- an explore agent that reads the codebase and reports findings
+- a planner that proposes an implementation path
+- a reviewer that checks a patch
+- an implementer that writes one artifact and reports what changed
+
+This pattern does not require a team mailbox. The child `AgentLike` runs for one request, returns one result, and the supervisor decides what to do next.
+
+## Basic shape
+
+```ts
+import {
+  agentTool,
+  createAgent,
+} from "claude-team-agent-sdk";
+
+const explorer = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: [
+    "You are an explore subagent.",
+    "Inspect the repository, identify relevant files, and report concise findings.",
+    "Do not make code changes.",
+  ].join("\n"),
+  workspace: ".agent-workspaces/explorer",
+});
+
+const supervisor = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "supervisor",
+  systemPrompt: "You supervise the task and call specialist subagents when useful.",
+  tools: [
+    agentTool("explore", explorer, {
+      description: "Ask a temporary explore subagent to inspect the codebase and report findings.",
+    }),
+  ],
+});
+
+const result = await supervisor.prompt("Find the modules involved in SDK team delegation.");
+console.log(result.result);
+```
+
+When the supervisor agent calls the `explore` tool with `mode: "ask"`, the SDK calls `explorer.prompt(...)`. The explorer's final result becomes the supervisor's `tool_result`, and then the supervisor continues its own agent loop.
+
+## Tool input
+
+`agentTool()` wraps a child agent into a **plain tool** — it returns a `ToolDefinition` you drop into `createAgent`'s `tools` just like any custom tool. To the supervisor model it's indistinguishable from any other tool; the only difference is internal: when the model calls it, the SDK runs the wrapped child agent instead of running code, and returns that as the tool result.
+
+That tool exposes a standard model-facing input:
+
+```ts
+{
+  mode: "ask",
+  task: "Inspect the SDK team runtime and summarize the relevant files.",
+  expectedOutput: "A concise file map and implementation notes",
+  acceptanceCriteria: [
+    "Mention the runner entry point",
+    "Mention mailbox state transitions"
+  ]
+}
+```
+
+For one-shot supervisor delegation, prefer `mode: "ask"`.
+
+| Mode | Meaning in supervisor delegation |
+| --- | --- |
+| `ask` | Run the child `AgentLike` now and return its final answer as this tool result. |
+| `handoff` | Requires a team runtime. Without a runtime, the tool returns a clear error. Use mailbox teams for async handoff. |
+| `observe` | Reserved for observable long-running work. It currently reports unsupported unless a host runtime provides it. |
+
+> The **team runtime** here is the runtime that backs a persistent mailbox team — it owns the message queue, holds task state, and drives member lifecycle after a `handoff`. This one-shot pattern has no runtime by default, so `handoff` / `observe` are rarely useful here; when you need them, use a [persistent mailbox team](/concepts/mailbox-team/).
+
+## Workspaces
+
+Each child agent has its own workspace. Ask child agents to write durable reports, logs, generated files, or code under their workspace and mention important paths in their final text.
+
+`workspace` is optional. When omitted, the SDK assigns a default workspace keyed by the agent's `name` at `~/.agent/workspaces/<name>/` (`agent-<sessionId>` if there's no `name`) and creates it on first run. **The default is fine for most cases** — it's already isolated per agent and lives outside your repo, so it won't clutter the project. Pass `workspace` explicitly only when you want artifacts in a specific location (e.g. a directory inside the repo), as below:
+
+```ts
+const reviewer = createAgent({
+  model: "deepseek-v4-flash",
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  systemPrompt: "Review the patch and write notes under your workspace.",
+  workspace: ".agent-workspaces/reviewer",
+});
+```
+
+## When to use a mailbox team instead
+
+In this pattern the child's deliverable is just a natural-language `tool_result` (what it did, where artifacts live under its workspace, how to verify) — no durable state, message queue, or structured-event protocol.
+
+Use a [mailbox team](/concepts/mailbox-team/) when the work needs to **stay in a team**: durable status, named member inboxes, replies, follow-ups, persistence, or nested teams. In one line: **supervisor delegation** is "call this helper now and get a result"; a **mailbox team** is "put the task in the mailbox and let members complete it through the message flow," emitting `team_message` / `team_agent` structured events for tracing and UI along the way.

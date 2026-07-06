@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tech Doc Style"
+  short_description: "Write and review bilingual technical docs"
+  default_prompt: "Use $tech-doc-style to review and improve this API or SDK documentation."

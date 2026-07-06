@@ -3,7 +3,7 @@ title: Built-in Tools
 description: Agent workspace tools and manual Claude Code-style tool construction.
 ---
 
-`createAgent()` gives each agent private workspace tools by default. If no `workspace` is provided, files are stored under `~/.agent/workspaces/<agent-name>` or `~/.agent/workspaces/agent-<session-id>`.
+`createAgent()` gives each agent private workspace tools by default. If no `workspace` is provided, files are stored under `~/.agent/workspaces/<name>` when you pass `name`, otherwise under `~/.agent/workspaces/agent-<session-id>`.
 
 Pass `workspace` only to override that default location:
 
@@ -23,13 +23,13 @@ const agent = createAgent({
 });
 ```
 
-Use `createClaudeCodeTools()` directly when you want manual control over the tool list outside the default agent workspace setup.
+`createClaudeCodeTools()` returns the same `ToolDefinition[]` shown in the table above (`createAgent()` calls it internally). Call it directly when you want to assemble the tool list yourself instead of using the default workspace setup.
 
 ## Included tools
 
 | Tool | Capability |
 | --- | --- |
-| `Read` | Read a workspace file, optionally with line offset and limit. |
+| `Read` | Read a workspace file, optionally with 1-based line offset and limit. |
 | `Write` | Write a file and create parent directories. |
 | `Edit` | Replace text in an existing file. |
 | `LS` | List a directory. |
@@ -37,4 +37,20 @@ Use `createClaudeCodeTools()` directly when you want manual control over the too
 | `Grep` | Search file contents by regular expression. |
 | `Bash` | Run a shell command with a timeout. |
 
-Always pair file-writing and shell tools with a permission callback in user-facing products.
+## Security boundary
+
+These tools can read and write files and run shell commands, so in production pair them with a `permission` callback:
+
+```ts
+permission: async request => {
+  if (request.toolName === "Bash" || request.toolName === "Write") {
+    return {
+      behavior: "deny",
+      message: "This host did not approve shell or write access.",
+    };
+  }
+  return { behavior: "allow" };
+}
+```
+
+`allowedDirectories` restricts which directories the file tools can reach, but it does not replace the host application's own permission policy.

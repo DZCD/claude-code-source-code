@@ -94,9 +94,9 @@ for await (const event of team.query("Ask engineering to investigate.", {
 
 ## LangSmith Context Tracing
 
-Install `langsmith` in the host application and pass its `RunTree` constructor
-to the SDK tracer. The SDK does not take a hard dependency on LangSmith; it only
-uses the public `ContextTracer` sink interface.
+Pass LangSmith's `RunTree` constructor to the SDK tracer. The SDK depends on
+`langsmith` directly and uses its official `RunTree` / `RunTreeConfig` types for
+this adapter.
 
 Configure LangSmith with its standard environment variables:
 
@@ -402,9 +402,13 @@ events. `team.prompt()` consumes that stream and returns only the final result.
 
 `createTeam()` injects member AgentLike tools into the lead. Those tools expose
 an explicit action contract: `mode: "ask"` waits for the member result,
-`mode: "handoff"` accepts work for mailbox-backed continuation, and
-`mode: "observe"` reports unsupported unless a host runtime provides
-observation support.
+`mode: "handoff"` returns an acceptance receipt to the lead while the team
+runtime continues the accepted mailbox work, and `mode: "observe"` reports
+unsupported unless a host runtime provides observation support. In the default
+`team.query()` and `team.prompt()` path, a handoff receipt is not the final
+delivery: the runtime waits for the member's upstream reply, feeds it back to
+the lead, and keeps going until the root lead returns the final result or the
+run terminates.
 
 Team member tools can also request explicit shared workspace write grants:
 

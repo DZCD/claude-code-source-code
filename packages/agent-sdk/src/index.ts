@@ -14,6 +14,11 @@ import {
   StreamableHTTPClientTransport,
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type {
+  RunEvent,
+  RunTree,
+  RunTreeConfig,
+} from "langsmith/run_trees";
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
@@ -174,70 +179,11 @@ export type JsonlContextTracerOptions = {
 
 export type LangSmithKVMap = Record<string, unknown>;
 
-export type LangSmithWriteReplicaConfig = {
-  projectName?: string;
-  apiUrl?: string;
-  apiKey?: string;
-  workspaceId?: string;
-  client?: unknown;
-};
-
-export type LangSmithRunTreeConfig = {
-  name: string;
-  run_type?: string;
-  id?: string;
-  project_name?: string;
-  parent_run?: LangSmithRunTreeLike;
-  parent_run_id?: string;
-  child_runs?: LangSmithRunTreeLike[];
-  start_time?: number | string;
-  end_time?: number | string;
-  extra?: LangSmithKVMap;
-  metadata?: LangSmithKVMap;
-  tags?: string[];
-  error?: string;
-  serialized?: object;
-  inputs?: LangSmithKVMap;
-  outputs?: LangSmithKVMap;
-  client?: unknown;
-  replicas?: LangSmithWriteReplicaConfig[];
-  tracingEnabled?: boolean;
-  attachments?: unknown;
-};
-
-export type LangSmithRunEvent = {
-  name?: string;
-  time?: string;
-  message?: string;
-  kwargs?: LangSmithKVMap;
-  [key: string]: unknown;
-};
-
-export type LangSmithRunTreeLike = {
-  id?: string;
-  name: string;
-  run_type: string;
-  parent_run?: LangSmithRunTreeLike;
-  child_runs?: LangSmithRunTreeLike[];
-  inputs?: LangSmithKVMap;
-  outputs?: LangSmithKVMap;
-  error?: string;
-  metadata?: LangSmithKVMap;
-  tags?: string[];
-  events?: LangSmithKVMap[];
-  createChild(config: LangSmithRunTreeConfig): LangSmithRunTreeLike;
-  postRun?(excludeChildRuns?: boolean): Promise<void> | void;
-  end?(
-    outputs?: LangSmithKVMap,
-    error?: string,
-    endTime?: number,
-    metadata?: LangSmithKVMap,
-  ): Promise<void> | void;
-  patchRun?(options?: { excludeInputs?: boolean }): Promise<void> | void;
-  addEvent?(event: LangSmithRunEvent | string): void;
-};
-
-export type LangSmithRunTreeConstructor = new (config: any) => LangSmithRunTreeLike;
+export type LangSmithRunTreeConfig = RunTreeConfig;
+export type LangSmithRunEvent = RunEvent;
+export type LangSmithRunTreeLike = RunTree;
+export type LangSmithRunTreeConstructor = new (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike;
+export type LangSmithWriteReplicaConfig = NonNullable<LangSmithRunTreeConfig["replicas"]>[number];
 
 export type LangSmithContextTracerOptions = {
   RunTree?: LangSmithRunTreeConstructor;
@@ -247,7 +193,7 @@ export type LangSmithContextTracerOptions = {
   apiUrl?: string;
   apiKey?: string;
   workspaceId?: string;
-  client?: unknown;
+  client?: LangSmithRunTreeConfig["client"];
   tags?: string[];
   metadata?: LangSmithKVMap;
   redact?: (event: ContextTraceEvent) => ContextTraceEvent | undefined;
@@ -499,6 +445,17 @@ export type TeamRunner = {
   mailbox: TeamMailbox;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+};
+
+type AcceptedDelegateWork = {
+  delegateInput: AgentRuntimeDelegateInput;
+  request: TeamMessage;
+  callerMailbox: string;
+  targetMailbox: string;
+  callerSource: AgentRuntimeSource;
+  targetSource: AgentRuntimeSource;
+  workspaceGrants: WorkspaceGrant[];
+  depth: number;
 };
 
 export type PermissionRequest = {
@@ -1411,50 +1368,32 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
     mailbox,
     async *query(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): AsyncGenerator<TeamRunnerMessage> {
       const queue = new AsyncMessageQueue<TeamRunnerMessage>();
-      const runtime = createTeamRunnerRuntime({
+      let runError: unknown;
+      const run = runAgentLikeToFinal({
+        agent: root,
+        prompt,
         mailbox,
         source,
         emit: message => queue.push(message),
         maxDelegateDepth,
         depth: 0,
         queryOptions,
+        emitAgentMessage: emitRootAgentMessage,
+      }).catch(error => {
+        runError = error;
+      }).finally(() => {
+        queue.close();
       });
-      const iterator = root.query(prompt, {
-        ...queryOptions,
-        runtime,
-      });
-
-      let rootDone = false;
-      let rootNext = iterator.next().then(value => ({ kind: "root" as const, value }));
-      let queueNext = queue.next().then(value => ({ kind: "queue" as const, value }));
-
-      while (!rootDone) {
-        const next = await Promise.race([queueNext, rootNext]);
-        if (next.kind === "queue") {
-          if (!next.value.done) {
-            yield next.value.value;
-          }
-          queueNext = queue.next().then(value => ({ kind: "queue" as const, value }));
-          continue;
-        }
-
-        if (next.value.done) {
-          rootDone = true;
-          queue.close();
-          continue;
-        }
-
-        for (const queued of queue.drainAvailable()) {
-          yield queued;
-        }
-        yield next.value.value;
-        rootNext = iterator.next().then(value => ({ kind: "root" as const, value }));
-      }
 
       while (true) {
         const next = await queue.next();
         if (next.done) break;
         yield next.value;
+      }
+
+      await run;
+      if (runError) {
+        throw runError;
       }
     },
     async prompt(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): Promise<SDKResultMessage> {
@@ -2318,6 +2257,252 @@ class AsyncMessageQueue<T> {
   }
 }
 
+type AgentLikeMessageEmitter = (
+  message: AgentLikeEvent,
+  context: {
+    source: AgentRuntimeSource;
+    hasAcceptedHandoffs: boolean;
+    emit(message: TeamRunnerMessage): void;
+  },
+) => void;
+
+async function runAgentLikeToFinal(input: {
+  agent: AgentLike;
+  prompt: string | ContentBlock[];
+  mailbox: TeamMailbox;
+  source: AgentRuntimeSource;
+  emit(message: TeamRunnerMessage): void;
+  maxDelegateDepth: number;
+  depth: number;
+  queryOptions: QueryOptions;
+  emitAgentMessage: AgentLikeMessageEmitter;
+}): Promise<SDKResultMessage> {
+  let nextPrompt = input.prompt;
+  let handoffRounds = 0;
+
+  while (true) {
+    const abortError = abortErrorIfNeeded(input.queryOptions.signal);
+    if (abortError) throw abortError;
+
+    const acceptedHandoffs: AcceptedDelegateWork[] = [];
+    const runtime = createTeamRunnerRuntime({
+      mailbox: input.mailbox,
+      source: input.source,
+      emit: input.emit,
+      maxDelegateDepth: input.maxDelegateDepth,
+      depth: input.depth,
+      queryOptions: input.queryOptions,
+      acceptedHandoffs,
+    });
+    let finalResult: SDKResultMessage | undefined;
+
+    for await (const agentMessage of input.agent.query(nextPrompt, {
+      stream: input.queryOptions.stream,
+      signal: input.queryOptions.signal,
+      tracer: input.queryOptions.tracer,
+      runtime,
+      permissions: runtime.permissions,
+    })) {
+      if (agentMessage.type === "result") {
+        finalResult = agentMessage;
+      }
+      input.emitAgentMessage(agentMessage, {
+        source: input.source,
+        hasAcceptedHandoffs: acceptedHandoffs.length > 0,
+        emit: input.emit,
+      });
+    }
+
+    if (!finalResult) {
+      throw new Error("AgentLike query completed without a result message");
+    }
+    if (finalResult.is_error || acceptedHandoffs.length === 0) {
+      return finalResult;
+    }
+
+    handoffRounds++;
+    if (handoffRounds > 50) {
+      throw new Error("Team runner exceeded maximum handoff follow-up rounds (50)");
+    }
+
+    const replies: TeamMessage[] = [];
+    for (const handoff of acceptedHandoffs) {
+      const result = await executeDelegateWork({
+        ...handoff,
+        mailbox: input.mailbox,
+        emit: input.emit,
+        maxDelegateDepth: input.maxDelegateDepth,
+        queryOptions: input.queryOptions,
+      });
+      if (result.reply) {
+        replies.push(result.reply);
+      }
+    }
+
+    if (replies.length === 0) {
+      return finalResult;
+    }
+
+    nextPrompt = renderAcceptedHandoffReplyPrompt(input.source, replies);
+  }
+}
+
+async function executeDelegateWork(input: AcceptedDelegateWork & {
+  mailbox: TeamMailbox;
+  emit(message: TeamRunnerMessage): void;
+  maxDelegateDepth: number;
+  queryOptions: QueryOptions;
+}): Promise<AgentRuntimeDelegateResult> {
+  const claimed = await input.mailbox.claimNext(input.targetMailbox);
+  const message = claimed ?? input.request;
+  input.emit({
+    type: "team_message",
+    subtype: "claimed",
+    source: input.callerSource,
+    mailbox: input.targetMailbox,
+    message,
+  });
+
+  input.emit({
+    type: "team_agent",
+    subtype: "started",
+    source: input.targetSource,
+  });
+
+  const childPermissions: RuntimePermissions = { workspaceGrants: input.workspaceGrants };
+  let finalResult: SDKResultMessage;
+  try {
+    finalResult = await runAgentLikeToFinal({
+      agent: input.delegateInput.agent,
+      prompt: renderDelegateTaskPrompt(input.delegateInput, message),
+      mailbox: input.mailbox,
+      source: input.targetSource,
+      emit: input.emit,
+      maxDelegateDepth: input.maxDelegateDepth,
+      depth: input.depth + 1,
+      queryOptions: {
+        ...input.queryOptions,
+        permissions: childPermissions,
+      },
+      emitAgentMessage: emitChildAgentMessage,
+    });
+  } catch (error) {
+    await input.mailbox.updateStatus(message.id, "failed");
+    const failed = await input.mailbox.get(message.id);
+    if (failed) {
+      input.emit({
+        type: "team_message",
+        subtype: "failed",
+        source: input.targetSource,
+        mailbox: input.targetMailbox,
+        message: failed,
+      });
+    }
+    throw error;
+  } finally {
+    input.emit({
+      type: "team_agent",
+      subtype: "finished",
+      source: input.targetSource,
+    });
+  }
+
+  if (finalResult.is_error) {
+    await input.mailbox.updateStatus(message.id, "failed");
+    const failed = await input.mailbox.get(message.id);
+    if (failed) {
+      input.emit({
+        type: "team_message",
+        subtype: "failed",
+        source: input.targetSource,
+        mailbox: input.targetMailbox,
+        message: failed,
+      });
+    }
+    throw finalResult.error ?? new Error(finalResult.result || `Delegate ${input.delegateInput.name} failed`);
+  }
+
+  await input.mailbox.updateStatus(message.id, "done");
+  const done = await input.mailbox.get(message.id);
+  if (done) {
+    input.emit({
+      type: "team_message",
+      subtype: "done",
+      source: input.targetSource,
+      mailbox: input.targetMailbox,
+      message: done,
+    });
+  }
+  const reply = await input.mailbox.send(input.targetMailbox, input.callerMailbox, finalResult.result, {
+    threadId: message.threadId,
+    parentMessageId: message.id,
+    workItemId: message.workItemId,
+    upstreamMessageId: message.upstreamMessageId ?? message.id,
+    workItemRole: "upstream_report",
+  });
+  input.emit({
+    type: "team_message",
+    subtype: "replied",
+    source: input.targetSource,
+    mailbox: input.callerMailbox,
+    message: reply,
+  });
+
+  return {
+    status: "completed",
+    content: finalResult.result,
+    request: message,
+    reply,
+    result: finalResult,
+    workspaceGrants: input.workspaceGrants,
+  };
+}
+
+function emitRootAgentMessage(message: AgentLikeEvent, context: {
+  source: AgentRuntimeSource;
+  hasAcceptedHandoffs: boolean;
+  emit(message: TeamRunnerMessage): void;
+}): void {
+  if (isNestedTeamRunnerMessage(message)) {
+    context.emit(message);
+    return;
+  }
+  if (message.type === "result" && context.hasAcceptedHandoffs) {
+    context.emit({
+      type: "agent_message",
+      source: context.source,
+      message,
+    });
+    return;
+  }
+  context.emit(message);
+}
+
+function emitChildAgentMessage(message: AgentLikeEvent, context: {
+  source: AgentRuntimeSource;
+  hasAcceptedHandoffs: boolean;
+  emit(message: TeamRunnerMessage): void;
+}): void {
+  if (isNestedTeamRunnerMessage(message)) {
+    context.emit(message);
+    return;
+  }
+  if (message.type === "stream_event") {
+    context.emit({
+      type: "stream_event",
+      source: context.source,
+      event: message.event,
+      session_id: message.session_id,
+    });
+    return;
+  }
+  context.emit({
+    type: "agent_message",
+    source: context.source,
+    message,
+  });
+}
+
 function createTeamRunnerRuntime(input: {
   mailbox: TeamMailbox;
   source: AgentRuntimeSource;
@@ -2325,6 +2510,7 @@ function createTeamRunnerRuntime(input: {
   maxDelegateDepth: number;
   depth: number;
   queryOptions: QueryOptions;
+  acceptedHandoffs: AcceptedDelegateWork[];
 }): AgentRuntimeContext {
   const permissions: RuntimePermissions = normalizeRuntimePermissions(input.queryOptions.permissions);
   return {
@@ -2362,7 +2548,19 @@ function createTeamRunnerRuntime(input: {
         message: request,
       });
 
+      const delegateWork: AcceptedDelegateWork = {
+        delegateInput,
+        request,
+        callerMailbox,
+        targetMailbox,
+        callerSource: input.source,
+        targetSource,
+        workspaceGrants,
+        depth: input.depth,
+      };
+
       if (delegateInput.wait === "accepted") {
+        input.acceptedHandoffs.push(delegateWork);
         return {
           status: "accepted",
           content: formatDelegateAccepted(request, workspaceGrants),
@@ -2371,131 +2569,13 @@ function createTeamRunnerRuntime(input: {
         };
       }
 
-      const claimed = await input.mailbox.claimNext(targetMailbox);
-      const message = claimed ?? request;
-      input.emit({
-        type: "team_message",
-        subtype: "claimed",
-        source: input.source,
-        mailbox: targetMailbox,
-        message,
+      return executeDelegateWork({
+        ...delegateWork,
+        mailbox: input.mailbox,
+        emit: input.emit,
+        maxDelegateDepth: input.maxDelegateDepth,
+        queryOptions: input.queryOptions,
       });
-
-      input.emit({
-        type: "team_agent",
-        subtype: "started",
-        source: targetSource,
-      });
-
-      const childPermissions: RuntimePermissions = { workspaceGrants };
-      const childRuntime = createTeamRunnerRuntime({
-        ...input,
-        source: targetSource,
-        depth: input.depth + 1,
-        queryOptions: {
-          ...input.queryOptions,
-          permissions: childPermissions,
-        },
-      });
-      let finalResult: SDKResultMessage | undefined;
-      for await (const agentMessage of delegateInput.agent.query(renderDelegateTaskPrompt(delegateInput, message), {
-        stream: input.queryOptions.stream,
-        signal: input.queryOptions.signal,
-        tracer: input.queryOptions.tracer,
-        runtime: childRuntime,
-        permissions: childPermissions,
-      })) {
-        if (isNestedTeamRunnerMessage(agentMessage)) {
-          input.emit(agentMessage);
-        } else if (agentMessage.type === "stream_event") {
-          input.emit({
-            type: "stream_event",
-            source: targetSource,
-            event: agentMessage.event,
-            session_id: agentMessage.session_id,
-          });
-        } else {
-          input.emit({
-            type: "agent_message",
-            source: targetSource,
-            message: agentMessage,
-          });
-        }
-        if (agentMessage.type === "result") {
-          finalResult = agentMessage;
-        }
-      }
-
-      input.emit({
-        type: "team_agent",
-        subtype: "finished",
-        source: targetSource,
-      });
-
-      if (!finalResult) {
-        await input.mailbox.updateStatus(message.id, "failed");
-        const failed = await input.mailbox.get(message.id);
-        if (failed) {
-          input.emit({
-            type: "team_message",
-            subtype: "failed",
-            source: targetSource,
-            mailbox: targetMailbox,
-            message: failed,
-          });
-        }
-        throw new Error(`Delegate ${delegateInput.name} completed without a result`);
-      }
-
-      if (finalResult.is_error) {
-        await input.mailbox.updateStatus(message.id, "failed");
-        const failed = await input.mailbox.get(message.id);
-        if (failed) {
-          input.emit({
-            type: "team_message",
-            subtype: "failed",
-            source: targetSource,
-            mailbox: targetMailbox,
-            message: failed,
-          });
-        }
-        throw finalResult.error ?? new Error(finalResult.result || `Delegate ${delegateInput.name} failed`);
-      }
-
-      await input.mailbox.updateStatus(message.id, "done");
-      const done = await input.mailbox.get(message.id);
-      if (done) {
-        input.emit({
-          type: "team_message",
-          subtype: "done",
-          source: targetSource,
-          mailbox: targetMailbox,
-          message: done,
-        });
-      }
-      const reply = await input.mailbox.send(targetMailbox, callerMailbox, finalResult.result, {
-        threadId: message.threadId,
-        parentMessageId: message.id,
-        workItemId: message.workItemId,
-        upstreamMessageId: message.upstreamMessageId ?? message.id,
-        workItemRole: "upstream_report",
-      });
-      input.emit({
-        type: "team_message",
-        subtype: "replied",
-        source: targetSource,
-        mailbox: callerMailbox,
-        message: reply,
-      });
-
-      return {
-        status: "completed",
-        content: finalResult.result,
-        request: message,
-        reply,
-        result: finalResult,
-        workspaceGrants,
-      };
     },
   };
 }
@@ -2570,6 +2650,31 @@ function renderDelegateTaskPrompt(input: AgentRuntimeDelegateInput, message: Tea
     "",
     "--- delegated task ---",
     message.content,
+  ].join("\n");
+}
+
+function renderAcceptedHandoffReplyPrompt(source: AgentRuntimeSource, replies: TeamMessage[]): string {
+  return [
+    "Team runtime update:",
+    "Previously accepted delegated work has reported back through the mailbox. Use these replies to continue the original task.",
+    "If more work is needed, you may call your AgentLike tools again. When ready, return the final delivery to your caller.",
+    "Do not answer with only an assignment, acceptance receipt, or in-progress status.",
+    "",
+    `mailbox: ${source.mailbox ?? source.name ?? "manager"}`,
+    "",
+    ...replies.map(reply => [
+      "--- mailbox reply ---",
+      `id: ${reply.id}`,
+      `from: ${reply.from}`,
+      `to: ${reply.to}`,
+      `status: ${reply.status}`,
+      `thread: ${reply.threadId}`,
+      `work_item: ${reply.workItemId ?? ""}`,
+      `role: ${reply.workItemRole ?? ""}`,
+      `reply_to: ${reply.parentMessageId ?? ""}`,
+      "",
+      reply.content,
+    ].join("\n")),
   ].join("\n");
 }
 

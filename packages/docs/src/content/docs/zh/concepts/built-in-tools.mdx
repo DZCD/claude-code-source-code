@@ -3,7 +3,7 @@ title: 内置工具
 description: Agent workspace 工具和手动 Claude Code 风格工具构造。
 ---
 
-`createAgent()` 默认会给每个 agent 增加私有 workspace 工具。如果没有传入 `workspace`，文件会存储在 `~/.agent/workspaces/<agent-name>` 或 `~/.agent/workspaces/agent-<session-id>`。
+`createAgent()` 默认会给每个 agent 配备私有 workspace 工具。如果没有传入 `workspace`，传了 `name` 时文件存储在 `~/.agent/workspaces/<name>`，否则存储在 `~/.agent/workspaces/agent-<session-id>`。
 
 只有需要覆盖默认位置时，才传入 `workspace`：
 
@@ -17,23 +17,24 @@ const agent = createAgent({
   workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
+    bashTimeoutMs: 30_000,
   },
 });
 ```
 
-当你想绕开默认 agent workspace 设置、手动控制工具列表时，可以直接使用 `createClaudeCodeTools()`。
+`createClaudeCodeTools()` 返回的就是上表那套 `ToolDefinition`（`createAgent()` 内部也是调它）。当你想自己组装工具列表、而非用默认 workspace 设置时，直接调用它。
 
 ## 工具列表
 
 | 工具 | 说明 |
 | --- | --- |
-| `Read` | 读取工作区文件。 |
-| `Write` | 写入工作区文件。 |
+| `Read` | 读取工作区文件，支持按行偏移和数量读取。 |
+| `Write` | 写入工作区文件，并自动创建父目录。 |
 | `Edit` | 替换已有文件中的文本。 |
 | `LS` | 列出目录。 |
 | `Glob` | 按 glob 查找文件。 |
 | `Grep` | 按正则搜索文件内容。 |
-| `Bash` | 在工作区执行 Shell 命令。 |
+| `Bash` | 在工作区执行 Shell 命令，带超时控制。 |
 
 ## 安全边界
 

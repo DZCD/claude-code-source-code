@@ -35,7 +35,7 @@ async function collect(iterable: AsyncIterable<TeamRunnerMessage>): Promise<Team
 }
 
 describe("team runner", () => {
-  test("agentTool handoff returns an acceptance receipt without running the target", async () => {
+  test("agentTool handoff returns a receipt to the caller and runner waits for final delivery", async () => {
     let engineeringCalls = 0;
     const engineeringAgent = createAgent({
       apiKey: "test-key",
@@ -43,7 +43,7 @@ describe("team runner", () => {
       modelClient: {
         async createMessage() {
           engineeringCalls++;
-          return textAssistant("Engineering should not finish synchronously");
+          return textAssistant("Engineering completed the implementation");
         },
       },
     });
@@ -60,10 +60,19 @@ describe("team runner", () => {
               task: "Implement a long-running feature",
             });
           }
-          const result = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
-          expect(result).toContain('"status": "accepted"');
-          expect(result).toContain('"to": "engineering"');
-          return textAssistant("CEO accepted the handoff");
+          if (rootCalls === 2) {
+            const result = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
+            expect(result).toContain('"status": "accepted"');
+            expect(result).toContain('"to": "engineering"');
+            return textAssistant("CEO accepted the handoff");
+          }
+          if (rootCalls === 3) {
+            const update = String(messages.at(-1)?.content ?? "");
+            expect(update).toContain("Team runtime update");
+            expect(update).toContain("Engineering completed the implementation");
+            return textAssistant("CEO final delivery with engineering results");
+          }
+          throw new Error(`Unexpected root call ${rootCalls}`);
         },
       },
       tools: [
@@ -78,19 +87,27 @@ describe("team runner", () => {
     const messages = await collect(runner.query("Hand work to engineering."));
     const engineeringInbox = await mailbox.inbox("engineering", { status: "all" });
 
-    expect(engineeringCalls).toBe(0);
+    expect(engineeringCalls).toBe(1);
+    expect(rootCalls).toBe(3);
     expect(engineeringInbox).toHaveLength(1);
     expect(engineeringInbox[0]).toMatchObject({
       from: "manager",
       to: "engineering",
       content: "Implement a long-running feature",
-      status: "pending",
+      status: "done",
       workItemRole: "delegation",
     });
     expect(messages.some(message => message.type === "team_message" && message.subtype === "sent")).toBe(true);
+    expect(messages.some(message => message.type === "team_message" && message.subtype === "replied")).toBe(true);
+    expect(messages.some(message =>
+      message.type === "agent_message" &&
+      message.source.kind === "root" &&
+      message.message.type === "result" &&
+      message.message.result === "CEO accepted the handoff"
+    )).toBe(true);
     expect(messages.find(message => message.type === "result")).toMatchObject({
       type: "result",
-      result: "CEO accepted the handoff",
+      result: "CEO final delivery with engineering results",
     });
   });
 

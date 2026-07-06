@@ -65,8 +65,8 @@ const tracer = createJsonlContextTracer({
 ## LangSmith tracer
 
 Use `createLangSmithContextTracer()` when you want SDK runs to appear as
-LangSmith traces. Install `langsmith` in the host application and pass its
-`RunTree` constructor into the tracer.
+LangSmith traces. The SDK depends on `langsmith` directly and reuses its
+official `RunTree` types; pass the `RunTree` constructor into the tracer.
 
 Configure LangSmith with its standard environment variables:
 
@@ -116,8 +116,8 @@ const tracer = createLangSmithContextTracer({
 });
 ```
 
-The SDK does not import LangSmith or add it as a hard dependency. The tracer
-implements the same `ContextTracer` interface as JSONL, so the agent loop stays
+The LangSmith tracer implements the same `ContextTracer` interface as JSONL, so
+the agent loop stays
 closed to provider-specific changes.
 
 LangSmith receives:

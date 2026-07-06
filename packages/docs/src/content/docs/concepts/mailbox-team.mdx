@@ -1,0 +1,244 @@
+---
+title: Mailbox team
+description: Build persistent teams with lead agents, member inboxes, replies, and resumable work.
+---
+
+Mailbox teams are for work that should stay inside a team until it is completed. The lead drops a task into a member inbox; the member claims the message, does the work, and sends the final result or progress back to the lead. That task state stays in the mailbox — ready to be claimed, answered, or followed up on — until it is marked done.
+
+A team is not a new kind of agent — it still satisfies the `AgentLike` interface (anything with `prompt()` / `query()`). Calling a team means talking to the lead agent; behind that lead, member tools and the mailbox runtime store message state and keep accepted handoffs moving.
+
+## Create a team
+
+Use `createTeam()` when you want to talk to a lead directly while that lead delegates work to a handful of named members (e.g. `researcher`, `reviewer`) behind the scenes.
+
+```ts
+import {
+  createAgent,
+  createMemoryMailbox,
+  createTeam,
+  teamMember,
+} from "claude-team-agent-sdk";
+
+const researcher = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You research agent SDK architecture and report concise findings.",
+  workspace: ".agent-workspaces/researcher",
+});
+
+const team = createTeam({
+  name: "engineering",
+  lead: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+    systemPrompt: "You lead engineering work. Delegate research tasks to researcher.",
+    workspace: ".agent-workspaces/engineering-lead",
+  }),
+  members: [
+    teamMember({
+      name: "researcher",
+      role: "executor",
+      focus: "Research agent architecture",
+      agent: researcher,
+    }),
+  ],
+  mailbox: createMemoryMailbox(),
+});
+
+const result = await team.prompt("Ask the researcher to inspect the SDK design.");
+console.log(result.result);
+```
+
+`team.query()` streams the lead's normal SDK messages plus team runtime events such as `team_message`, `team_agent`, and nested `agent_message` events. `team.prompt()` consumes that stream and returns only the root lead's final result.
+
+## Modes for calling a member
+
+`createTeam()` injects member `AgentLike` tools into the lead. The lead picks an explicit mode each time it calls a member:
+
+| Mode | Meaning |
+| --- | --- |
+| `ask` | Ask the member and wait for the final answer in the current tool call. |
+| `handoff` | Assign work and get an acceptance receipt as the tool result. In `team.query()` or `team.prompt()`, the runtime continues the accepted mailbox work, waits for the member's upstream reply, resumes the lead, and returns the root final result. |
+| `observe` | Start observable long-running work if the host runtime supports it. |
+
+The receipt from `handoff` is not a final delivery. It is only proof that the work was accepted into the mailbox. The team runtime owns the lifecycle after that.
+
+## Mailbox tools for members
+
+Member agents that can accept tools receive mailbox tools for assigned work:
+
+| Tool | Purpose |
+| --- | --- |
+| `team_send` | Send an asynchronous message to another member. |
+| `team_inbox` | List mailbox messages. |
+| `team_read` | Read and claim a message. |
+| `team_reply` | Send a final reply and close the original message. |
+| `team_followup` | Send progress without closing the original message. |
+| `team_status` | Summarize mailbox status counts. |
+
+The lead does not receive raw mailbox tools by default. Use `exposeLeadMailboxTools: true` only when the lead should manually operate the team mailbox.
+
+## Workspaces
+
+Workspaces belong to agents, not teams or member definitions. Every agent gets a default workspace under `~/.agent/workspaces`; pass `workspace` only when the host wants to override that location.
+
+If a member creates files, code, logs, or other durable deliverables, it should write them in its own workspace and report the relevant paths in natural-language `team_reply` or `team_followup` text.
+
+## Durable mailbox storage
+
+The default `createMemoryMailbox()` adapter is in-memory. For durable local storage, use `createSQLiteMailbox()` with a SQLite-like database:
+
+```ts
+import Database from "better-sqlite3";
+import {
+  createAgent,
+  createSQLiteMailbox,
+  createTeam,
+} from "claude-team-agent-sdk";
+
+const mailbox = createSQLiteMailbox({
+  database: new Database("team-mailbox.db"),
+});
+
+const team = createTeam({
+  name: "engineering",
+  lead: createAgent({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/anthropic",
+    model: "deepseek-v4-flash",
+  }),
+  members: [],
+  mailbox,
+});
+```
+
+The SDK does not install a SQLite driver for you. Hosts can choose `better-sqlite3`, Cloudflare D1 wrappers, Durable Objects, Redis, or another compatible `TeamMailbox` adapter.
+
+The SDK ships only two mailbox factories: `createMemoryMailbox()` (in-memory, the default) and `createSQLiteMailbox()` (SQLite). For D1, Durable Objects, Redis, or any other backend, implement the `TeamMailbox` interface yourself — it is just five message-centric methods.
+
+Don't be put off by the states: **the team runtime drives the state transitions; your adapter only persists them**. The message state machine:
+
+```text
+send() writes -> pending --claimNext()--> processing --updateStatus()--> done | failed
+                                                              (also: cancelled / read)
+```
+
+How a handoff actually plays out:
+
+```text
+1. lead   --handoff--> runtime --send()--> adapter            (msg = pending)
+2.                    runtime --claimNext()--> adapter         (pending -> processing), handed to member
+3. member --team_reply--> runtime --updateStatus()--> adapter  (-> done)
+```
+
+> Progress-only uses `team_followup` (original stays open); if member ends with no reply -> `failed` + a diagnostic message.
+
+What you implement are the five storage methods behind that flow. Here is a minimal, runnable in-memory implementation (real logic for every method); to target Redis / D1 / Durable Objects, swap the storage calls and make `claimNext` atomic under concurrency:
+
+```ts
+import type { TeamMailbox, TeamMessage } from "claude-team-agent-sdk";
+
+const byId = new Map<string, TeamMessage>();
+const order: string[] = [];   // ids in send order, for FIFO claiming
+let seq = 0;
+
+const myMailbox: TeamMailbox = {
+  async send(from, to, content, options = {}) {
+    const id = `msg_${++seq}`;
+    const msg: TeamMessage = {
+      id, from, to, content,
+      status: "pending",
+      createdAt: Date.now(),
+      threadId: options.threadId ?? id,
+      ...options,
+    };
+    byId.set(id, msg);
+    order.push(id);
+    return { ...msg };
+  },
+  async inbox(mailboxId, options = {}) {
+    const status = options.status ?? "pending";
+    return order
+      .map(id => byId.get(id)!)
+      .filter(m => m.to === mailboxId && (status === "all" || m.status === status))
+      .map(m => ({ ...m }));
+  },
+  async get(messageId) {
+    const m = byId.get(messageId);
+    return m ? { ...m } : undefined;
+  },
+  async claimNext(mailboxId) {
+    for (const id of order) {
+      const m = byId.get(id);
+      if (m && m.to === mailboxId && m.status === "pending") {
+        m.status = "processing";   // safe in a single process; use a Lua script / transaction on a distributed backend
+        return { ...m };
+      }
+    }
+    return undefined;
+  },
+  async updateStatus(messageId, status) {
+    const m = byId.get(messageId);
+    if (!m) return false;
+    m.status = status;
+    return true;
+  },
+};
+
+const team = createTeam({ /* name, lead, members, … */ mailbox: myMailbox });
+```
+
+> The SDK's built-in `createMemoryMailbox()` is the production version of exactly this; the snippet above just strips it down so you can adapt it to your own backend.
+
+Two things matter: `claimNext` must be atomic on a distributed backend (several members may claim the same mailbox concurrently) — it flips a message from `pending` to `processing`; `updateStatus` moves it to a terminal state (`done` / `failed` / `cancelled` / `read`), and the runtime relies on it to advance handoffs.
+
+## Nested teams
+
+Because `teamMember().agent` accepts any `AgentLike`, a team wrapper can be a member of another team wrapper.
+
+```ts
+const engineeringTeam = createTeam({
+  name: "engineering",
+  lead: engineeringHeadAgent,
+  members: [
+    teamMember({ name: "backend", role: "executor", agent: backendAgent }),
+    teamMember({ name: "frontend", role: "executor", agent: frontendAgent }),
+  ],
+});
+
+const companyTeam = createTeam({
+  name: "company",
+  lead: ceoAgent,
+  members: [
+    teamMember({
+      name: "engineering",
+      role: "head",
+      focus: "Own engineering delivery",
+      agent: engineeringTeam,
+    }),
+  ],
+});
+```
+
+The CEO sees `engineeringTeam` as one member. Internally, that member is still a callable wrapper around the engineering lead, and the engineering lead can route work to backend or frontend.
+
+## Manual draining
+
+`team.prompt()` and `team.query()` are the default path. They drive accepted handoffs until the root lead returns a final result.
+
+Use lower-level mailbox controls only when you need explicit ownership over routing, persistence, or worker loops:
+
+```ts
+const message = await team.mailbox.claimNext("engineering::researcher");
+
+const result = await team.drain({
+  maxRounds: 5,
+  maxMessages: 20,
+});
+```
+
+`drain()` iterates members, claims messages from each member's own mailbox, and prompts that member agent. It does not choose a different member or reroute work.
+
+Each member must close the loop with `team_reply` for a final result or `team_followup` for progress. If a member ends without either tool, `drain()` marks the original message `failed` and sends a diagnostic follow-up to the upstream mailbox.

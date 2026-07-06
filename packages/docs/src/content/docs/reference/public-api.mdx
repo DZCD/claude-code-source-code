@@ -10,7 +10,7 @@ description: Stable exports exposed by the SDK package.
 | `createAgent(options)` | Creates an in-memory `Agent` instance. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
-| `agentTool(name, target, metadata)` | Exposes another `AgentLike` as a model tool with explicit `ask`, `handoff`, or `observe` action modes. |
+| `agentTool(name, target, metadata)` | Exposes another `AgentLike` as a model tool with explicit `ask`, `handoff`, or `observe` modes. |
 | `delegateTool(name, description, agent, options)` | Advanced helper that exposes an `AgentLike` as a mailbox-backed delegate tool. |
 | `skill(options)` | Creates an in-memory skill definition. |
 | `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
@@ -21,8 +21,8 @@ description: Stable exports exposed by the SDK package.
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
-| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. |
-| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. |
+| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. `team.query()` and `team.prompt()` continue accepted handoffs until the root lead returns a final result or the run terminates. |
+| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. It also continues accepted handoffs and resumes the caller with upstream replies before yielding the root final result. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
 | `createClaudeCodeTools(options)` | Creates opt-in Claude Code-style built-in tools. |
@@ -52,7 +52,7 @@ const result = await agent.prompt(prompt);
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
-| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Optional override for the private agent workspace. Defaults to `~/.agent/workspaces/<agent-name>` or `~/.agent/workspaces/agent-<session-id>`. |
+| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Optional override for the private agent workspace. Defaults to `~/.agent/workspaces/<name>` when `name` is set, otherwise `~/.agent/workspaces/agent-<session-id>`. |
 | `permission` | `function` | Callback that can allow or deny tool execution. |
 | `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
 | `tracer` | `ContextTracer` | Optional trace sink for agent context events. |
@@ -102,8 +102,8 @@ filtering before persistence and `failOnError` for hosts that want trace write
 failures to fail the agent run.
 
 `createLangSmithContextTracer()` accepts a LangSmith-compatible `RunTree`
-constructor or `runTree(config)` factory. The SDK does not depend on LangSmith
-directly; hosts install `langsmith` and pass `RunTree` from
+constructor or `runTree(config)` factory. The SDK depends on `langsmith`
+directly and uses the official `RunTree` / `RunTreeConfig` types from
 `langsmith/run_trees`. Configure LangSmith with its standard environment
 variables: `LANGSMITH_TRACING`, `LANGSMITH_ENDPOINT`, `LANGSMITH_API_KEY`, and
 `LANGSMITH_PROJECT`. `LANGSMITH_WORKSPACE_ID` is required only for org-scoped or
@@ -127,8 +127,8 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 | `ContextTraceEventType` | Union of trace event type strings. |
 | `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
 | `LangSmithContextTracerOptions` | Options for the LangSmith tracer adapter. |
-| `LangSmithRunTreeLike` | Minimal structural interface expected from LangSmith `RunTree`. |
-| `LangSmithRunTreeConfig` | Minimal run configuration object passed to a LangSmith-compatible run tree. |
+| `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
+| `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
 | `ToolDefinition` | Tool shape passed to an agent. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
 | `AgentToolOptions` | Description and target mailbox options for `agentTool()`. |
@@ -137,8 +137,8 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
 | `MCPStdioConnection` | Connected stdio MCP server with mapped tools. |
 | `MCPStreamableHTTPConnection` | Connected remote Streamable HTTP MCP server with auth/session helpers. |
-| `Team` | Callable wrapper around a lead with members, member AgentLike tools, and advanced mailbox controls. |
-| `TeamRunner` | Advanced runtime that drives mailbox-backed AgentLike delegate tools. |
+| `Team` | Callable wrapper around a lead with members, member AgentLike tools, and advanced mailbox controls. Its default `prompt()` result is the root lead's final answer, not a handoff receipt. |
+| `TeamRunner` | Advanced runtime that drives mailbox-backed AgentLike delegate tools, including accepted handoffs that need mailbox follow-up before final delivery. |
 | `TeamRunnerMessage` | Union of root SDK messages and team runner activity events. |
 | `TeamMemberDefinition` | Named team member with role and `AgentLike`. |
 | `TeamMailbox` | Storage adapter interface for team messages, including member-scoped `claimNext()`. |

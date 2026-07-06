@@ -10,7 +10,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createAgent(options)` | 创建一个内存态 `Agent` 实例。 |
 | `query(params)` | 一次性 async generator helper。 |
 | `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
-| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 行动模式。 |
+| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 三种调用模式。 |
 | `delegateTool(name, description, agent, options)` | 高级 helper，把一个 `AgentLike` 暴露成 mailbox-backed 委托工具。 |
 | `skill(options)` | 创建内存态 skill。 |
 | `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
@@ -21,8 +21,8 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
 | `teamMember(options)` | 创建团队成员定义。 |
-| `createTeam(options)` | 创建一个围绕 lead 的可调用 team wrapper，包含 members、mailbox 和内置 runtime。 |
-| `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。 |
+| `createTeam(options)` | 创建一个围绕 lead 的可调用 team wrapper，包含 members、mailbox 和内置 runtime。`team.query()` 和 `team.prompt()` 会继续推进已接收的 handoff，直到 root lead 返回最终结果或运行终止。 |
+| `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。它也会继续推进已接收的 handoff，并在上游回复后唤醒调用方，再输出 root 最终结果。 |
 | `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
 | `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
 | `createClaudeCodeTools(options)` | 创建可选的 Claude Code 风格内置工具。 |
@@ -52,7 +52,7 @@ const result = await agent.prompt(prompt);
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
-| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。默认是 `~/.agent/workspaces/<agent-name>` 或 `~/.agent/workspaces/agent-<session-id>`。 |
+| `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。传了 `name` 时默认是 `~/.agent/workspaces/<name>`，否则是 `~/.agent/workspaces/agent-<session-id>`。 |
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
 | `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
 | `tracer` | `ContextTracer` | 可选的 agent 上下文事件 trace sink。 |
@@ -101,10 +101,10 @@ await agent.prompt("Trace this run.", { stream: false });
 `failOnError` 让 trace 写入失败时终止 agent run。
 
 `createLangSmithContextTracer()` 接收 LangSmith 兼容的 `RunTree` 构造器或
-`runTree(config)` 工厂函数。SDK 不直接依赖 LangSmith；宿主应用安装
-`langsmith`，并从 `langsmith/run_trees` 传入 `RunTree`。按 LangSmith 官方方式
-配置 `LANGSMITH_TRACING`、`LANGSMITH_ENDPOINT`、`LANGSMITH_API_KEY` 和
-`LANGSMITH_PROJECT`。只有组织级或多 workspace API key 才需要
+`runTree(config)` 工厂函数。SDK 现在直接依赖 `langsmith`，并复用
+`langsmith/run_trees` 的官方 `RunTree` / `RunTreeConfig` 类型。按 LangSmith
+官方方式配置 `LANGSMITH_TRACING`、`LANGSMITH_ENDPOINT`、`LANGSMITH_API_KEY`
+和 `LANGSMITH_PROJECT`。只有组织级或多 workspace API key 才需要
 `LANGSMITH_WORKSPACE_ID`。也可以把 `apiKey`、`apiUrl` 和 `workspaceId`
 直接传给 `createLangSmithContextTracer()`；`workspaceId` 只用于选择
 LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith client，
@@ -125,8 +125,8 @@ LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
 | `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `LangSmithContextTracerOptions` | LangSmith tracer adapter 的配置。 |
-| `LangSmithRunTreeLike` | SDK 期望的 LangSmith `RunTree` 最小结构接口。 |
-| `LangSmithRunTreeConfig` | 传给 LangSmith 兼容 run tree 的最小 run 配置对象。 |
+| `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
+| `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
 | `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置。 |
@@ -135,8 +135,8 @@ LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
 | `MCPStdioConnection` | 已连接的 stdio MCP server。 |
 | `MCPStreamableHTTPConnection` | 已连接的远程 MCP server，包含 auth/session helpers。 |
-| `Team` | 围绕 lead 的可调用 wrapper，包含 members、成员 AgentLike 工具和高级 mailbox 控制能力。 |
-| `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的高级 runtime。 |
+| `Team` | 围绕 lead 的可调用 wrapper，包含 members、成员 AgentLike 工具和高级 mailbox 控制能力。默认 `prompt()` 返回 root lead 的最终答案，而不是 handoff 接收回执。 |
+| `TeamRunner` | 驱动 mailbox-backed AgentLike 委托工具的高级 runtime，包括需要 mailbox 后续回复才能最终交付的 accepted handoff。 |
 | `TeamRunnerMessage` | root SDK 事件和 team runner 活动事件的 union 类型。 |
 | `TeamMemberDefinition` | 带 role 和 `AgentLike` 的团队成员。 |
 | `TeamMailbox` | 团队消息存储接口，包含成员级 `claimNext()`。 |
