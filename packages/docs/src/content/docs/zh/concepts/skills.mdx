@@ -3,12 +3,12 @@ title: Skills
 description: 用可复用指令包扩展 Agent 行为。
 ---
 
-Skill 是一段可复用的说明文档。它比 Claude Code plugin 更轻：SDK 只读取说明，并在相关请求里注入给模型，不依赖 Claude Code 的 plugin runtime。
+Skill 是一段可复用的说明文档。它比 Claude Code plugin 更轻：AgentLattice 只读取说明，并在相关请求里注入给模型，不依赖 Claude Code 的 plugin runtime。
 
 ## 内存中定义 skill
 
 ```ts
-import { skill } from "claude-team-agent-sdk";
+import { skill } from "agent-lattice";
 
 const codeReview = skill({
   name: "code-review",
@@ -20,7 +20,7 @@ const codeReview = skill({
 ## 从 SKILL.md 加载
 
 ```ts
-import { loadSkill } from "claude-team-agent-sdk";
+import { loadSkill } from "agent-lattice";
 
 const pdf = await loadSkill("./skills/pdf");
 ```

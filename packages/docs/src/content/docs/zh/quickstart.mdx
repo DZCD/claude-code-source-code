@@ -1,12 +1,12 @@
 ---
 title: 快速开始
-description: 安装 SDK，并运行一个最小 Agent。
+description: 安装 AgentLattice，并运行一个最小 Agent。
 ---
 
 ## 安装
 
 ```bash
-npm install claude-team-agent-sdk zod
+npm install agent-lattice zod
 ```
 
 ## 发起一次提问
@@ -14,7 +14,7 @@ npm install claude-team-agent-sdk zod
 下面示例使用 DeepSeek 的 Anthropic 兼容接口。你也可以换成 Anthropic 官方 API。
 
 ```ts
-import { createAgent } from "claude-team-agent-sdk";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -95,7 +95,7 @@ const result = await agent.prompt("写一首短诗。", {
 接入自定义工具时，`tool` 需要显式 import：
 
 ```ts
-import { createAgent, tool } from "claude-team-agent-sdk";
+import { createAgent, tool } from "agent-lattice";
 ```
 
 - 需要接入自定义函数，阅读 [工具](/zh/concepts/tools/)。

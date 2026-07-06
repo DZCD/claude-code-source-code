@@ -5,12 +5,12 @@ description: Reuse instruction bundles without depending on the Claude Code runt
 
 Skills are reusable instruction bundles. They help the agent adopt domain-specific behavior for matching prompts.
 
-This SDK supports a lightweight Skill API. It does not require the Claude Code runtime, and it does not load Claude Code plugins.
+AgentLattice supports a lightweight Skill API. It does not require the Claude Code runtime, and it does not load Claude Code plugins.
 
 ## Create a skill in code
 
 ```ts
-import { createAgent, skill } from "claude-team-agent-sdk";
+import { createAgent, skill } from "agent-lattice";
 
 const codeReview = skill({
   name: "code-review",
@@ -29,7 +29,7 @@ const agent = createAgent({
 ## Load a skill from disk
 
 ```ts
-import { createAgent, loadSkill } from "claude-team-agent-sdk";
+import { createAgent, loadSkill } from "agent-lattice";
 
 const pdf = await loadSkill("./skills/pdf");
 

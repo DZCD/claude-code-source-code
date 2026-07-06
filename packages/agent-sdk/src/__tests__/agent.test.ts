@@ -451,7 +451,7 @@ describe("agent-sdk", () => {
       },
     });
     expect(root?.tags).toEqual(expect.arrayContaining([
-      "claude-team-agent-sdk",
+      "agent-lattice",
       "test-suite",
       "source:agent",
     ]));

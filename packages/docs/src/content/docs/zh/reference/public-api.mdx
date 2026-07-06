@@ -25,7 +25,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createTeamRunner(options)` | 高级 runtime，用于手动运行一个带 mailbox-backed delegate tools 的 root `AgentLike`。它也会继续推进已接收的 handoff，并在上游回复后唤醒调用方，再输出 root 最终结果。 |
 | `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
 | `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
-| `createClaudeCodeTools(options)` | 创建可选的 Claude Code 风格内置工具。 |
+| `createAgentWorkspaceTools(options)` | 创建可选的 agent 文件与 Shell workspace 工具。 |
 
 ## Agent
 
@@ -74,7 +74,7 @@ import {
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 import { RunTree } from "langsmith/run_trees";
 
 const tracer = createCompositeContextTracer([

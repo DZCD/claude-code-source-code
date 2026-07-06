@@ -1,9 +1,9 @@
 ---
-title: Claude Agent SDK
-description: Build Claude-style agents without depending on the Claude Code CLI runtime.
+title: AgentLattice
+description: Build coordinated agent systems with tools, skills, tracing, delegation, and teams.
 template: splash
 hero:
-  tagline: Independent TypeScript SDK for agent loops, tools, permissions, and streaming events.
+  tagline: A TypeScript framework for agent loops, tools, permissions, tracing, and mailbox-backed teams.
   actions:
     - text: Get started
       link: /quickstart/
@@ -30,12 +30,18 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
   <Card title="Stable events" icon="seti:json">
     Consume `system`, `assistant`, `user`, `stream_event`, and `result` messages.
   </Card>
+  <Card title="Supervisor delegation" icon="add-document">
+    Wrap another `AgentLike` as a model tool when a lead agent needs a temporary specialist.
+  </Card>
+  <Card title="Mailbox teams" icon="document">
+    Coordinate named members through durable work items, replies, status, and runtime-driven handoffs.
+  </Card>
 </CardGrid>
 
 ## Package
 
 ```bash
-npm install claude-team-agent-sdk zod
+npm install agent-lattice zod
 ```
 
-The SDK is intentionally independent from Claude Code. It does not require the Claude Code CLI, Ink UI, session storage, MCP runtime, or app runtime.
+Install AgentLattice from npm as `agent-lattice`. It is intentionally independent from Claude Code: it does not require the Claude Code CLI, Ink UI, session storage, MCP runtime, or app runtime.

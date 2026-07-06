@@ -1,6 +1,6 @@
 ---
 title: 内置工具
-description: Agent workspace 工具和手动 Claude Code 风格工具构造。
+description: Agent workspace 工具和手动 workspace 工具构造。
 ---
 
 `createAgent()` 默认会给每个 agent 配备私有 workspace 工具。如果没有传入 `workspace`，传了 `name` 时文件存储在 `~/.agent/workspaces/<name>`，否则存储在 `~/.agent/workspaces/agent-<session-id>`。
@@ -8,7 +8,7 @@ description: Agent workspace 工具和手动 Claude Code 风格工具构造。
 只有需要覆盖默认位置时，才传入 `workspace`：
 
 ```ts
-import { createAgent } from "claude-team-agent-sdk";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey,
@@ -22,7 +22,7 @@ const agent = createAgent({
 });
 ```
 
-`createClaudeCodeTools()` 返回的就是上表那套 `ToolDefinition`（`createAgent()` 内部也是调它）。当你想自己组装工具列表、而非用默认 workspace 设置时，直接调用它。
+`createAgentWorkspaceTools()` 返回的就是下表这套 `ToolDefinition`（`createAgent()` 内部也是调它）。当你想自己组装工具列表、而非用默认 workspace 设置时，直接调用它。
 
 ## 工具列表
 

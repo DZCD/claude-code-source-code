@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createClaudeCodeTools } from "../index.js";
+import { createAgentWorkspaceTools } from "../index.js";
 
 const tempDirs: string[] = [];
 
@@ -17,16 +17,16 @@ afterEach(async () => {
 });
 
 function findTool(name: string, cwd: string) {
-  const found = createClaudeCodeTools({ cwd }).find(tool => tool.name === name);
+  const found = createAgentWorkspaceTools({ cwd }).find(tool => tool.name === name);
   if (!found) throw new Error(`Tool ${name} not found`);
   return found;
 }
 
-describe("Claude Code built-in tools", () => {
-  test("exports Claude Code style built-in tool names", async () => {
+describe("agent workspace tools", () => {
+  test("exports agent workspace tool names", async () => {
     const cwd = await tempWorkspace();
 
-    const names = createClaudeCodeTools({ cwd }).map(tool => tool.name);
+    const names = createAgentWorkspaceTools({ cwd }).map(tool => tool.name);
 
     expect(names).toEqual(["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"]);
   });

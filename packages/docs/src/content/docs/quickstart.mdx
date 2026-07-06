@@ -1,12 +1,12 @@
 ---
 title: Quickstart
-description: Install the SDK and run a minimal agent.
+description: Install AgentLattice and run a minimal agent.
 ---
 
 ## Install
 
 ```bash
-npm install claude-team-agent-sdk zod
+npm install agent-lattice zod
 ```
 
 ## Ask a question
@@ -14,7 +14,7 @@ npm install claude-team-agent-sdk zod
 The examples use DeepSeek's Anthropic-compatible endpoint.
 
 ```ts
-import { createAgent } from "claude-team-agent-sdk";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -96,7 +96,7 @@ In short: `query()` is the event-stream API, `prompt()` is the final-result API,
 When you add custom tools, import the `tool` helper explicitly:
 
 ```ts
-import { createAgent, tool } from "claude-team-agent-sdk";
+import { createAgent, tool } from "agent-lattice";
 ```
 
 Then continue with [Tools](/concepts/tools/).

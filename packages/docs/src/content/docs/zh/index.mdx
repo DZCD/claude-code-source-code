@@ -1,9 +1,9 @@
 ---
-title: Claude Agent SDK
-description: 不依赖 Claude Code CLI/runtime，也能构建 Claude 风格的 Agent。
+title: AgentLattice
+description: 用工具、技能、上下文追踪、委派和团队构建协作式智能体系统。
 template: splash
 hero:
-  tagline: 独立 TypeScript SDK，内置 agent loop、工具调用、权限回调、流式事件和团队协作模型。
+  tagline: 用于 agent loop、工具调用、权限回调、上下文追踪和 mailbox 团队协作的 TypeScript 框架。
   actions:
     - text: 快速开始
       link: /zh/quickstart/
@@ -15,9 +15,9 @@ hero:
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
-## 这个 SDK 解决什么
+## AgentLattice 解决什么
 
-Claude Agent SDK 是一个轻量 npm 包，用来在你自己的 Node.js 应用里构建 Claude 风格的 Agent，而不需要安装或嵌入 Claude Code CLI。
+AgentLattice 是一个智能体解决方案开发框架，用来在你自己的 Node.js 应用里构建协作式智能体系统，而不需要安装或嵌入 Claude Code CLI。
 
 它适合这些场景：
 
@@ -41,12 +41,18 @@ Claude Agent SDK 是一个轻量 npm 包，用来在你自己的 Node.js 应用�
   <Card title="稳定事件" icon="seti:json">
     通过 `system`、`assistant`、`user`、`stream_event`、`result` 事件消费运行过程。
   </Card>
+  <Card title="Supervisor 委派" icon="add-document">
+    当主智能体需要临时专家时，把另一个 `AgentLike` 包装成模型可调用工具。
+  </Card>
+  <Card title="Mailbox 团队" icon="document">
+    用持久 work item、回复、状态和 runtime-driven handoff 协调命名成员。
+  </Card>
 </CardGrid>
 
 ## 安装
 
 ```bash
-npm install claude-team-agent-sdk zod
+npm install agent-lattice zod
 ```
 
-这个包刻意和 Claude Code 解耦。它不依赖 Claude Code CLI、Ink UI、AppState、sessionStorage 或 Claude Code 的内部运行时。
+AgentLattice 的 npm 包名是 `agent-lattice`，并且刻意和 Claude Code 解耦：它不依赖 Claude Code CLI、Ink UI、AppState、sessionStorage 或 Claude Code 的内部运行时。

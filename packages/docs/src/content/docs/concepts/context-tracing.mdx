@@ -16,7 +16,7 @@ Use `createJsonlContextTracer()` when you want local trace files for debugging,
 audit logs, or test artifacts.
 
 ```ts
-import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+import { createAgent, createJsonlContextTracer } from "agent-lattice";
 
 const tracer = createJsonlContextTracer({
   path: ".agent-runs/session.jsonl",
@@ -81,7 +81,7 @@ LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 
 ```ts
 import { RunTree } from "langsmith/run_trees";
-import { createAgent, createLangSmithContextTracer } from "claude-team-agent-sdk";
+import { createAgent, createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
   RunTree,
@@ -104,7 +104,7 @@ not the tracing project name.
 
 ```ts
 import { RunTree } from "langsmith/run_trees";
-import { createLangSmithContextTracer } from "claude-team-agent-sdk";
+import { createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
   RunTree,
@@ -199,7 +199,7 @@ observability pipeline. The functions below are application code you provide,
 not SDK exports:
 
 ```ts
-import type { ContextTracer } from "claude-team-agent-sdk";
+import type { ContextTracer } from "agent-lattice";
 
 const tracer: ContextTracer = {
   async onEvent(event) {

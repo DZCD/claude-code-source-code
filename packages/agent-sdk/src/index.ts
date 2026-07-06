@@ -492,7 +492,7 @@ export type AgentOptions = {
   tracer?: ContextTracer;
 };
 
-export type ClaudeCodeToolsOptions = {
+export type AgentWorkspaceToolsOptions = {
   cwd?: string;
   allowedDirectories?: string[];
   bashTimeoutMs?: number;
@@ -752,13 +752,13 @@ const DEFAULT_AGENT_WORKSPACE_ROOT = join(homedir(), ".agent", "workspaces");
 
 type NormalizedAgentWorkspace = {
   cwd: string;
-  toolsOptions: ClaudeCodeToolsOptions;
+  toolsOptions: AgentWorkspaceToolsOptions;
 };
 
 function applyAgentWorkspaceOptions(options: AgentOptions, sessionId: string): AgentOptions {
   const workspace = normalizeAgentWorkspaceOptions(options, sessionId);
   mkdirSync(workspace.cwd, { recursive: true });
-  const workspaceTools = createClaudeCodeTools(workspace.toolsOptions);
+  const workspaceTools = createAgentWorkspaceTools(workspace.toolsOptions);
   return {
     ...options,
     systemPrompt: joinPromptSections([
@@ -1050,7 +1050,7 @@ export async function connectMCPStdioServer(
   options: MCPStdioServerOptions = {},
 ): Promise<MCPStdioConnection> {
   const client = new MCPProtocolClient({
-    name: options.clientName ?? "claude-team-agent-sdk",
+    name: options.clientName ?? "agent-lattice",
     version: options.clientVersion ?? "0.1.0",
   });
   const transport = new StdioClientTransport(server);
@@ -1071,7 +1071,7 @@ export async function connectMCPStreamableHTTPServer(
   options: MCPStreamableHTTPServerOptions = {},
 ): Promise<MCPStreamableHTTPConnection> {
   const client = new MCPProtocolClient({
-    name: options.clientName ?? "claude-team-agent-sdk",
+    name: options.clientName ?? "agent-lattice",
     version: options.clientVersion ?? "0.1.0",
   });
   const transport = new StreamableHTTPClientTransport(
@@ -1411,7 +1411,7 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
   };
 }
 
-export function createClaudeCodeTools(options: ClaudeCodeToolsOptions = {}): Array<ToolDefinition<any>> {
+export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = {}): Array<ToolDefinition<any>> {
   const roots = normalizeAllowedDirectories(options);
   const cwd = roots.cwd;
 
@@ -3421,7 +3421,7 @@ function langSmithTags(
   extra: string[] = [],
 ): string[] {
   const tags = new Set([
-    "claude-team-agent-sdk",
+    "agent-lattice",
     "context-trace",
     `source:${event.source.kind}`,
     ...extra,
@@ -3587,7 +3587,7 @@ type WorkspaceAuthorizationContext = {
   permissions?: RuntimePermissions;
 };
 
-function normalizeAllowedDirectories(options: ClaudeCodeToolsOptions): AllowedRoots {
+function normalizeAllowedDirectories(options: AgentWorkspaceToolsOptions): AllowedRoots {
   const cwd = resolve(options.cwd ?? process.cwd());
   const directories = (options.allowedDirectories && options.allowedDirectories.length > 0
     ? options.allowedDirectories

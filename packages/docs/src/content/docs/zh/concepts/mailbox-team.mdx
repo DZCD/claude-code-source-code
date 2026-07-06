@@ -17,7 +17,7 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -96,7 +96,7 @@ import {
   createAgent,
   createSQLiteMailbox,
   createTeam,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
@@ -131,7 +131,7 @@ SDK 只内置两个 mailbox 工厂：`createMemoryMailbox()`（内存，默认�
 你要实现的，就是支撑这套流程的 5 个存储方法。下面是一个最小、可运行的内存实现（逻辑都在）；换成 Redis / D1 / Durable Objects 时，把存储调用换掉、并让 `claimNext` 在并发下原子化即可：
 
 ```ts
-import type { TeamMailbox, TeamMessage } from "claude-team-agent-sdk";
+import type { TeamMailbox, TeamMessage } from "agent-lattice";
 
 const byId = new Map<string, TeamMessage>();
 const order: string[] = [];   // 按 send 顺序记录 id，用于 FIFO 领取

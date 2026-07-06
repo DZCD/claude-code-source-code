@@ -3,7 +3,7 @@ title: 子智能体委派和团队
 description: 在一次性 supervisor 委派和持久 mailbox team 之间选择。
 ---
 
-SDK 里有两种相关但不同的协作模式。设计应用时应该先把它们分开：
+AgentLattice 里有两种相关但不同的协作模式。设计应用时应该先把它们分开：
 
 - [Supervisor 子智能体委派](/zh/concepts/supervisor-delegation/)：适合一次性的子智能体。主智能体把另一个 `AgentLike` 暴露成工具，等待子智能体结果作为 tool result，然后继续自己的回合。
 - [Mailbox Team 持久团队](/zh/concepts/mailbox-team/)：适合持久运转的团队。lead 通过 mailbox-backed work item、成员 inbox、回复、状态、持久化和可选手动 drain 来协调命名成员。

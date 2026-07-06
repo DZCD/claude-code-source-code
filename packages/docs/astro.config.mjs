@@ -5,9 +5,9 @@ export default defineConfig({
   site: "https://docs.claude-code-sdk.com",
   integrations: [
     starlight({
-      title: "Claude Agent SDK",
+      title: "AgentLattice",
       description:
-        "Independent TypeScript SDK for building Claude-style agents without the Claude Code runtime.",
+        "TypeScript framework for building coordinated agent systems with tools, skills, tracing, and teams.",
       defaultLocale: "root",
       locales: {
         root: {

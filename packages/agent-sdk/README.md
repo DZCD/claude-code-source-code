@@ -1,15 +1,16 @@
-# Claude Agent SDK
+# AgentLattice
 
-A lightweight npm package for building Claude-powered agents without installing
-the Claude Code CLI runtime.
+AgentLattice is a TypeScript framework for building coordinated agent systems
+with tools, skills, tracing, supervisor delegation, and mailbox-backed teams.
 
-This first version supports Anthropic direct API calls, an in-memory agent loop,
-custom tools, permission callbacks, and stable SDK-style events.
+Install it from npm as `agent-lattice`. It works with Anthropic and
+Anthropic-compatible providers such as DeepSeek, without installing the Claude
+Code CLI runtime.
 
 ## Install
 
 ```bash
-npm install claude-team-agent-sdk zod
+npm install agent-lattice zod
 ```
 
 ## Minimal Usage
@@ -17,7 +18,7 @@ npm install claude-team-agent-sdk zod
 The examples use DeepSeek's Anthropic-compatible endpoint.
 
 ```ts
-import { createAgent } from "claude-team-agent-sdk";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -62,7 +63,7 @@ Pass a `ContextTracer` to observe an agent run without changing the agent loop.
 The built-in JSONL tracer writes one structured event per line:
 
 ```ts
-import { createAgent, createJsonlContextTracer } from "claude-team-agent-sdk";
+import { createAgent, createJsonlContextTracer } from "agent-lattice";
 
 const tracer = createJsonlContextTracer({
   path: ".agent-runs/session.jsonl",
@@ -116,7 +117,7 @@ import {
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
@@ -142,7 +143,7 @@ not the tracing project name.
 
 ```ts
 import { RunTree } from "langsmith/run_trees";
-import { createLangSmithContextTracer } from "claude-team-agent-sdk";
+import { createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
   RunTree,
@@ -186,7 +187,7 @@ const agent = createAgent({
 ## Custom Tool
 
 ```ts
-import { createAgent, tool } from "claude-team-agent-sdk";
+import { createAgent, tool } from "agent-lattice";
 import { z } from "zod/v4";
 
 const agent = createAgent({
@@ -234,7 +235,7 @@ runtime plugins: the SDK reads skill instructions and injects matching skills
 into the model request, but it does not depend on the Claude Code runtime.
 
 ```ts
-import { createAgent, loadSkill, skill } from "claude-team-agent-sdk";
+import { createAgent, loadSkill, skill } from "agent-lattice";
 
 const codeReview = skill({
   name: "code-review",
@@ -273,7 +274,7 @@ generic `MCPClient` adapter.
 import {
   connectMCPStdioServer,
   createAgent,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const mcp = await connectMCPStdioServer(
   {
@@ -309,7 +310,7 @@ Connect a remote Streamable HTTP MCP server:
 import {
   connectMCPStreamableHTTPServer,
   createAgent,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", {
   namePrefix: "remote",
@@ -363,7 +364,7 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -462,7 +463,7 @@ import {
   createAgent,
   createSQLiteMailbox,
   createTeam,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
@@ -493,7 +494,7 @@ import {
   createAgent,
   createTeam,
   teamMember,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const createDeepSeekAgent = (systemPrompt: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -593,9 +594,9 @@ must call `team_reply` for a final result or `team_followup` for progress. If a
 member ends without either, the runtime marks the original message `failed` and
 sends a diagnostic follow-up to the upstream mailbox.
 
-## Claude Code-style Built-in Tools
+## Agent Workspace Tools
 
-The SDK includes an opt-in set of Claude Code-style tools:
+AgentLattice includes an opt-in set of workspace tools:
 
 - `Read`
 - `Write`
@@ -606,13 +607,13 @@ The SDK includes an opt-in set of Claude Code-style tools:
 - `Bash`
 
 ```ts
-import { createAgent, createClaudeCodeTools } from "claude-team-agent-sdk";
+import { createAgent, createAgentWorkspaceTools } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  tools: createClaudeCodeTools({
+  tools: createAgentWorkspaceTools({
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
   }),

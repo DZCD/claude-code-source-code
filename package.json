@@ -45,9 +45,9 @@
     "test": "bun test",
     "check:unused": "knip-bun",
     "health": "bun run scripts/health-check.ts",
-    "docs:dev": "bun --filter claude-team-agent-sdk-docs dev",
-    "docs:build": "bun --filter claude-team-agent-sdk-docs build",
-    "docs:deploy": "bun --filter claude-team-agent-sdk-docs deploy"
+    "docs:dev": "cd packages/docs && bun run dev",
+    "docs:build": "cd packages/docs && bun run build",
+    "docs:deploy": "cd packages/docs && bun run deploy"
   },
   "dependencies": {},
   "devDependencies": {

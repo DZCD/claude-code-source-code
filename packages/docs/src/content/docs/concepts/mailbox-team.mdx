@@ -17,7 +17,7 @@ import {
   createMemoryMailbox,
   createTeam,
   teamMember,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -96,7 +96,7 @@ import {
   createAgent,
   createSQLiteMailbox,
   createTeam,
-} from "claude-team-agent-sdk";
+} from "agent-lattice";
 
 const mailbox = createSQLiteMailbox({
   database: new Database("team-mailbox.db"),
@@ -138,7 +138,7 @@ How a handoff actually plays out:
 What you implement are the five storage methods behind that flow. Here is a minimal, runnable in-memory implementation (real logic for every method); to target Redis / D1 / Durable Objects, swap the storage calls and make `claimNext` atomic under concurrency:
 
 ```ts
-import type { TeamMailbox, TeamMessage } from "claude-team-agent-sdk";
+import type { TeamMailbox, TeamMessage } from "agent-lattice";
 
 const byId = new Map<string, TeamMessage>();
 const order: string[] = [];   // ids in send order, for FIFO claiming

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { createAgent, createClaudeCodeTools, tool, type SDKMessage } from "../index.js";
+import { createAgent, createAgentWorkspaceTools, tool, type SDKMessage } from "../index.js";
 
 async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[]> {
   const messages: SDKMessage[] = [];
@@ -136,7 +136,7 @@ describe("agent-sdk integration", () => {
         await writeFile(join(cwd, "answer.txt"), "codex builtin read works", "utf8");
         const agent = createAgent({
           ...deepseekAgentOptions(),
-          tools: createClaudeCodeTools({ cwd, allowedDirectories: [cwd] }).filter(tool => tool.name === "Read"),
+          tools: createAgentWorkspaceTools({ cwd, allowedDirectories: [cwd] }).filter(tool => tool.name === "Read"),
         });
 
         const messages = await collect(

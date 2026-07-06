@@ -3,7 +3,7 @@ title: Agent delegation and teams
 description: Choose between one-shot supervisor delegation and persistent mailbox teams.
 ---
 
-The SDK has two related but different coordination patterns. Keep them separate when you design an application:
+AgentLattice has two related but different coordination patterns. Keep them separate when you design an application:
 
 - [Supervisor delegation](/concepts/supervisor-delegation/) is for one-shot child agents. A supervisor exposes another `AgentLike` as a model tool, waits for the child result in the tool call, and continues its own turn.
 - [Mailbox team](/concepts/mailbox-team/) is for persistent teams. A lead coordinates named members through mailbox-backed work items, replies, status, persistence, and optional manual draining.
