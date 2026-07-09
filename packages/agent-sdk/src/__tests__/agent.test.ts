@@ -14,6 +14,7 @@ import {
   tool,
   type ContextTraceEvent,
   type ModelClient,
+  type ModelRequest,
   type SDKMessage,
 } from "../index.js";
 
@@ -199,6 +200,57 @@ describe("agent-sdk", () => {
       subtype: "success",
       result: "hello",
       is_error: false,
+    });
+  });
+
+  test("passes structured output format to the model request", async () => {
+    const requests: ModelRequest[] = [];
+    const modelClient: ModelClient = {
+      async createMessage(request) {
+        requests.push(request);
+        return textAssistant('{"answer":4}');
+      },
+    };
+    const outputFormat = {
+      type: "json_schema" as const,
+      schema: {
+        type: "object",
+        properties: {
+          answer: { type: "number" },
+        },
+        required: ["answer"],
+        additionalProperties: false,
+      },
+    };
+
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+    });
+
+    const result = await agent.prompt("What is 2+2?", { outputFormat });
+
+    expect(result.result).toBe('{"answer":4}');
+    expect(requests[0]?.outputFormat).toEqual(outputFormat);
+  });
+
+  test("does not reject non-json text when outputFormat is ignored by the provider", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([
+        textAssistant('答案如下：\n\n```json\n{"answer":4}\n```'),
+      ]),
+    });
+
+    const result = await agent.prompt("What is 2+2?", { outputFormat: "json" });
+
+    expect(result).toMatchObject({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: '答案如下：\n\n```json\n{"answer":4}\n```',
     });
   });
 
@@ -1042,6 +1094,48 @@ describe("agent-sdk", () => {
           },
         },
       ]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Anthropic client serializes json output format as output_config", async () => {
+    let requestBody: any;
+    let betaHeader: string | null = null;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestBody = await request.json();
+        betaHeader = request.headers.get("anthropic-beta");
+        return Response.json({
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          model: "claude-test",
+          content: [{ type: "text", text: "{\"ok\":true}" }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+      });
+
+      await agent.prompt("Return JSON.", { outputFormat: "json", stream: false });
+
+      expect(requestBody.output_config).toEqual({
+        format: {
+          type: "json_schema",
+          schema: {},
+        },
+      });
+      expect(betaHeader).toContain("structured-outputs-2025-12-15");
     } finally {
       server.stop(true);
     }

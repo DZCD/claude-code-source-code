@@ -62,6 +62,7 @@ const result = await agent.prompt(prompt);
 | 选项 | 类型 | 说明 |
 | --- | --- | --- |
 | `stream` | `boolean` | 是否输出底层 provider stream event，默认 `true`。 |
+| `outputFormat` | `OutputFormat` | 请求结构化输出，可传 `"json"`，也可通过 `{ type: "json_schema", schema }` 指定 JSON Schema 输出；最终文本会原样返回。 |
 | `signal` | `AbortSignal` | 中断当前 query。 |
 | `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
 | `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
@@ -120,6 +121,7 @@ LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith
 | `AgentOptions` | Agent 构造参数。 |
 | `AgentWorkspaceOptions` | `AgentOptions.workspace` 接收的字符串路径或 workspace 配置对象，用于覆盖默认 workspace。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
+| `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |

@@ -89,7 +89,31 @@ const result = await agent.prompt("Write a short haiku.", {
 });
 ```
 
-In short: `query()` is the event-stream API, `prompt()` is the final-result API, and `{ stream: true | false }` controls model streaming.
+Use `outputFormat` for schema-constrained JSON output:
+
+```ts
+const jsonResult = await agent.prompt("Return JSON only.", {
+  outputFormat: "json",
+});
+
+const result = await agent.prompt("Return the answer to 2 + 2.", {
+  outputFormat: {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: {
+        answer: { type: "number" },
+      },
+      required: ["answer"],
+      additionalProperties: false,
+    },
+  },
+});
+```
+
+When `outputFormat` is set, the SDK sends structured output parameters to the provider and returns the final text unchanged. Parse or validate the returned JSON in your application when you need a typed value.
+
+In short: `query()` is the event-stream API, `prompt()` is the final-result API, `{ stream: true | false }` controls model streaming, and `outputFormat` requests JSON or provider-supported schema output.
 
 ## Next steps
 

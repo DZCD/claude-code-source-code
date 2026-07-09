@@ -88,7 +88,31 @@ const result = await agent.prompt("写一首短诗。", {
 });
 ```
 
-简单记：`query()` 是事件流 API，`prompt()` 是最终结果 API，`{ stream: true | false }` 控制模型是否流式输出。
+需要让模型按 JSON Schema 输出时，传入 `outputFormat`：
+
+```ts
+const jsonResult = await agent.prompt("只返回 JSON。", {
+  outputFormat: "json",
+});
+
+const result = await agent.prompt("返回 2 + 2 的答案。", {
+  outputFormat: {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: {
+        answer: { type: "number" },
+      },
+      required: ["answer"],
+      additionalProperties: false,
+    },
+  },
+});
+```
+
+设置 `outputFormat` 后，SDK 会把结构化输出参数发送给 provider，并原样返回最终文本。需要类型化结果时，请在应用层解析或验证返回的 JSON。
+
+简单记：`query()` 是事件流 API，`prompt()` 是最终结果 API，`{ stream: true | false }` 控制模型是否流式输出，`outputFormat` 请求 JSON 或 provider 支持的 schema 输出。
 
 ## 下一步
 

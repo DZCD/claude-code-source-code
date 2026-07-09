@@ -4,6 +4,7 @@ import type {
   ImageBlockParam,
   TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages.mjs";
+import type { BetaJSONOutputFormat } from "@anthropic-ai/sdk/resources/beta/messages/messages.mjs";
 import { Client as MCPProtocolClient } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
@@ -227,6 +228,7 @@ export type ModelRequest = {
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
   stream: boolean;
+  outputFormat?: OutputFormat;
   onStreamEvent?: (event: Record<string, unknown>) => void;
   signal?: AbortSignal;
 };
@@ -500,11 +502,14 @@ export type AgentWorkspaceToolsOptions = {
 
 export type QueryOptions = {
   stream?: boolean;
+  outputFormat?: OutputFormat;
   signal?: AbortSignal;
   runtime?: AgentRuntimeContext;
   permissions?: RuntimePermissions;
   tracer?: ContextTracer;
 };
+
+export type OutputFormat = "json" | BetaJSONOutputFormat;
 
 export type SDKSystemInitMessage = {
   type: "system";
@@ -1553,9 +1558,20 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
   ];
 }
 
-export async function* query(params: AgentOptions & { prompt: string; stream?: boolean; signal?: AbortSignal }): AsyncGenerator<SDKMessage> {
+export async function* query(
+  params: AgentOptions & {
+    prompt: string;
+    stream?: boolean;
+    outputFormat?: OutputFormat;
+    signal?: AbortSignal;
+  },
+): AsyncGenerator<SDKMessage> {
   const agent = createAgent(params);
-  yield* agent.query(params.prompt, { stream: params.stream, signal: params.signal });
+  yield* agent.query(params.prompt, {
+    stream: params.stream,
+    outputFormat: params.outputFormat,
+    signal: params.signal,
+  });
 }
 
 export class Agent {
@@ -1679,6 +1695,7 @@ export class Agent {
           tools: modelTools.map(tool => tool.name),
           permissions: traceRuntimePermissions(effectivePermissions),
           stream,
+          ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
         },
       });
       try {
@@ -1689,6 +1706,7 @@ export class Agent {
           messages: modelMessages,
           tools: modelTools,
           stream,
+          outputFormat: options.outputFormat,
           onStreamEvent: event => {
             if (stream) {
               streamEvents.push(event);
@@ -1975,9 +1993,10 @@ class AnthropicModelClient implements ModelClient {
           description: tool.description,
           input_schema: tool.input_schema,
         })) as never,
+        ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
       };
       if (request.stream) {
-        const stream = await this.client.messages.create(
+        const stream = await this.createAnthropicMessage(
           { ...body, stream: true },
           { signal: request.signal },
         );
@@ -1989,7 +2008,7 @@ class AnthropicModelClient implements ModelClient {
         return assembler.message();
       }
 
-      const response = await this.client.messages.create(body, { signal: request.signal });
+      const response = await this.createAnthropicMessage(body, { signal: request.signal });
       if ("type" in response && response.type === "message") {
         return {
           role: "assistant",
@@ -2005,6 +2024,37 @@ class AnthropicModelClient implements ModelClient {
       throw new APIError(errorMessage(error), { cause: error });
     }
   }
+
+  private createAnthropicMessage(
+    body: Record<string, unknown>,
+    options: { signal?: AbortSignal },
+  ): Promise<AnthropicMessageResponse | AsyncIterable<Record<string, unknown>>> {
+    if (body.output_config) {
+      return this.client.beta.messages.create(
+        {
+          ...body,
+          betas: ["structured-outputs-2025-12-15"],
+        } as never,
+        options,
+      ) as Promise<AnthropicMessageResponse | AsyncIterable<Record<string, unknown>>>;
+    }
+    return this.client.messages.create(body as never, options) as Promise<AnthropicMessageResponse | AsyncIterable<Record<string, unknown>>>;
+  }
+}
+
+type AnthropicMessageResponse = {
+  type?: unknown;
+  content: unknown[];
+};
+
+function toAnthropicOutputFormat(outputFormat: OutputFormat): BetaJSONOutputFormat {
+  if (outputFormat === "json") {
+    return {
+      type: "json_schema",
+      schema: {},
+    };
+  }
+  return outputFormat;
 }
 
 class AnthropicStreamAssembler {
@@ -2298,6 +2348,7 @@ async function runAgentLikeToFinal(input: {
 
     for await (const agentMessage of input.agent.query(nextPrompt, {
       stream: input.queryOptions.stream,
+      outputFormat: input.queryOptions.outputFormat,
       signal: input.queryOptions.signal,
       tracer: input.queryOptions.tracer,
       runtime,

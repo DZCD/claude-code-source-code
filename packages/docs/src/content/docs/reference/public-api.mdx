@@ -62,6 +62,7 @@ const result = await agent.prompt(prompt);
 | Option | Type | Description |
 | --- | --- | --- |
 | `stream` | `boolean` | Enables raw provider stream events. Defaults to `true`. |
+| `outputFormat` | `OutputFormat` | Requests structured output via `"json"` or JSON Schema output via `{ type: "json_schema", schema }`; the final text is returned unchanged. |
 | `signal` | `AbortSignal` | Cancels the running query. |
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
@@ -122,6 +123,7 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 | `AgentOptions` | Agent construction options. |
 | `AgentWorkspaceOptions` | String path or workspace configuration object accepted by `AgentOptions.workspace` to override the default workspace. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
+| `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |

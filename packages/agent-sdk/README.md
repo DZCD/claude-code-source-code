@@ -37,6 +37,32 @@ Pass `{ stream: false }` to disable model streaming for a query:
 const result = await agent.prompt("Say hello", { stream: false });
 ```
 
+Pass `outputFormat` when you want the model to produce JSON matching a schema:
+
+```ts
+const jsonResult = await agent.prompt("Return JSON only.", {
+  outputFormat: "json",
+});
+
+const result = await agent.prompt("Return the answer to 2 + 2.", {
+  outputFormat: {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: {
+        answer: { type: "number" },
+      },
+      required: ["answer"],
+      additionalProperties: false,
+    },
+  },
+});
+```
+
+When `outputFormat` is set, the SDK sends structured output parameters to the
+provider and returns the final text unchanged. Parse or validate the returned
+JSON in your application when you need a typed value.
+
 ## Multimodal Input
 
 Pass Anthropic-compatible content blocks for image or document prompts:
