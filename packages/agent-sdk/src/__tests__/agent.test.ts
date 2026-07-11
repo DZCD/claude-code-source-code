@@ -242,6 +242,28 @@ describe("agent-sdk", () => {
     expect(requests[0]?.outputFormat).toEqual(outputFormat);
   });
 
+  test("passes agent thinking config to the model request and allows query overrides", async () => {
+    const requests: ModelRequest[] = [];
+    const modelClient: ModelClient = {
+      async createMessage(request) {
+        requests.push(request);
+        return textAssistant("done");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      thinkingConfig: { type: "enabled", budgetTokens: 8_000 },
+      modelClient,
+    });
+
+    await agent.prompt("Use the default.");
+    await agent.prompt("Override it.", { thinkingConfig: { type: "disabled" } });
+
+    expect(requests[0]?.thinkingConfig).toEqual({ type: "enabled", budgetTokens: 8_000 });
+    expect(requests[1]?.thinkingConfig).toEqual({ type: "disabled" });
+  });
+
   test("does not reject non-json text when outputFormat is ignored by the provider", async () => {
     const agent = createAgent({
       apiKey: "test-key",
@@ -1317,6 +1339,54 @@ describe("agent-sdk", () => {
         },
       });
       expect(betaHeader).toContain("structured-outputs-2025-12-15");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Anthropic client serializes thinking config and preserves thinking blocks", async () => {
+    let requestBody: any;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestBody = await request.json();
+        return Response.json({
+          id: "msg_thinking",
+          type: "message",
+          role: "assistant",
+          model: "claude-test",
+          content: [
+            { type: "thinking", thinking: "I should answer briefly.", signature: "sig_test" },
+            { type: "text", text: "Done." },
+          ],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 2 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+        maxTokens: 4_000,
+        thinkingConfig: { type: "enabled", budgetTokens: 8_000 },
+      });
+
+      const messages = await collect(agent.query("Think.", { stream: false }));
+
+      expect(requestBody.thinking).toEqual({ type: "enabled", budget_tokens: 3_999 });
+      expect(messages[1]).toMatchObject({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "thinking", thinking: "I should answer briefly.", signature: "sig_test" },
+            { type: "text", text: "Done." },
+          ],
+        },
+      });
     } finally {
       server.stop(true);
     }

@@ -69,6 +69,7 @@ const agent = createBareAgent({
 | `systemPrompt` | `string` | Stable role and responsibility instructions sent as the provider system prompt. |
 | `maxTokens` | `number` | Maximum output tokens per model request. |
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
+| `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. When omitted, the SDK sends no thinking configuration. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Optional override for the private agent workspace. Defaults to `~/.agent/workspaces/<name>` when `name` is set, otherwise `~/.agent/workspaces/agent-<session-id>`. |
@@ -86,6 +87,7 @@ const agent = createBareAgent({
 | --- | --- | --- |
 | `stream` | `boolean` | Enables raw provider stream events. Defaults to `true`. |
 | `outputFormat` | `OutputFormat` | Requests structured output via `"json"` or JSON Schema output via `{ type: "json_schema", schema }`; the final text is returned unchanged. |
+| `thinkingConfig` | `ThinkingConfig` | Overrides the agent's reasoning configuration for this query. A fixed budget is capped at `maxTokens - 1`. |
 | `signal` | `AbortSignal` | Cancels the running query. |
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
@@ -155,6 +157,7 @@ the process exits so LangSmith receives the final root run patch.
 | `AgentWorkspaceToolsOptions` | `cwd`, write-root, and shell timeout options accepted by `createBuiltinTools()` and `createAgentWorkspaceTools()`. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
+| `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |

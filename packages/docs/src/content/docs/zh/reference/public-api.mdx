@@ -69,6 +69,7 @@ const agent = createBareAgent({
 | `systemPrompt` | `string` | 作为 provider system prompt 发送的稳定角色和职责指令。 |
 | `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
+| `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。省略时，SDK 不发送 thinking 配置。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。传了 `name` 时默认是 `~/.agent/workspaces/<name>`，否则是 `~/.agent/workspaces/agent-<session-id>`。 |
@@ -86,6 +87,7 @@ const agent = createBareAgent({
 | --- | --- | --- |
 | `stream` | `boolean` | 是否输出底层 provider stream event，默认 `true`。 |
 | `outputFormat` | `OutputFormat` | 请求结构化输出，可传 `"json"`，也可通过 `{ type: "json_schema", schema }` 指定 JSON Schema 输出；最终文本会原样返回。 |
+| `thinkingConfig` | `ThinkingConfig` | 覆盖当前 query 的 Agent 推理配置。固定预算最大为 `maxTokens - 1`。 |
 | `signal` | `AbortSignal` | 中断当前 query。 |
 | `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
 | `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
@@ -153,6 +155,7 @@ LangSmith 收到根 run 的最终 patch。
 | `AgentWorkspaceToolsOptions` | `createBuiltinTools()` 和 `createAgentWorkspaceTools()` 接收的 `cwd`、写入根目录和 Shell 超时配置。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
+| `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |

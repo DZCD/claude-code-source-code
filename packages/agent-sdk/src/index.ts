@@ -51,12 +51,23 @@ export type ToolResultBlock = {
   content: string | ContentBlock[];
   is_error?: boolean;
 };
+export type ThinkingBlock = {
+  type: "thinking";
+  thinking: string;
+  signature: string;
+};
+export type RedactedThinkingBlock = {
+  type: "redacted_thinking";
+  data: string;
+};
 export type ContentBlock =
   | TextBlock
   | ImageBlock
   | DocumentBlock
   | ToolUseBlock
-  | ToolResultBlock;
+  | ToolResultBlock
+  | ThinkingBlock
+  | RedactedThinkingBlock;
 
 export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
 
@@ -229,6 +240,7 @@ export type ModelRequest = {
   tools: ModelToolDefinition[];
   stream: boolean;
   outputFormat?: OutputFormat;
+  thinkingConfig?: ThinkingConfig;
   onStreamEvent?: (event: Record<string, unknown>) => void;
   signal?: AbortSignal;
 };
@@ -489,6 +501,7 @@ export type AgentOptions<TContext = unknown> = {
   systemPrompt?: string;
   maxTokens?: number;
   maxTurns?: number;
+  thinkingConfig?: ThinkingConfig;
   tools?: Array<ToolDefinition<any, TContext>>;
   skills?: SkillDefinition[];
   workspace?: AgentWorkspaceOptions;
@@ -516,6 +529,7 @@ export type AgentWorkspaceToolsOptions = {
 export type QueryOptions<TContext = unknown> = {
   stream?: boolean;
   outputFormat?: OutputFormat;
+  thinkingConfig?: ThinkingConfig;
   signal?: AbortSignal;
   context?: TContext;
   agentRuntime?: AgentRuntimeContext;
@@ -524,6 +538,11 @@ export type QueryOptions<TContext = unknown> = {
 };
 
 export type OutputFormat = "json" | BetaJSONOutputFormat;
+
+export type ThinkingConfig =
+  | { type: "adaptive" }
+  | { type: "enabled"; budgetTokens: number }
+  | { type: "disabled" };
 
 export type SDKSystemInitMessage = {
   type: "system";
@@ -1643,6 +1662,7 @@ export async function* query<TContext = unknown>(
     prompt: string;
     stream?: boolean;
     outputFormat?: OutputFormat;
+    thinkingConfig?: ThinkingConfig;
     signal?: AbortSignal;
     context?: TContext;
   },
@@ -1651,6 +1671,7 @@ export async function* query<TContext = unknown>(
   yield* agent.query(params.prompt, {
     stream: params.stream,
     outputFormat: params.outputFormat,
+    thinkingConfig: params.thinkingConfig,
     signal: params.signal,
     context: params.context,
   });
@@ -1771,6 +1792,7 @@ export class Agent<TContext = unknown> {
       const modelMessages = this.messagesForModel(prompt);
       const modelTools = this.modelTools();
       const stream = options.stream ?? true;
+      const thinkingConfig = options.thinkingConfig ?? this.options.thinkingConfig;
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "model_request",
@@ -1783,6 +1805,7 @@ export class Agent<TContext = unknown> {
           permissions: traceRuntimePermissions(effectivePermissions),
           stream,
           ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
+          ...(thinkingConfig ? { thinkingConfig } : {}),
         },
       });
       try {
@@ -1794,6 +1817,7 @@ export class Agent<TContext = unknown> {
           tools: modelTools,
           stream,
           outputFormat: options.outputFormat,
+          thinkingConfig,
           onStreamEvent: event => {
             if (stream) {
               streamEvents.push(event);
@@ -2089,6 +2113,9 @@ class AnthropicModelClient implements ModelClient {
           input_schema: tool.input_schema,
         })) as never,
         ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
+        ...(request.thinkingConfig && request.thinkingConfig.type !== "disabled"
+          ? { thinking: toAnthropicThinkingConfig(request.thinkingConfig, request.maxTokens) }
+          : {}),
       };
       if (request.stream) {
         const stream = await this.createAnthropicMessage(
@@ -2152,6 +2179,19 @@ function toAnthropicOutputFormat(outputFormat: OutputFormat): BetaJSONOutputForm
   return outputFormat;
 }
 
+function toAnthropicThinkingConfig(
+  thinkingConfig: Exclude<ThinkingConfig, { type: "disabled" }>,
+  maxTokens: number,
+): Record<string, unknown> {
+  if (thinkingConfig.type === "adaptive") {
+    return { type: "adaptive" };
+  }
+  return {
+    type: "enabled",
+    budget_tokens: Math.min(thinkingConfig.budgetTokens, maxTokens - 1),
+  };
+}
+
 class AnthropicStreamAssembler {
   private content: ContentBlock[] = [];
   private currentIndex: number | undefined;
@@ -2183,6 +2223,22 @@ class AnthropicStreamAssembler {
         existing.text += delta.text;
       } else {
         this.content[index] = { type: "text", text: delta.text };
+      }
+    }
+
+    if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+      const existing = this.content[index];
+      if (existing?.type === "thinking") {
+        existing.thinking += delta.thinking;
+      } else {
+        this.content[index] = { type: "thinking", thinking: delta.thinking, signature: "" };
+      }
+    }
+
+    if (delta.type === "signature_delta" && typeof delta.signature === "string") {
+      const existing = this.content[index];
+      if (existing?.type === "thinking") {
+        existing.signature += delta.signature;
       }
     }
 
@@ -2233,6 +2289,16 @@ function fromAnthropicBlock(block: unknown): ContentBlock | undefined {
   const value = block as Record<string, unknown>;
   if (value.type === "text" && typeof value.text === "string") {
     return { type: "text", text: value.text };
+  }
+  if (
+    value.type === "thinking" &&
+    typeof value.thinking === "string" &&
+    typeof value.signature === "string"
+  ) {
+    return { type: "thinking", thinking: value.thinking, signature: value.signature };
+  }
+  if (value.type === "redacted_thinking" && typeof value.data === "string") {
+    return { type: "redacted_thinking", data: value.data };
   }
   if (
     value.type === "tool_use" &&

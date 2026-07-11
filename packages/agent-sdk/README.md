@@ -82,6 +82,27 @@ When `outputFormat` is set, the SDK sends structured output parameters to the
 provider and returns the final text unchanged. Parse or validate the returned
 JSON in your application when you need a typed value.
 
+Pass `thinkingConfig` on the agent to configure reasoning for every query, or
+on an individual query to override the agent default:
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+  thinkingConfig: { type: "adaptive" },
+});
+
+const result = await agent.prompt("Solve this carefully.", {
+  thinkingConfig: { type: "enabled", budgetTokens: 8_000 },
+});
+```
+
+Use `{ type: "adaptive" }` for models that support adaptive thinking. Use
+`{ type: "enabled", budgetTokens }` for models that require a fixed budget, or
+`{ type: "disabled" }` to omit thinking from the provider request. A fixed
+budget is capped at `maxTokens - 1` to satisfy the Anthropic API constraint.
+When omitted, the SDK does not send a thinking configuration.
+
 ## Multimodal Input
 
 Pass Anthropic-compatible content blocks for image or document prompts:
