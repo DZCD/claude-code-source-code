@@ -8,6 +8,8 @@ import {
   MaxTurnsError,
   ToolExecutionError,
   createAgent,
+  createBareAgent,
+  createBuiltinTools,
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
@@ -87,6 +89,11 @@ type FakeRunConfig = {
   replicas?: Array<Record<string, unknown>>;
 };
 
+type FakeLangSmithClient = {
+  flush(): Promise<void>;
+  awaitPendingTraceBatches(): Promise<void>;
+};
+
 class FakeRunTree {
   static runs: FakeRunTree[] = [];
   static operations: Array<{ type: string; run: string; options?: unknown }> = [];
@@ -104,7 +111,7 @@ class FakeRunTree {
   outputs?: Record<string, unknown>;
   error?: string;
   events: unknown[] = [];
-  client?: unknown;
+  client?: FakeLangSmithClient;
   replicas?: Array<Record<string, unknown>>;
 
   constructor(config: FakeRunConfig) {
@@ -119,7 +126,7 @@ class FakeRunTree {
     this.inputs = config.inputs ?? {};
     this.outputs = config.outputs;
     this.error = config.error;
-    this.client = config.client;
+    this.client = config.client as FakeLangSmithClient | undefined;
     this.replicas = config.replicas;
     FakeRunTree.runs.push(this);
   }
@@ -254,6 +261,70 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("createBareAgent does not add workspace prompt, tools, or directory", async () => {
+    const name = `bare-agent-${Date.now()}`;
+    const defaultWorkspace = join(homedir(), ".agent", "workspaces", name);
+    await rm(defaultWorkspace, { recursive: true, force: true });
+    const requests: ModelRequest[] = [];
+    const modelClient: ModelClient = {
+      async createMessage(request) {
+        requests.push(request);
+        return textAssistant("bare");
+      },
+    };
+
+    const agent = createBareAgent({
+      apiKey: "test-key",
+      name,
+      model: "claude-test",
+      modelClient,
+    });
+
+    const messages = await collect(agent.query("Say hello", { stream: false }));
+
+    expect(messages[0]).toMatchObject({
+      type: "system",
+      subtype: "init",
+      model: "claude-test",
+      tools: [],
+    });
+    expect(requests[0]?.systemPrompt).toBeUndefined();
+    expect(requests[0]?.tools).toEqual([]);
+    await expect(stat(defaultWorkspace)).rejects.toThrow();
+  });
+
+  test("createBareAgent lets callers opt into system prompts and builtin tools", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agent-sdk-bare-"));
+    const requests: ModelRequest[] = [];
+    const modelClient: ModelClient = {
+      async createMessage(request) {
+        requests.push(request);
+        return textAssistant("customized");
+      },
+    };
+
+    try {
+      const agent = createBareAgent({
+        apiKey: "test-key",
+        model: "claude-test",
+        systemPrompt: "You are a deliberately configured agent.",
+        tools: createBuiltinTools({ cwd }),
+        modelClient,
+      });
+
+      const messages = await collect(agent.query("Say hello", { stream: false }));
+
+      expect(messages[0]).toMatchObject({
+        type: "system",
+        tools: ["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"],
+      });
+      expect(requests[0]?.systemPrompt).toBe("You are a deliberately configured agent.");
+      expect(requests[0]?.tools.map(tool => tool.name)).toEqual(["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("executes a custom tool and feeds the result back to the model", async () => {
     const seenMessages: unknown[] = [];
     const modelClient: ModelClient = {
@@ -306,6 +377,63 @@ describe("agent-sdk", () => {
       type: "result",
       subtype: "success",
       result: "The answer is 4",
+    });
+  });
+
+  test("passes host business context to custom tools without AgentRuntime shape", async () => {
+    type QcContext = {
+      patientRecordId: string;
+      scoringStandardId: string;
+    };
+    const seenMessages: unknown[] = [];
+    const modelClient: ModelClient = {
+      async createMessage({ messages }) {
+        seenMessages.push(messages);
+        if (seenMessages.length === 1) {
+          return toolUseAssistant("toolu_1", "read_patient_record", {});
+        }
+        return textAssistant("I found the current patient record.");
+      },
+    };
+    const readPatientRecordInputSchema = z.object({});
+    const qcTool = tool<QcContext>();
+    const agent = createBareAgent<QcContext>({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+      tools: [
+        qcTool(
+          "read_patient_record",
+          "Read the current patient record",
+          readPatientRecordInputSchema,
+          async (_input, { context }) => ({
+            content: JSON.stringify({
+              patientRecordId: context?.patientRecordId,
+              scoringStandardId: context?.scoringStandardId,
+            }),
+          }),
+        ),
+      ],
+    });
+
+    const messages = await collect(agent.query("Review the current patient record", {
+      context: {
+        patientRecordId: "ocr_123",
+        scoringStandardId: "tumor-v1",
+      },
+      stream: false,
+    }));
+
+    expect(messages[2]).toMatchObject({
+      type: "user",
+      tool_use_result: JSON.stringify({
+        patientRecordId: "ocr_123",
+        scoringStandardId: "tumor-v1",
+      }),
+    });
+    expect(messages.at(-1)).toMatchObject({
+      type: "result",
+      result: "I found the current patient record.",
     });
   });
 
@@ -540,6 +668,59 @@ describe("agent-sdk", () => {
       { type: "post", run: "researcher", options: { excludeChildRuns: true } },
       { type: "patch", run: "researcher", options: { excludeInputs: false } },
     ]));
+  });
+
+  test("closes LangSmith tracer by draining RunTree clients", async () => {
+    FakeRunTree.reset();
+    const clientOperations: string[] = [];
+    const client: FakeLangSmithClient = {
+      async flush() {
+        clientOperations.push("client:flush");
+      },
+      async awaitPendingTraceBatches() {
+        clientOperations.push("client:awaitPendingTraceBatches");
+      },
+    };
+    const replicaClient: FakeLangSmithClient = {
+      async flush() {
+        clientOperations.push("replica:flush");
+      },
+      async awaitPendingTraceBatches() {
+        clientOperations.push("replica:awaitPendingTraceBatches");
+      },
+    };
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+      client: client as never,
+      apiKey: "test-langsmith-key",
+      apiUrl: "https://api.smith.langchain.com",
+      workspaceId: "workspace-123",
+      runTree: config => new FakeRunTree({
+        ...config,
+        client,
+        replicas: (config.replicas ?? []).map(replica => Array.isArray(replica)
+          ? replica
+          : { ...replica, client: replicaClient }),
+      }) as never,
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "close-drain-check",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("done")]),
+    });
+
+    await collect(agent.query("Trace then close", { stream: false, tracer }));
+    clientOperations.length = 0;
+    await tracer.close?.();
+
+    expect(clientOperations).toEqual([
+      "client:flush",
+      "client:awaitPendingTraceBatches",
+      "replica:flush",
+      "replica:awaitPendingTraceBatches",
+    ]);
   });
 
   test("maps SDK tool use events to LangSmith tool runs without agent loop changes", async () => {

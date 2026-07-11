@@ -77,6 +77,26 @@ const backendAgent = createAgent({
 
 SDK 会自动给 agent 增加 workspace 工具，并注入说明：交付时用自然语言汇报重要路径和验证结果。
 
+## Bare agent
+
+当宿主需要一个不带默认提示词、不带默认工具、也不创建 workspace 目录的纯模型循环时，使用 `createBareAgent()`。它适合已经由宿主提供 sandbox 的应用、需要精确控制工具列表的测试，或由应用自己组装能力的 wrapper。
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey,
+  model,
+  systemPrompt: "你是一个简洁的工程助手。",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+});
+```
+
+大多数需要产出持久文件的 agent 应该使用 `createAgent()`。只有当应用要显式拥有每一项能力时，才选择 `createBareAgent()`。
+
 ## 中断请求
 
 `AbortSignal` 会中断当前模型请求和后续工具循环：

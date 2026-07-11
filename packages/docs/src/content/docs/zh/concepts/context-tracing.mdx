@@ -95,7 +95,16 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
   tracer,
 });
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
 ```
+
+短生命周期的测试进程退出前，请 close 或 flush LangSmith tracer。这样会等待
+LangSmith 内部 trace batch 队列，包括把根 run 标记为已结束的最后一次 patch。
 
 如果你更想显式传值，也可以直接传给 SDK tracer。`workspaceId` 是可选的，
 只用于选择 LangSmith workspace；它不是 trace project 名。
@@ -139,6 +148,9 @@ const tracer = createCompositeContextTracer([
   }),
 ]);
 ```
+
+如果 composite tracer 里包含 LangSmith，也在同一个 `finally` 里 close 这个
+composite tracer；它会把 `close()` 转发给每个子 tracer。
 
 ## 事件类型
 

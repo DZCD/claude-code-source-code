@@ -22,7 +22,25 @@ const agent = createAgent({
 });
 ```
 
-`createAgentWorkspaceTools()` 返回的就是下表这套 `ToolDefinition`（`createAgent()` 内部也是调它）。当你想自己组装工具列表、而非用默认 workspace 设置时，直接调用它。
+`createBareAgent()` 初始不带工具、不带 workspace 提示词，也不会创建默认 workspace 目录。当你需要一个 bare agent，但仍想显式接入 SDK 内置文件和 Shell 工具时，使用 `createBuiltinTools()`：
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "使用已配置的项目目录完成文件工作。",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+    bashTimeoutMs: 30_000,
+  }),
+});
+```
+
+`createBuiltinTools()` 和 `createAgentWorkspaceTools()` 返回的都是下表这套 `ToolDefinition`。如果代码里更想强调 workspace 语义，也可以继续使用 `createAgentWorkspaceTools()`。
 
 ## 工具列表
 
@@ -52,4 +70,4 @@ permission: async request => {
 }
 ```
 
-`allowedDirectories` 会限制文件工具可访问的目录，但它不能替代宿主应用自己的权限策略。
+`allowedDirectories` 会限制 `Write`、`Edit` 和明显 Shell 写入的写入根目录。只读工具仍可检查宿主进程有权限读取的任意路径。这些检查不能替代宿主应用自己的权限策略。

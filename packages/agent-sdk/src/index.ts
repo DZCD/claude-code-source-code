@@ -60,9 +60,9 @@ export type ContentBlock =
 
 export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
 
-export type AgentLike = {
-  query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<AgentLikeEvent>;
-  prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+export type AgentLike<TContext = unknown> = {
+  query(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): AsyncGenerator<AgentLikeEvent>;
+  prompt(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): Promise<SDKResultMessage>;
 };
 
 export type DelegateWaitMode = "result" | "accepted";
@@ -78,7 +78,7 @@ export type AgentRuntimeSource = {
 export type AgentRuntimeDelegateInput = {
   name: string;
   description?: string;
-  agent: AgentLike;
+  agent: AgentLike<any>;
   task: string;
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
@@ -201,8 +201,8 @@ export type LangSmithContextTracerOptions = {
   failOnError?: boolean;
 };
 
-type ToolCapableAgentLike = AgentLike & {
-  addTools(tools: Array<ToolDefinition<any>>): void;
+type ToolCapableAgentLike<TContext = unknown> = AgentLike<TContext> & {
+  addTools(tools: Array<ToolDefinition<any, TContext>>): void;
 };
 
 export type ModelMessage = {
@@ -241,23 +241,26 @@ export type ToolResult = {
   content: string | ContentBlock[];
 };
 
-export type ToolHandler<TInput = unknown> = (
+export type ToolExecutionContext<TContext = unknown> = {
+  signal?: AbortSignal;
+  toolUseId: string;
+  context?: TContext;
+  agentRuntime?: AgentRuntimeContext;
+  permissions?: RuntimePermissions;
+};
+
+export type ToolHandler<TInput = unknown, TContext = unknown> = (
   input: TInput,
-  context: {
-    signal?: AbortSignal;
-    toolUseId: string;
-    runtime?: AgentRuntimeContext;
-    permissions?: RuntimePermissions;
-  },
+  context: ToolExecutionContext<TContext>,
 ) => Promise<ToolResult> | ToolResult;
 
-export type ToolDefinition<TInput = unknown> = {
+export type ToolDefinition<TInput = unknown, TContext = unknown> = {
   name: string;
   description: string;
   inputSchema: unknown;
   jsonSchema: Record<string, unknown>;
   parse(input: unknown): TInput;
-  handler: ToolHandler<TInput>;
+  handler: ToolHandler<TInput, TContext>;
 };
 
 export type SkillDefinition = {
@@ -310,7 +313,7 @@ export type MCPStdioServerOptions = MCPToolsOptions & {
 
 export type MCPStdioConnection = {
   client: MCPClient;
-  tools: Array<ToolDefinition<any>>;
+  tools: Array<ToolDefinition<any, any>>;
   close(): Promise<void>;
 };
 
@@ -336,7 +339,7 @@ export type TeamMemberDefinition = {
   name: string;
   role: TeamMemberRole;
   focus?: string;
-  agent: AgentLike;
+  agent: AgentLike<any>;
   mailboxId?: string;
 };
 
@@ -403,7 +406,7 @@ export type SQLiteMailboxOptions = {
 
 export type TeamOptions = {
   name: string;
-  lead: Agent;
+  lead: Agent<any>;
   members: TeamMemberDefinition[];
   mailbox?: TeamMailbox;
   exposeLeadMailboxTools?: boolean;
@@ -411,11 +414,11 @@ export type TeamOptions = {
 
 export type Team = {
   name: string;
-  lead: Agent;
+  lead: Agent<any>;
   members: TeamMemberDefinition[];
   mailbox: TeamMailbox;
-  tools: Array<ToolDefinition<any>>;
-  memberTools: Record<string, Array<ToolDefinition<any>>>;
+  tools: Array<ToolDefinition<any, any>>;
+  memberTools: Record<string, Array<ToolDefinition<any, any>>>;
   send(from: string, to: string, content: string, options?: TeamSendOptions): Promise<TeamMessage>;
   drain(options?: TeamDrainOptions): Promise<TeamDrainResult>;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
@@ -436,14 +439,14 @@ export type TeamDrainResult = {
 
 export type TeamRunnerOptions = {
   team?: Team;
-  root?: AgentLike;
+  root?: AgentLike<any>;
   mailbox?: TeamMailbox;
   source?: AgentRuntimeSource;
   maxDelegateDepth?: number;
 };
 
 export type TeamRunner = {
-  root: AgentLike;
+  root: AgentLike<any>;
   mailbox: TeamMailbox;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
@@ -478,7 +481,7 @@ export type AgentWorkspaceOptions =
       bashTimeoutMs?: number;
     };
 
-export type AgentOptions = {
+export type AgentOptions<TContext = unknown> = {
   apiKey?: string;
   baseURL?: string;
   name?: string;
@@ -486,12 +489,22 @@ export type AgentOptions = {
   systemPrompt?: string;
   maxTokens?: number;
   maxTurns?: number;
-  tools?: Array<ToolDefinition<any>>;
+  tools?: Array<ToolDefinition<any, TContext>>;
   skills?: SkillDefinition[];
   workspace?: AgentWorkspaceOptions;
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
   modelClient?: ModelClient;
   tracer?: ContextTracer;
+};
+
+export type BareAgentOptions<TContext = unknown> = Omit<AgentOptions<TContext>, "workspace">;
+
+const BARE_AGENT_OPTIONS = Symbol("bareAgentOptions");
+
+type InternalAgentOptions<TContext = unknown> = AgentOptions<TContext> & {
+  [BARE_AGENT_OPTIONS]?: {
+    installWorkspace?: boolean;
+  };
 };
 
 export type AgentWorkspaceToolsOptions = {
@@ -500,11 +513,12 @@ export type AgentWorkspaceToolsOptions = {
   bashTimeoutMs?: number;
 };
 
-export type QueryOptions = {
+export type QueryOptions<TContext = unknown> = {
   stream?: boolean;
   outputFormat?: OutputFormat;
   signal?: AbortSignal;
-  runtime?: AgentRuntimeContext;
+  context?: TContext;
+  agentRuntime?: AgentRuntimeContext;
   permissions?: RuntimePermissions;
   tracer?: ContextTracer;
 };
@@ -614,12 +628,56 @@ export class ToolPermissionDeniedError extends AgentSDKError {
   }
 }
 
-export function tool<TSchema>(
+export function tool<TContext = unknown>(): <TSchema>(
   name: string,
   description: string,
   inputSchema: TSchema,
-  handler: ToolHandler<InferInput<TSchema>>,
-): ToolDefinition<InferInput<TSchema>> {
+  handler: ToolHandler<InferInput<TSchema>, TContext>,
+) => ToolDefinition<InferInput<TSchema>, TContext>;
+
+export function tool<TSchema, TContext = unknown>(
+  name: string,
+  description: string,
+  inputSchema: TSchema,
+  handler: ToolHandler<InferInput<TSchema>, TContext>,
+): ToolDefinition<InferInput<TSchema>, TContext>;
+
+export function tool<TSchema, TContext = unknown>(
+  name?: string,
+  description?: string,
+  inputSchema?: TSchema,
+  handler?: ToolHandler<InferInput<TSchema>, TContext>,
+):
+  | ToolDefinition<InferInput<TSchema>, TContext>
+  | (<TFactorySchema>(
+    name: string,
+    description: string,
+    inputSchema: TFactorySchema,
+    handler: ToolHandler<InferInput<TFactorySchema>, TContext>,
+  ) => ToolDefinition<InferInput<TFactorySchema>, TContext>) {
+  if (name === undefined) {
+    return <TFactorySchema>(
+      factoryName: string,
+      factoryDescription: string,
+      factoryInputSchema: TFactorySchema,
+      factoryHandler: ToolHandler<InferInput<TFactorySchema>, TContext>,
+    ): ToolDefinition<InferInput<TFactorySchema>, TContext> =>
+      createToolDefinition(factoryName, factoryDescription, factoryInputSchema, factoryHandler);
+  }
+
+  if (description === undefined || inputSchema === undefined || handler === undefined) {
+    throw new Error("tool(name, description, inputSchema, handler) requires all arguments");
+  }
+
+  return createToolDefinition(name, description, inputSchema, handler);
+}
+
+function createToolDefinition<TSchema, TContext = unknown>(
+  name: string,
+  description: string,
+  inputSchema: TSchema,
+  handler: ToolHandler<InferInput<TSchema>, TContext>,
+): ToolDefinition<InferInput<TSchema>, TContext> {
   return {
     name,
     description,
@@ -662,7 +720,7 @@ export type AgentToolOptions = {
 
 export function agentTool(
   name: string,
-  agent: AgentLike,
+  agent: AgentLike<any>,
   options: AgentToolOptions,
 ): ToolDefinition<AgentToolInput> {
   const toolName = sanitizeToolName(name);
@@ -670,21 +728,21 @@ export function agentTool(
     toolName,
     formatAgentToolDescription(options.description),
     agentToolInputSchema,
-    async (input, context) => {
+    async (input, toolContext) => {
       const task = formatAgentToolTask(input);
       if (input.mode === "observe") {
         throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
       }
 
-      if (input.workspaceGrants?.length && !context.runtime) {
+      if (input.workspaceGrants?.length && !toolContext.agentRuntime) {
         throw new Error(`agentTool("${toolName}") workspaceGrants require an AgentRuntime so grants can be authorized and reported.`);
       }
 
       if (input.mode === "handoff") {
-        if (!context.runtime) {
+        if (!toolContext.agentRuntime) {
           throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
         }
-        const result = await context.runtime.delegate({
+        const result = await toolContext.agentRuntime.delegate({
           name: toolName,
           description: options.description,
           agent,
@@ -696,8 +754,8 @@ export function agentTool(
         return { content: result.content };
       }
 
-      if (context.runtime) {
-        const result = await context.runtime.delegate({
+      if (toolContext.agentRuntime) {
+        const result = await toolContext.agentRuntime.delegate({
           name: toolName,
           description: options.description,
           agent,
@@ -709,7 +767,10 @@ export function agentTool(
         return { content: result.content };
       }
 
-      const result = await agent.prompt(task, { signal: context.signal });
+      const result = await agent.prompt(task, {
+        signal: toolContext.signal,
+        context: toolContext.context,
+      });
       if (result.is_error) {
         throw result.error ?? new Error(result.result || `agentTool("${toolName}") target returned an error`);
       }
@@ -721,7 +782,7 @@ export function agentTool(
 export function delegateTool(
   name: string,
   description: string,
-  agent: AgentLike,
+  agent: AgentLike<any>,
   options: DelegateToolOptions = {},
 ): ToolDefinition<{ task: string }> {
   const toolName = sanitizeToolName(name);
@@ -731,11 +792,11 @@ export function delegateTool(
     z.object({
       task: z.string(),
     }),
-    async (input, context) => {
-      if (!context.runtime) {
+    async (input, toolContext) => {
+      if (!toolContext.agentRuntime) {
         throw new Error(`delegateTool("${toolName}") requires an AgentRuntime. Use createTeamRunner().query() or createTeamRunner().prompt().`);
       }
-      const result = await context.runtime.delegate({
+      const result = await toolContext.agentRuntime.delegate({
         name: toolName,
         description,
         agent,
@@ -749,8 +810,19 @@ export function delegateTool(
   );
 }
 
-export function createAgent(options: AgentOptions): Agent {
-  return new Agent(options);
+export function createAgent<TContext = unknown>(options: AgentOptions<TContext>): Agent<TContext> {
+  return new Agent<TContext>(options);
+}
+
+export function createBareAgent<TContext = unknown>(options: BareAgentOptions<TContext>): Agent<TContext> {
+  return new Agent<TContext>({
+    ...options,
+    [BARE_AGENT_OPTIONS]: { installWorkspace: false },
+  } as InternalAgentOptions<TContext>);
+}
+
+export function createBuiltinTools(options: AgentWorkspaceToolsOptions = {}): Array<ToolDefinition<any, any>> {
+  return createAgentWorkspaceTools(options);
 }
 
 const DEFAULT_AGENT_WORKSPACE_ROOT = join(homedir(), ".agent", "workspaces");
@@ -760,7 +832,7 @@ type NormalizedAgentWorkspace = {
   toolsOptions: AgentWorkspaceToolsOptions;
 };
 
-function applyAgentWorkspaceOptions(options: AgentOptions, sessionId: string): AgentOptions {
+function applyAgentWorkspaceOptions<TContext>(options: AgentOptions<TContext>, sessionId: string): AgentOptions<TContext> {
   const workspace = normalizeAgentWorkspaceOptions(options, sessionId);
   mkdirSync(workspace.cwd, { recursive: true });
   const workspaceTools = createAgentWorkspaceTools(workspace.toolsOptions);
@@ -774,7 +846,7 @@ function applyAgentWorkspaceOptions(options: AgentOptions, sessionId: string): A
   };
 }
 
-function normalizeAgentWorkspaceOptions(options: AgentOptions, sessionId: string): NormalizedAgentWorkspace {
+function normalizeAgentWorkspaceOptions<TContext>(options: AgentOptions<TContext>, sessionId: string): NormalizedAgentWorkspace {
   const workspace = options.workspace;
   if (!workspace) {
     const name = options.name?.trim() ? options.name : `agent-${sessionId}`;
@@ -829,15 +901,16 @@ function formatRuntimePermissionInstructions(permissions: RuntimePermissions | u
   ].join("\n");
 }
 
-function joinPromptSections(sections: Array<string | undefined>): string {
-  return sections
+function joinPromptSections(sections: Array<string | undefined>): string | undefined {
+  const joined = sections
     .map(section => section?.trim())
     .filter((section): section is string => Boolean(section))
     .join("\n\n");
+  return joined || undefined;
 }
 
-function mergeToolsByName(...groups: Array<Array<ToolDefinition<any>>>): Array<ToolDefinition<any>> {
-  const merged: Array<ToolDefinition<any>> = [];
+function mergeToolsByName<TContext>(...groups: Array<Array<ToolDefinition<any, TContext>>>): Array<ToolDefinition<any, TContext>> {
+  const merged: Array<ToolDefinition<any, TContext>> = [];
   const seen = new Set<string>();
   for (const group of groups) {
     for (const item of group) {
@@ -922,6 +995,11 @@ type LangSmithTraceRunState = {
   pendingTools: Map<string, LangSmithRunTreeLike>;
 };
 
+type LangSmithFlushableClient = {
+  flush?: () => Promise<void>;
+  awaitPendingTraceBatches?: () => Promise<void>;
+};
+
 export function createLangSmithContextTracer(options: LangSmithContextTracerOptions): ContextTracer {
   if (!options.RunTree && !options.runTree) {
     throw new Error("createLangSmithContextTracer requires either RunTree or runTree");
@@ -979,9 +1057,11 @@ export function createLangSmithContextTracer(options: LangSmithContextTracerOpti
     },
     async flush() {
       await queue;
+      await flushLangSmithClients(options, runs);
     },
     async close() {
       await queue;
+      await flushLangSmithClients(options, runs);
     },
   };
 }
@@ -1312,7 +1392,7 @@ export function createTeam(options: TeamOptions): Team {
     },
   ));
   const leadTools = [...memberAgentTools, ...leadMailboxTools];
-  const memberTools: Record<string, Array<ToolDefinition<any>>> = {};
+  const memberTools: Record<string, Array<ToolDefinition<any, any>>> = {};
 
   options.lead.addTools(leadTools);
   for (const member of members) {
@@ -1416,7 +1496,7 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
   };
 }
 
-export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = {}): Array<ToolDefinition<any>> {
+export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = {}): Array<ToolDefinition<any, any>> {
   const roots = normalizeAllowedDirectories(options);
   const cwd = roots.cwd;
 
@@ -1558,12 +1638,13 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
   ];
 }
 
-export async function* query(
-  params: AgentOptions & {
+export async function* query<TContext = unknown>(
+  params: AgentOptions<TContext> & {
     prompt: string;
     stream?: boolean;
     outputFormat?: OutputFormat;
     signal?: AbortSignal;
+    context?: TContext;
   },
 ): AsyncGenerator<SDKMessage> {
   const agent = createAgent(params);
@@ -1571,20 +1652,26 @@ export async function* query(
     stream: params.stream,
     outputFormat: params.outputFormat,
     signal: params.signal,
+    context: params.context,
   });
 }
 
-export class Agent {
-  private readonly options: Required<Pick<AgentOptions, "maxTokens" | "maxTurns">> & AgentOptions;
+export class Agent<TContext = unknown> {
+  private readonly options: Required<Pick<AgentOptions<TContext>, "maxTokens" | "maxTurns">> & AgentOptions<TContext>;
   private readonly modelClient: ModelClient;
   private readonly messages: ModelMessage[] = [];
   private readonly sessionId = randomId();
 
-  constructor(options: AgentOptions) {
+  constructor(options: AgentOptions<TContext>) {
     if (!options.model) {
       throw new Error("AgentOptions.model is required");
     }
-    const configuredOptions = applyAgentWorkspaceOptions(options, this.sessionId);
+    const internalOptions = options as InternalAgentOptions<TContext>;
+    const publicOptions = { ...options } as InternalAgentOptions<TContext>;
+    delete publicOptions[BARE_AGENT_OPTIONS];
+    const configuredOptions = internalOptions[BARE_AGENT_OPTIONS]?.installWorkspace === false
+      ? publicOptions
+      : applyAgentWorkspaceOptions(publicOptions, this.sessionId);
     this.options = {
       maxTokens: 16384,
       maxTurns: 50,
@@ -1598,14 +1685,14 @@ export class Agent {
       });
   }
 
-  async *query(prompt: string | ContentBlock[], options: QueryOptions = {}): AsyncGenerator<SDKMessage> {
+  async *query(prompt: string | ContentBlock[], options: QueryOptions<TContext> = {}): AsyncGenerator<SDKMessage> {
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
-    const source: AgentRuntimeSource = options.runtime?.source ?? {
+    const source: AgentRuntimeSource = options.agentRuntime?.source ?? {
       kind: "agent",
       name: this.options.name ?? "agent",
     };
-    const effectivePermissions = options.runtime?.permissions ?? options.permissions;
+    const effectivePermissions = options.agentRuntime?.permissions ?? options.permissions;
     const systemPrompt = joinPromptSections([
       this.options.systemPrompt,
       formatRuntimePermissionInstructions(effectivePermissions),
@@ -1776,7 +1863,13 @@ export class Agent {
             input: block.input,
           },
         });
-        const result = await this.runTool(block, options.signal, options.runtime, options.permissions);
+        const result = await this.runTool(
+          block,
+          options.signal,
+          options.agentRuntime,
+          options.permissions,
+          options.context,
+        );
         if (result.error && !firstToolError) {
           firstToolError = result.error;
         }
@@ -1813,7 +1906,7 @@ export class Agent {
     }
   }
 
-  async prompt(prompt: string | ContentBlock[], options: QueryOptions = {}): Promise<SDKResultMessage> {
+  async prompt(prompt: string | ContentBlock[], options: QueryOptions<TContext> = {}): Promise<SDKResultMessage> {
     let finalResult: SDKResultMessage | undefined;
     for await (const message of this.query(prompt, options)) {
       if (message.type === "result") {
@@ -1826,7 +1919,7 @@ export class Agent {
     return finalResult;
   }
 
-  addTools(tools: Array<ToolDefinition<any>>): void {
+  addTools(tools: Array<ToolDefinition<any, TContext>>): void {
     this.options.tools = [...(this.options.tools ?? []), ...tools];
   }
 
@@ -1897,8 +1990,9 @@ export class Agent {
   private async runTool(
     block: ToolUseBlock,
     signal: AbortSignal | undefined,
-    runtime: AgentRuntimeContext | undefined,
+    agentRuntime: AgentRuntimeContext | undefined,
     permissions: RuntimePermissions | undefined,
+    context: TContext | undefined,
   ): Promise<{ block: ToolResultBlock; error?: Error }> {
     const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
     if (!definition) {
@@ -1933,8 +2027,9 @@ export class Agent {
       const output = await definition.handler(parsed, {
         signal,
         toolUseId: block.id,
-        runtime,
-        permissions: runtime?.permissions ?? permissions,
+        context,
+        agentRuntime,
+        permissions: agentRuntime?.permissions ?? permissions,
       });
       return {
         block: {
@@ -2167,7 +2262,7 @@ function parseWithSchema(schema: unknown, input: unknown): unknown {
   return input;
 }
 
-function isToolCapableAgentLike(agent: AgentLike): agent is ToolCapableAgentLike {
+function isToolCapableAgentLike(agent: AgentLike<any>): agent is ToolCapableAgentLike<any> {
   return "addTools" in agent && typeof agent.addTools === "function";
 }
 
@@ -2317,7 +2412,7 @@ type AgentLikeMessageEmitter = (
 ) => void;
 
 async function runAgentLikeToFinal(input: {
-  agent: AgentLike;
+  agent: AgentLike<any>;
   prompt: string | ContentBlock[];
   mailbox: TeamMailbox;
   source: AgentRuntimeSource;
@@ -2335,7 +2430,7 @@ async function runAgentLikeToFinal(input: {
     if (abortError) throw abortError;
 
     const acceptedHandoffs: AcceptedDelegateWork[] = [];
-    const runtime = createTeamRunnerRuntime({
+    const agentRuntime = createTeamRunnerRuntime({
       mailbox: input.mailbox,
       source: input.source,
       emit: input.emit,
@@ -2350,9 +2445,10 @@ async function runAgentLikeToFinal(input: {
       stream: input.queryOptions.stream,
       outputFormat: input.queryOptions.outputFormat,
       signal: input.queryOptions.signal,
+      context: input.queryOptions.context,
       tracer: input.queryOptions.tracer,
-      runtime,
-      permissions: runtime.permissions,
+      agentRuntime,
+      permissions: agentRuntime.permissions,
     })) {
       if (agentMessage.type === "result") {
         finalResult = agentMessage;
@@ -2778,7 +2874,7 @@ function createTeamTools(options: {
   mailbox: TeamMailbox;
   ownerMailboxId: string;
   resolveMailbox(target: string): string;
-}): Array<ToolDefinition<any>> {
+}): Array<ToolDefinition<any, any>> {
   const owner = options.ownerMailboxId;
   return [
     tool(
@@ -3420,6 +3516,58 @@ function recordLangSmithRunEvent(
       data: jsonSafeValue(event.data),
     },
   });
+}
+
+async function flushLangSmithClients(
+  options: LangSmithContextTracerOptions,
+  runs: Map<string, LangSmithTraceRunState>,
+): Promise<void> {
+  const clients = new Set<LangSmithFlushableClient>();
+  addLangSmithClient(clients, options.client);
+  for (const replica of [langSmithWriteReplica(options)]) {
+    if (replica && !Array.isArray(replica)) {
+      addLangSmithClient(clients, replica.client);
+    }
+  }
+  for (const state of runs.values()) {
+    collectLangSmithRunClients(state.root, clients);
+    if (state.pendingModel) {
+      collectLangSmithRunClients(state.pendingModel, clients);
+    }
+    for (const run of state.pendingTools.values()) {
+      collectLangSmithRunClients(run, clients);
+    }
+  }
+
+  for (const client of clients) {
+    await client.flush?.();
+    await client.awaitPendingTraceBatches?.();
+  }
+}
+
+function collectLangSmithRunClients(
+  run: LangSmithRunTreeLike,
+  clients: Set<LangSmithFlushableClient>,
+): void {
+  addLangSmithClient(clients, run.client);
+  for (const replica of run.replicas ?? []) {
+    if (Array.isArray(replica)) continue;
+    addLangSmithClient(clients, replica.client);
+  }
+  for (const child of run.child_runs ?? []) {
+    collectLangSmithRunClients(child, clients);
+  }
+}
+
+function addLangSmithClient(
+  clients: Set<LangSmithFlushableClient>,
+  value: unknown,
+): void {
+  if (!value || typeof value !== "object") return;
+  const candidate = value as LangSmithFlushableClient;
+  if (typeof candidate.flush === "function" || typeof candidate.awaitPendingTraceBatches === "function") {
+    clients.add(candidate);
+  }
 }
 
 function langSmithSourceName(source: AgentRuntimeSource): string {

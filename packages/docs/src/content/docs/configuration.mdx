@@ -77,6 +77,26 @@ const backendAgent = createAgent({
 
 The SDK automatically adds workspace tools and instructions telling the agent to report important paths and verification notes in natural language.
 
+## Bare agents
+
+Use `createBareAgent()` when the host wants a plain model loop with no default prompt, no default tools, and no workspace directory creation. This is useful for hosted applications that provide their own sandbox, tests that need exact tool lists, or wrappers that assemble capabilities themselves.
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey,
+  model,
+  systemPrompt: "You are a concise engineering assistant.",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+});
+```
+
+Most agents that produce durable files should use `createAgent()`. Choose `createBareAgent()` only when your application owns every capability explicitly.
+
 ## Abort a request
 
 ```ts

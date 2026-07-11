@@ -8,16 +8,16 @@ Permission callbacks let the host application decide whether a tool call should 
 The callback runs after the model asks to call a registered tool and before the tool input is parsed or the tool handler executes. Return `{ behavior: "allow" }` to run the tool, or return `{ behavior: "deny", message }` to block it.
 
 ```ts
-import { createAgent, createAgentWorkspaceTools } from "agent-lattice";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  tools: createAgentWorkspaceTools({
+  workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
-  }),
+  },
   permission: async request => {
     if (request.toolName === "Bash") {
       return {

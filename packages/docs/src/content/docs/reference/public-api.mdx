@@ -7,7 +7,8 @@ description: Stable exports exposed by the SDK package.
 
 | Export | Description |
 | --- | --- |
-| `createAgent(options)` | Creates an in-memory `Agent` instance. |
+| `createAgent(options)` | Creates an in-memory `Agent` with a private workspace and default workspace tools. |
+| `createBareAgent(options)` | Creates an in-memory `Agent` without default tools, workspace instructions, or workspace directory creation. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
 | `agentTool(name, target, metadata)` | Exposes another `AgentLike` as a model tool with explicit `ask`, `handoff`, or `observe` modes. |
@@ -25,6 +26,7 @@ description: Stable exports exposed by the SDK package.
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. It also continues accepted handoffs and resumes the caller with upstream replies before yielding the root final result. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
+| `createBuiltinTools(options)` | Creates the built-in file and shell tools for manual tool assembly. |
 | `createAgentWorkspaceTools(options)` | Creates opt-in file and shell workspace tools for agents. |
 
 ## Agent
@@ -37,6 +39,23 @@ for await (const message of agent.query(prompt)) {
 }
 
 const result = await agent.prompt(prompt);
+```
+
+Use `createAgent()` when the agent should have a private workspace for durable files and test evidence. Use `createBareAgent()` when the host wants a plain model loop and will pass every system prompt and tool explicitly:
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You are a concise engineering assistant.",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+});
 ```
 
 ### AgentOptions
@@ -56,6 +75,10 @@ const result = await agent.prompt(prompt);
 | `permission` | `function` | Callback that can allow or deny tool execution. |
 | `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
 | `tracer` | `ContextTracer` | Optional trace sink for agent context events. |
+
+### BareAgentOptions
+
+`createBareAgent()` accepts `BareAgentOptions`, which is `AgentOptions` without `workspace`. It does not add workspace instructions, create a default workspace directory, or register built-in tools unless you pass them in `tools`.
 
 ### QueryOptions
 
@@ -94,7 +117,11 @@ const agent = createAgent({
   tracer,
 });
 
-await agent.prompt("Trace this run.", { stream: false });
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
 ```
 
 `createJsonlContextTracer()` accepts either `path` for one explicit file or `dir`
@@ -112,6 +139,8 @@ multi-workspace API keys. You can pass `apiKey`, `apiUrl`, and `workspaceId`
 directly to `createLangSmithContextTracer()`; `workspaceId` is only for
 selecting a LangSmith workspace and is not the project name. If you need full
 LangSmith client customization, pass an explicit `Client` as `client`.
+In short-lived tests or scripts, close or flush the tracer in `finally` before
+the process exits so LangSmith receives the final root run patch.
 
 ## Types
 
@@ -121,7 +150,9 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
 | `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper. |
 | `AgentOptions` | Agent construction options. |
+| `BareAgentOptions` | Construction options for `createBareAgent()`, equivalent to `AgentOptions` without `workspace`. |
 | `AgentWorkspaceOptions` | String path or workspace configuration object accepted by `AgentOptions.workspace` to override the default workspace. |
+| `AgentWorkspaceToolsOptions` | `cwd`, write-root, and shell timeout options accepted by `createBuiltinTools()` and `createAgentWorkspaceTools()`. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |

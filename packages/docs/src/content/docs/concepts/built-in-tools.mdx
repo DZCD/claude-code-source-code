@@ -23,7 +23,25 @@ const agent = createAgent({
 });
 ```
 
-`createAgentWorkspaceTools()` returns the same `ToolDefinition[]` shown in the table below (`createAgent()` calls it internally). Call it directly when you want to assemble the tool list yourself instead of using the default workspace setup.
+`createBareAgent()` starts with no tools, no workspace instructions, and no default workspace directory. Use `createBuiltinTools()` when you want a bare agent but still want to opt into the SDK's built-in file and shell tools:
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "Use the configured project directory for file work.",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+    bashTimeoutMs: 30_000,
+  }),
+});
+```
+
+`createBuiltinTools()` and `createAgentWorkspaceTools()` return the same `ToolDefinition[]` shown below. `createAgentWorkspaceTools()` remains available for code that prefers the explicit workspace name.
 
 ## Included tools
 
@@ -53,4 +71,4 @@ permission: async request => {
 }
 ```
 
-`allowedDirectories` restricts which directories the file tools can reach, but it does not replace the host application's own permission policy.
+`allowedDirectories` restricts write roots for `Write`, `Edit`, and obvious shell writes. Read-only tools can inspect any path the host process can read. These checks do not replace the host application's own permission policy.

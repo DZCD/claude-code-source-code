@@ -8,16 +8,16 @@ description: 在工具执行前由宿主应用做允许、拒绝和策略校验�
 回调会在模型请求调用已注册工具之后、工具参数解析和工具 handler 执行之前运行。返回 `{ behavior: "allow" }` 会继续执行工具；返回 `{ behavior: "deny", message }` 会阻止本次工具调用。
 
 ```ts
-import { createAgent, createAgentWorkspaceTools } from "agent-lattice";
+import { createAgent } from "agent-lattice";
 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  tools: createAgentWorkspaceTools({
+  workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
-  }),
+  },
   permission: async request => {
     if (request.toolName === "Bash") {
       return {

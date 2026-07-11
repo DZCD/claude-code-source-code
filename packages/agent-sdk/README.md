@@ -31,6 +31,25 @@ for await (const message of agent.query("Say hello")) {
 }
 ```
 
+`createAgent()` includes a private workspace and the built-in file/shell tools
+by default. Use `createBareAgent()` when your host wants to provide every prompt
+and tool explicitly:
+
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  systemPrompt: "You are a concise engineering assistant.",
+  tools: createBuiltinTools({
+    cwd: process.cwd(),
+    allowedDirectories: [process.cwd()],
+  }),
+});
+```
+
 Pass `{ stream: false }` to disable model streaming for a query:
 
 ```ts
@@ -161,7 +180,16 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
   tracer,
 });
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
 ```
+
+Close or flush the LangSmith tracer before a short-lived test process exits so
+LangSmith receives the final root run patch.
 
 If you prefer explicit values over environment variables, pass them to the SDK
 tracer. `workspaceId` is optional and only selects a LangSmith workspace; it is
@@ -232,6 +260,53 @@ const agent = createAgent({
 
 const result = await agent.prompt("What is 2+2?");
 console.log(result.result);
+```
+
+## Business Context For Tools
+
+Pass host application data through `context`. The SDK gives that context to
+tool handlers, but does not automatically put it into the model transcript. The
+model sees the data only if a tool returns it.
+
+```ts
+import { createBareAgent, tool } from "agent-lattice";
+import { z } from "zod/v4";
+
+type QcContext = {
+  patientRecordId: string;
+  scoringStandardId: string;
+};
+
+const readPatientRecordInput = z.object({});
+const qcTool = tool<QcContext>();
+
+const readPatientRecord = qcTool(
+  "read_patient_record",
+  "Read the current patient record",
+  readPatientRecordInput,
+  async (_input, { context }) => {
+    return {
+      content: JSON.stringify({
+        patientRecordId: context?.patientRecordId,
+        scoringStandardId: context?.scoringStandardId,
+      }),
+    };
+  },
+);
+
+const agent = createBareAgent<QcContext>({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tools: [readPatientRecord],
+});
+
+const result = await agent.prompt("Review the current patient record.", {
+  context: {
+    patientRecordId: "ocr_123",
+    scoringStandardId: "tumor-treatment-process-v1",
+  },
+});
 ```
 
 ## Permission Callback
@@ -368,7 +443,7 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 `Agent` and `Team` satisfy the same `AgentLike` shape:
 
 ```ts
-type AgentLike = {
+type AgentLike<TContext = unknown> = {
   query(prompt, options?): AsyncGenerator<SDKMessage | TeamRunnerMessage>;
   prompt(prompt, options?): Promise<SDKResultMessage>;
 };
@@ -622,7 +697,8 @@ sends a diagnostic follow-up to the upstream mailbox.
 
 ## Agent Workspace Tools
 
-AgentLattice includes an opt-in set of workspace tools:
+`createAgent()` includes a private workspace and these built-in tools by
+default:
 
 - `Read`
 - `Write`
@@ -632,14 +708,18 @@ AgentLattice includes an opt-in set of workspace tools:
 - `Grep`
 - `Bash`
 
-```ts
-import { createAgent, createAgentWorkspaceTools } from "agent-lattice";
+Use `createBuiltinTools()` or `createAgentWorkspaceTools()` when you want to
+assemble the tool list yourself, especially with `createBareAgent()`:
 
-const agent = createAgent({
+```ts
+import { createBareAgent, createBuiltinTools } from "agent-lattice";
+
+const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   model: "deepseek-v4-flash",
-  tools: createAgentWorkspaceTools({
+  systemPrompt: "Use the configured project directory for file work.",
+  tools: createBuiltinTools({
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
   }),
@@ -652,12 +732,12 @@ const agent = createAgent({
 });
 ```
 
-These tools are not enabled by default. `Read`, `LS`, `Glob`, and `Grep` are
-read-only observation tools and are not gated by workspace grants. `Write`,
-`Edit`, and obvious Bash writes are gated to the configured workspace roots and
-task-scoped shared workspace grants, so production hosts should pair write and
-shell access with a permission callback. Shell redirects to `/dev/null` are
-treated as discard targets, not workspace writes.
+`Read`, `LS`, `Glob`, and `Grep` are read-only observation tools and are not
+gated by workspace grants. `Write`, `Edit`, and obvious Bash writes are gated to
+the configured workspace roots and task-scoped shared workspace grants, so
+production hosts should pair write and shell access with a permission callback.
+Shell redirects to `/dev/null` are treated as discard targets, not workspace
+writes.
 
 ## Multi-turn Session
 

@@ -96,7 +96,17 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
   tracer,
 });
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
 ```
+
+Close or flush the LangSmith tracer before a short-lived test process exits.
+This waits for LangSmith's internal trace batch queue, including the final root
+run patch that marks the run completed.
 
 If you prefer explicit values over environment variables, pass them to the SDK
 tracer. `workspaceId` is optional and only selects a LangSmith workspace; it is
@@ -142,6 +152,9 @@ const tracer = createCompositeContextTracer([
   }),
 ]);
 ```
+
+When a composite tracer contains LangSmith, close the composite tracer in the
+same `finally` block; it forwards `close()` to every child tracer.
 
 ## Event types
 

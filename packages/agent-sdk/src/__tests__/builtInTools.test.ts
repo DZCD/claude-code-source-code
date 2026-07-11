@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createAgentWorkspaceTools } from "../index.js";
+import { createAgentWorkspaceTools, createBuiltinTools } from "../index.js";
 
 const tempDirs: string[] = [];
 
@@ -27,8 +27,10 @@ describe("agent workspace tools", () => {
     const cwd = await tempWorkspace();
 
     const names = createAgentWorkspaceTools({ cwd }).map(tool => tool.name);
+    const builtinNames = createBuiltinTools({ cwd }).map(tool => tool.name);
 
     expect(names).toEqual(["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"]);
+    expect(builtinNames).toEqual(names);
   });
 
   test("Read reads files with optional offset and limit", async () => {
