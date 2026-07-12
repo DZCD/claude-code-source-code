@@ -97,12 +97,24 @@ export type AgentRuntimeDelegateInput = {
 };
 
 export type AgentRuntimeDelegateResult = {
-  status: "completed" | "accepted";
+  status: "completed" | "accepted" | "failed";
   content: string;
   request: TeamMessage;
   reply?: TeamMessage;
   result?: SDKResultMessage;
+  error?: AgentRuntimeFailure;
   workspaceGrants?: WorkspaceGrant[];
+};
+
+export type AgentRuntimeFailure = {
+  code:
+    | "max_turns_exceeded"
+    | "api_error"
+    | "tool_execution_error"
+    | "permission_denied"
+    | "agent_error";
+  message: string;
+  name: string;
 };
 
 // Access values are operation categories, not tool names. "write" covers
@@ -593,10 +605,11 @@ export type TeamRunnerSource = AgentRuntimeSource;
 
 export type TeamRunnerTeamMessage = {
   type: "team_message";
-  subtype: "sent" | "claimed" | "replied" | "followup" | "done" | "failed";
+  subtype: "sent" | "claimed" | "replied" | "followup" | "done" | "failed" | "cancelled";
   source: TeamRunnerSource;
   mailbox: string;
   message: TeamMessage;
+  error?: AgentRuntimeFailure;
 };
 
 export type TeamRunnerAgentMessage = {
@@ -2529,24 +2542,42 @@ async function runAgentLikeToFinal(input: {
     if (!finalResult) {
       throw new Error("AgentLike query completed without a result message");
     }
-    if (finalResult.is_error || acceptedHandoffs.length === 0) {
+    if (finalResult.is_error) {
+      await cancelAcceptedDelegateWork(acceptedHandoffs, input.mailbox, input.emit);
+      return finalResult;
+    }
+    if (acceptedHandoffs.length === 0) {
       return finalResult;
     }
 
     handoffRounds++;
     if (handoffRounds > 50) {
+      await cancelAcceptedDelegateWork(acceptedHandoffs, input.mailbox, input.emit);
       throw new Error("Team runner exceeded maximum handoff follow-up rounds (50)");
     }
 
     const replies: TeamMessage[] = [];
-    for (const handoff of acceptedHandoffs) {
-      const result = await executeDelegateWork({
-        ...handoff,
-        mailbox: input.mailbox,
-        emit: input.emit,
-        maxDelegateDepth: input.maxDelegateDepth,
-        queryOptions: input.queryOptions,
-      });
+    for (let index = 0; index < acceptedHandoffs.length; index++) {
+      const handoff = acceptedHandoffs[index]!;
+      let result: AgentRuntimeDelegateResult;
+      try {
+        result = await executeDelegateWork({
+          ...handoff,
+          mailbox: input.mailbox,
+          emit: input.emit,
+          maxDelegateDepth: input.maxDelegateDepth,
+          queryOptions: input.queryOptions,
+        });
+      } catch (error) {
+        if (error instanceof AbortError || abortErrorIfNeeded(input.queryOptions.signal)) {
+          await cancelAcceptedDelegateWork(
+            acceptedHandoffs.slice(index + 1),
+            input.mailbox,
+            input.emit,
+          );
+        }
+        throw error;
+      }
       if (result.reply) {
         replies.push(result.reply);
       }
@@ -2600,18 +2631,11 @@ async function executeDelegateWork(input: AcceptedDelegateWork & {
       emitAgentMessage: emitChildAgentMessage,
     });
   } catch (error) {
-    await input.mailbox.updateStatus(message.id, "failed");
-    const failed = await input.mailbox.get(message.id);
-    if (failed) {
-      input.emit({
-        type: "team_message",
-        subtype: "failed",
-        source: input.targetSource,
-        mailbox: input.targetMailbox,
-        message: failed,
-      });
+    if (error instanceof AbortError || abortErrorIfNeeded(input.queryOptions.signal)) {
+      await cancelDelegateWork(input, message);
+      throw error;
     }
-    throw error;
+    return failDelegateWork(input, message, error);
   } finally {
     input.emit({
       type: "team_agent",
@@ -2621,18 +2645,16 @@ async function executeDelegateWork(input: AcceptedDelegateWork & {
   }
 
   if (finalResult.is_error) {
-    await input.mailbox.updateStatus(message.id, "failed");
-    const failed = await input.mailbox.get(message.id);
-    if (failed) {
-      input.emit({
-        type: "team_message",
-        subtype: "failed",
-        source: input.targetSource,
-        mailbox: input.targetMailbox,
-        message: failed,
-      });
+    if (finalResult.subtype === "error_abort" || finalResult.error instanceof AbortError) {
+      await cancelDelegateWork(input, message);
+      throw finalResult.error ?? new AbortError(finalResult.result || "Delegated work aborted");
     }
-    throw finalResult.error ?? new Error(finalResult.result || `Delegate ${input.delegateInput.name} failed`);
+    return failDelegateWork(
+      input,
+      message,
+      finalResult.error ?? new Error(finalResult.result || `Delegate ${input.delegateInput.name} failed`),
+      finalResult,
+    );
   }
 
   await input.mailbox.updateStatus(message.id, "done");
@@ -2671,6 +2693,109 @@ async function executeDelegateWork(input: AcceptedDelegateWork & {
   };
 }
 
+async function failDelegateWork(
+  input: AcceptedDelegateWork & {
+    mailbox: TeamMailbox;
+    emit(message: TeamRunnerMessage): void;
+  },
+  message: TeamMessage,
+  error: unknown,
+  result?: SDKResultMessage,
+): Promise<AgentRuntimeDelegateResult> {
+  const failure = normalizeAgentRuntimeFailure(error);
+  await input.mailbox.updateStatus(message.id, "failed");
+  const failed = await input.mailbox.get(message.id) ?? { ...message, status: "failed" as const };
+  input.emit({
+    type: "team_message",
+    subtype: "failed",
+    source: input.targetSource,
+    mailbox: input.targetMailbox,
+    message: failed,
+    error: failure,
+  });
+
+  const content = [
+    `Delegated work assigned to ${input.delegateInput.name} failed.`,
+    `Error code: ${failure.code}`,
+    `Reason: ${failure.message}`,
+    "Decide whether to retry, revise the task, continue with partial results, or finish without this work item.",
+  ].join("\n");
+  const reply = await input.mailbox.send(input.targetMailbox, input.callerMailbox, content, {
+    threadId: message.threadId,
+    parentMessageId: message.id,
+    workItemId: message.workItemId,
+    upstreamMessageId: message.upstreamMessageId ?? message.id,
+    workItemRole: "upstream_report",
+    metadata: { status: "failed", error: failure },
+  });
+  input.emit({
+    type: "team_message",
+    subtype: "replied",
+    source: input.targetSource,
+    mailbox: input.callerMailbox,
+    message: reply,
+    error: failure,
+  });
+
+  return {
+    status: "failed",
+    content,
+    request: failed,
+    reply,
+    result,
+    error: failure,
+    workspaceGrants: input.workspaceGrants,
+  };
+}
+
+async function cancelDelegateWork(
+  input: AcceptedDelegateWork & {
+    mailbox: TeamMailbox;
+    emit(message: TeamRunnerMessage): void;
+  },
+  message: TeamMessage,
+): Promise<void> {
+  await input.mailbox.updateStatus(message.id, "cancelled");
+  const cancelled = await input.mailbox.get(message.id) ?? { ...message, status: "cancelled" as const };
+  input.emit({
+    type: "team_message",
+    subtype: "cancelled",
+    source: input.targetSource,
+    mailbox: input.targetMailbox,
+    message: cancelled,
+  });
+}
+
+async function cancelAcceptedDelegateWork(
+  handoffs: AcceptedDelegateWork[],
+  mailbox: TeamMailbox,
+  emit: (message: TeamRunnerMessage) => void,
+): Promise<void> {
+  for (const handoff of handoffs) {
+    const current = await mailbox.get(handoff.request.id);
+    if (!current || !["pending", "processing"].includes(current.status)) continue;
+    await cancelDelegateWork({ ...handoff, mailbox, emit }, current);
+  }
+}
+
+function normalizeAgentRuntimeFailure(error: unknown): AgentRuntimeFailure {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  const code = normalized instanceof MaxTurnsError
+    ? "max_turns_exceeded"
+    : normalized instanceof APIError
+      ? "api_error"
+      : normalized instanceof ToolPermissionDeniedError
+        ? "permission_denied"
+        : normalized instanceof ToolExecutionError
+          ? "tool_execution_error"
+          : "agent_error";
+  return {
+    code,
+    message: normalized.message,
+    name: normalized.name || "Error",
+  };
+}
+
 function emitRootAgentMessage(message: AgentLikeEvent, context: {
   source: AgentRuntimeSource;
   hasAcceptedHandoffs: boolean;
@@ -2680,7 +2805,7 @@ function emitRootAgentMessage(message: AgentLikeEvent, context: {
     context.emit(message);
     return;
   }
-  if (message.type === "result" && context.hasAcceptedHandoffs) {
+  if (message.type === "result" && !message.is_error && context.hasAcceptedHandoffs) {
     context.emit({
       type: "agent_message",
       source: context.source,

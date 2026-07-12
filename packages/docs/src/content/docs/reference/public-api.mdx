@@ -22,8 +22,8 @@ description: Stable exports exposed by the SDK package.
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
-| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. `team.query()` and `team.prompt()` continue accepted handoffs until the root lead returns a final result or the run terminates. |
-| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. It also continues accepted handoffs and resumes the caller with upstream replies before yielding the root final result. |
+| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. Member failures become upstream failure reports while other accepted handoffs continue; a run-wide abort cancels remaining accepted work. |
+| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. It isolates member work-item failures, resumes the caller with upstream reports, and yields the root final result. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
 | `createBuiltinTools(options)` | Creates the built-in file and shell tools for manual tool assembly. |
@@ -158,6 +158,7 @@ the process exits so LangSmith receives the final root run patch.
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
+| `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |

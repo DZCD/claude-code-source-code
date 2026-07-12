@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod/v4";
 import {
+  AbortError,
   agentTool,
   createAgent,
   createMemoryMailbox,
+  createTeam,
   createTeamRunner,
   delegateTool,
+  teamMember,
+  tool,
   type ContextTraceEvent,
   type ModelClient,
   type TeamRunnerMessage,
@@ -35,6 +40,215 @@ async function collect(iterable: AsyncIterable<TeamRunnerMessage>): Promise<Team
 }
 
 describe("team runner", () => {
+  test("isolates a failed handoff so other accepted work completes and the lead can decide", async () => {
+    const noopTool = tool(
+      "noop",
+      "No-op tool used to exhaust the worker turn limit.",
+      z.object({}),
+      async () => ({ content: "ok" }),
+    );
+    const workerA = createAgent({
+      apiKey: "test-key",
+      name: "worker-a",
+      model: "claude-test",
+      maxTurns: 1,
+      tools: [noopTool],
+      modelClient: {
+        async createMessage() {
+          return toolUseAssistant("toolu_worker_a", "noop", {});
+        },
+      },
+    });
+    let workerBCalls = 0;
+    const workerB = createAgent({
+      apiKey: "test-key",
+      name: "worker-b",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          workerBCalls++;
+          return textAssistant("worker-b completed");
+        },
+      },
+    });
+
+    let leadCalls = 0;
+    let leadSawFailure = false;
+    let leadSawSuccess = false;
+    const lead = createAgent({
+      apiKey: "test-key",
+      name: "lead",
+      model: "claude-test",
+      modelClient: {
+        async createMessage({ messages }) {
+          leadCalls++;
+          if (leadCalls === 1) {
+            return {
+              role: "assistant" as const,
+              content: [
+                { type: "tool_use" as const, id: "toolu_a", name: "worker_a", input: { mode: "handoff", task: "Run task A" } },
+                { type: "tool_use" as const, id: "toolu_b", name: "worker_b", input: { mode: "handoff", task: "Run task B" } },
+              ],
+            };
+          }
+          if (leadCalls === 2) {
+            return textAssistant("Both handoffs accepted");
+          }
+          const update = String(messages.at(-1)?.content ?? "");
+          leadSawFailure = update.includes("max_turns_exceeded") && update.includes("worker_a failed");
+          leadSawSuccess = update.includes("worker-b completed");
+          return textAssistant("Lead accepted the partial result and finished");
+        },
+      },
+    });
+    const team = createTeam({
+      name: "failure-isolation",
+      lead,
+      members: [
+        teamMember({ name: "worker_a", role: "executor", agent: workerA }),
+        teamMember({ name: "worker_b", role: "executor", agent: workerB }),
+      ],
+    });
+
+    const messages = await collect(team.query("Run both independent tasks."));
+    const workerAInbox = await team.mailbox.inbox("failure-isolation::worker_a", { status: "all" });
+    const workerBInbox = await team.mailbox.inbox("failure-isolation::worker_b", { status: "all" });
+    const managerInbox = await team.mailbox.inbox("manager", { status: "all" });
+
+    expect(workerAInbox[0]?.status).toBe("failed");
+    expect(workerBInbox[0]?.status).toBe("done");
+    expect(workerBCalls).toBe(1);
+    expect(leadSawFailure).toBe(true);
+    expect(leadSawSuccess).toBe(true);
+    expect(managerInbox).toHaveLength(2);
+    expect(managerInbox.find(message => message.metadata?.status === "failed")?.metadata?.error).toMatchObject({
+      code: "max_turns_exceeded",
+    });
+    expect(messages.some(message =>
+      message.type === "team_message" &&
+      message.subtype === "failed" &&
+      message.error?.code === "max_turns_exceeded"
+    )).toBe(true);
+    expect(messages.find(message => message.type === "result")).toMatchObject({
+      type: "result",
+      result: "Lead accepted the partial result and finished",
+      is_error: false,
+    });
+  });
+
+  test("cancels accepted work when the lead fails before handoffs execute", async () => {
+    let workerCalls = 0;
+    const worker = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          workerCalls++;
+          return textAssistant("should not run");
+        },
+      },
+    });
+    const lead = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      maxTurns: 1,
+      modelClient: {
+        async createMessage() {
+          return {
+            role: "assistant" as const,
+            content: [
+              { type: "tool_use" as const, id: "toolu_a", name: "worker_a", input: { mode: "handoff", task: "Run A" } },
+              { type: "tool_use" as const, id: "toolu_b", name: "worker_b", input: { mode: "handoff", task: "Run B" } },
+            ],
+          };
+        },
+      },
+    });
+    const team = createTeam({
+      name: "lead-failure-cleanup",
+      lead,
+      members: [
+        teamMember({ name: "worker_a", role: "executor", agent: worker }),
+        teamMember({ name: "worker_b", role: "executor", agent: worker }),
+      ],
+    });
+
+    const result = await team.prompt("Accept work and then exceed the turn limit.");
+    const workerAInbox = await team.mailbox.inbox("lead-failure-cleanup::worker_a", { status: "all" });
+    const workerBInbox = await team.mailbox.inbox("lead-failure-cleanup::worker_b", { status: "all" });
+
+    expect(result).toMatchObject({ type: "result", subtype: "error_max_turns", is_error: true });
+    expect(workerCalls).toBe(0);
+    expect(workerAInbox[0]?.status).toBe("cancelled");
+    expect(workerBInbox[0]?.status).toBe("cancelled");
+  });
+
+  test("global abort cancels the current and remaining accepted work", async () => {
+    const abortingWorker = {
+      async *query() {
+        yield {
+          type: "result" as const,
+          subtype: "error_abort" as const,
+          is_error: true as const,
+          result: "",
+          session_id: "aborted-worker",
+          num_turns: 0,
+          error: new AbortError("Team run aborted"),
+        };
+      },
+      async prompt(): Promise<never> {
+        throw new AbortError("Team run aborted");
+      },
+    };
+    let workerBCalls = 0;
+    const workerB = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          workerBCalls++;
+          return textAssistant("should not run after abort");
+        },
+      },
+    });
+    let leadCalls = 0;
+    const lead = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          leadCalls++;
+          if (leadCalls === 1) {
+            return {
+              role: "assistant" as const,
+              content: [
+                { type: "tool_use" as const, id: "toolu_a", name: "worker_a", input: { mode: "handoff", task: "Run A" } },
+                { type: "tool_use" as const, id: "toolu_b", name: "worker_b", input: { mode: "handoff", task: "Run B" } },
+              ],
+            };
+          }
+          return textAssistant("Both accepted");
+        },
+      },
+    });
+    const team = createTeam({
+      name: "abort-cleanup",
+      lead,
+      members: [
+        teamMember({ name: "worker_a", role: "executor", agent: abortingWorker }),
+        teamMember({ name: "worker_b", role: "executor", agent: workerB }),
+      ],
+    });
+
+    await expect(team.prompt("Run both.")).rejects.toBeInstanceOf(AbortError);
+    const workerAInbox = await team.mailbox.inbox("abort-cleanup::worker_a", { status: "all" });
+    const workerBInbox = await team.mailbox.inbox("abort-cleanup::worker_b", { status: "all" });
+
+    expect(workerBCalls).toBe(0);
+    expect(workerAInbox[0]?.status).toBe("cancelled");
+    expect(workerBInbox[0]?.status).toBe("cancelled");
+  });
+
   test("agentTool handoff returns a receipt to the caller and runner waits for final delivery", async () => {
     let engineeringCalls = 0;
     const engineeringAgent = createAgent({

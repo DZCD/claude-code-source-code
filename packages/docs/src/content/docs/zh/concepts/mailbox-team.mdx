@@ -65,6 +65,20 @@ console.log(result.result);
 
 `handoff` 的接收回执不是最终交付。它只表示工作已经进入 mailbox。后续生命周期由 team runtime 管理。
 
+## Handoff 失败隔离
+
+默认情况下，每个已接收的 handoff 都是相互隔离的工作项。如果某个成员返回 `MaxTurnsError`、`APIError` 等 Agent 错误，runtime 会：
+
+1. 把该成员的工作项标记为 `failed`；
+2. 输出一条 `subtype: "failed"` 的 `team_message` 事件，并附带归一化错误；
+3. 向 lead 发送失败报告，同时把错误写入 `message.metadata`；
+4. 继续执行其它已接收的 handoff；
+5. 把成功和失败报告一起交给 lead。
+
+随后由 lead 决定重试、修改任务、接受部分结果还是直接结束。单个成员工作项失败不会直接导致 `team.prompt()` reject。
+
+全局中止采用不同语义：`AbortError` 会终止 runner。向调用方抛出中止错误前，runtime 会把当前和剩余的已接收工作标记为 `cancelled`，避免工作项静默残留在 `pending` 状态。
+
 ## 成员 mailbox tools
 
 能够接收工具的成员会获得 mailbox tools，用于处理分配给自己的消息：

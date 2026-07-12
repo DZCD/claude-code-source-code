@@ -65,6 +65,20 @@ console.log(result.result);
 
 The receipt from `handoff` is not a final delivery. It is only proof that the work was accepted into the mailbox. The team runtime owns the lifecycle after that.
 
+## Handoff failure isolation
+
+Accepted handoffs are isolated work items by default. If one member returns an agent error such as `MaxTurnsError` or `APIError`, the runtime:
+
+1. marks that member's work item `failed`;
+2. emits a `team_message` event with `subtype: "failed"` and a normalized error;
+3. sends an upstream failure report to the lead with the same error in `message.metadata`;
+4. continues the other accepted handoffs; and
+5. resumes the lead with both successful and failed reports.
+
+The lead then decides whether to retry, revise the task, accept a partial result, or finish. `team.prompt()` does not reject only because one member work item failed.
+
+A run-wide abort is different: `AbortError` stops the runner. Before propagating the abort, the runtime marks the current and remaining accepted work `cancelled`, so accepted work does not silently remain `pending`.
+
 ## Mailbox tools for members
 
 Member agents that can accept tools receive mailbox tools for assigned work:

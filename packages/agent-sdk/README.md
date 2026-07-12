@@ -533,6 +533,14 @@ delivery: the runtime waits for the member's upstream reply, feeds it back to
 the lead, and keeps going until the root lead returns the final result or the
 run terminates.
 
+Accepted handoffs use work-item failure isolation by default. If one member
+returns an agent error such as `MaxTurnsError` or `APIError`, the runtime marks
+that work item `failed`, sends a failure report to the lead, and continues the
+other accepted handoffs. The lead receives successful and failed reports
+together and decides whether to retry, revise the task, accept a partial result,
+or finish. A run-wide `AbortError` still stops the runner; the runtime marks the
+current and remaining accepted work `cancelled` before propagating the abort.
+
 Team member tools can also request explicit shared workspace write grants:
 
 ```ts
