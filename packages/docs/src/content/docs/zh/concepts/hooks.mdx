@@ -1,0 +1,56 @@
+---
+title: Hooks
+description: 在工具结果和模型请求跨越 agent 循环边界时改写它们。
+---
+
+`permission` 和 `toolBatchPolicy` 决定**能不能执行**，hook 决定**执行成什么样**。用它来给工具输出脱敏、在请求前压缩上下文、或注入检索到的文档。
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  hooks: {
+    async onToolResult({ toolName, result }) {
+      if (toolName !== "queryDatabase") return; // 返回 undefined 表示不改
+      return { ...result, content: await redact(result.content) };
+    },
+    onModelRequest({ messages }) {
+      if (messages.length < 40) return;
+      return { messages: compact(messages) };
+    },
+  },
+});
+```
+
+## onToolResult
+
+每一个回填给模型的工具结果都会经过它——handler 成功、handler 抛错、被 abort 取消、被 `toolBatchPolicy` 拦下，四种情况全覆盖。上下文包含 `toolName`、`toolUseId`、模型发来的原始 `input`、SDK 原本要回填的 `result`，以及调用失败时的 `error`。
+
+返回一个替换的 `tool_result` 块，或者什么都不返回表示保持原样。通过设置返回值的 `is_error`，hook 可以把失败改写成成功，也可以反过来。
+
+**hook 不能增删工具调用。** 每个 `tool_use` 必须由恰好一个 `tool_result` 应答，破坏这个配对会被模型 API 直接拒绝。
+
+## onModelRequest
+
+在每次模型请求前执行，收到即将发出的 `messages` 和 `systemPrompt`，以及从 1 开始的 `turn`。可以返回 `{ messages }`、`{ systemPrompt }` 或两者。
+
+**它只影响这一次请求。** Agent 存储的对话历史不受影响，所以为了某一轮而裁剪上下文不会破坏性地丢掉对话——下一轮的 hook 仍然能看到完整历史。这与 skills 的注入语义一致。
+
+## 四条规则
+
+**返回替换值，不要就地修改。** hook 收到的是 SDK 即将使用的值，请返回一个替换而不是原地改写；不返回任何东西即表示不改。
+
+**hook 抛错会直接从 `query()` 抛出。** 它不会变成 `error` 类型的 `result`，也不会像 tracer 那样被吞掉。hook 出错属于宿主代码出错，而一个静默失败的脱敏 hook，等于泄漏了它本该保护的数据。可恢复的错误请在 hook 内部处理掉。
+
+**hook 在对应的 trace 事件之前执行。** 因此 trace 记录的是实际发出去的内容，而不是改写前的值。
+
+**hook 属于单个 Agent。** 它在 `createAgent()` 上设置，**不会**被委派的子 agent 或团队成员继承，那些需要各自配置。也没有按 query 覆盖的入口——一套随调用点变化的脱敏策略是无法审计的。
+
+## 组合
+
+```ts
+import { createCompositeAgentHooks } from "agent-lattice";
+
+const hooks = createCompositeAgentHooks([redactionHooks, truncationHooks, auditHooks]);
+```
+
+按数组顺序串联，后一个 hook 收到前一个的输出，因此脱敏、截断、审计可以各写各的再拼起来。数组里的 `undefined` 和 `null` 会被跳过，便于条件式组合。

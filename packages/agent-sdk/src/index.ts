@@ -337,6 +337,62 @@ export type ToolExecutionContext<TContext = unknown> = {
   permissions?: RuntimePermissions;
 };
 
+export type ToolResultHookContext<TContext = unknown> = {
+  toolName: string;
+  toolUseId: string;
+  /** Raw input as the model sent it, before the tool schema parsed it. */
+  input: unknown;
+  /** What the SDK would send back to the model. */
+  result: ToolResultBlock;
+  /** Present when the handler failed, was denied, or was cancelled. */
+  error?: Error;
+  context?: TContext;
+  source?: AgentRuntimeSource;
+  signal?: AbortSignal;
+};
+
+export type ModelRequestHookContext<TContext = unknown> = {
+  /** What the SDK would send. Not the stored history; see AgentHooks. */
+  messages: ModelMessage[];
+  systemPrompt?: string;
+  /** 1 for the first model request of the query. */
+  turn: number;
+  context?: TContext;
+  source?: AgentRuntimeSource;
+  signal?: AbortSignal;
+};
+
+export type ModelRequestHookResult = {
+  messages?: ModelMessage[];
+  systemPrompt?: string;
+};
+
+/**
+ * Lifecycle callbacks that can rewrite what crosses the agent loop's boundaries,
+ * as opposed to `permission` and `toolBatchPolicy`, which can only allow or deny.
+ *
+ * A hook returns a replacement, or nothing to leave the value unchanged; it must
+ * not mutate what it receives.
+ *
+ * A hook that throws propagates out of `query()` rather than being swallowed the
+ * way a tracer error is, or being reported as an error `result`. A hook failure
+ * is host code failing, like `ConcurrentQueryError`, not an upstream failure the
+ * loop can describe to the model — and a redaction hook that failed quietly
+ * would leak the data it exists to protect.
+ *
+ * Hooks run before the matching trace event, so traces record what was actually
+ * sent. `onModelRequest` shapes one request only and never edits the stored
+ * conversation, so trimming context for a long turn does not destroy history.
+ */
+export type AgentHooks<TContext = unknown> = {
+  onToolResult?(
+    context: ToolResultHookContext<TContext>,
+  ): ToolResultBlock | void | Promise<ToolResultBlock | void>;
+  onModelRequest?(
+    context: ModelRequestHookContext<TContext>,
+  ): ModelRequestHookResult | void | Promise<ModelRequestHookResult | void>;
+};
+
 export type ToolHandler<TInput = unknown, TContext = unknown> = (
   input: TInput,
   context: ToolExecutionContext<TContext>,
@@ -602,6 +658,8 @@ export type AgentOptions<TContext = unknown> = {
   requestTimeoutMs?: number;
   tools?: Array<ToolDefinition<any, TContext>>;
   toolBatchPolicy?: ToolBatchPolicy<TContext>;
+  /** Lifecycle callbacks that rewrite tool results and outgoing model requests. */
+  hooks?: AgentHooks<TContext>;
   toolConcurrency?: ToolConcurrencyOptions;
   skills?: SkillDefinition[];
   workspace?: AgentWorkspaceOptions;
@@ -1127,6 +1185,36 @@ export function createJsonlContextTracer(options: JsonlContextTracerOptions): Co
     },
   };
   return tracer;
+}
+
+/**
+ * Chains hooks in array order: each one sees the previous one's output, so
+ * redaction, truncation, and auditing can be written separately and combined.
+ * Unlike the composite tracer, a failure is not swallowed — see `AgentHooks`.
+ */
+export function createCompositeAgentHooks<TContext = unknown>(
+  hooks: Array<AgentHooks<TContext> | undefined | null>,
+): AgentHooks<TContext> {
+  const active = hooks.filter((hook): hook is AgentHooks<TContext> => Boolean(hook));
+  return {
+    async onToolResult(context) {
+      let result = context.result;
+      for (const hook of active) {
+        const replacement = await hook.onToolResult?.({ ...context, result });
+        if (replacement) result = replacement;
+      }
+      return result;
+    },
+    async onModelRequest(context) {
+      let { messages, systemPrompt } = context;
+      for (const hook of active) {
+        const replacement = await hook.onModelRequest?.({ ...context, messages, systemPrompt });
+        if (replacement?.messages) messages = replacement.messages;
+        if (replacement?.systemPrompt !== undefined) systemPrompt = replacement.systemPrompt;
+      }
+      return { messages, ...(systemPrompt !== undefined ? { systemPrompt } : {}) };
+    },
+  };
 }
 
 export function createCompositeContextTracer(tracers: Array<ContextTracer | undefined | null>): ContextTracer {
@@ -1993,7 +2081,23 @@ export class Agent<TContext = unknown> {
       turns++;
       let assistant: AssistantModelMessage;
       const streamEvents = new StreamEventQueue();
-      const modelMessages = this.messagesForModel(prompt);
+      let modelMessages = this.messagesForModel(prompt);
+      let systemPromptForTurn = systemPrompt;
+      const onModelRequest = this.options.hooks?.onModelRequest;
+      if (onModelRequest) {
+        // Shapes this request only: the stored conversation is untouched, so
+        // trimming context here cannot destroy history.
+        const replacement = await onModelRequest({
+          messages: modelMessages,
+          ...(systemPromptForTurn ? { systemPrompt: systemPromptForTurn } : {}),
+          turn: turns,
+          context: options.context,
+          source,
+          signal: options.signal,
+        });
+        if (replacement?.messages) modelMessages = replacement.messages;
+        if (replacement?.systemPrompt !== undefined) systemPromptForTurn = replacement.systemPrompt;
+      }
       const modelTools = this.modelTools();
       const stream = options.stream ?? true;
       const thinkingConfig = options.thinkingConfig ?? this.options.thinkingConfig;
@@ -2010,7 +2114,7 @@ export class Agent<TContext = unknown> {
         data: {
           model: this.options.model,
           max_tokens: this.options.maxTokens,
-          ...(systemPrompt ? { systemPrompt } : {}),
+          ...(systemPromptForTurn ? { systemPrompt: systemPromptForTurn } : {}),
           messages: modelMessages,
           tools: modelTools.map(tool => tool.name),
           permissions: traceRuntimePermissions(effectivePermissions),
@@ -2028,7 +2132,7 @@ export class Agent<TContext = unknown> {
         withDeadline(
           this.modelClient.createMessage({
             model: this.options.model,
-            systemPrompt,
+            systemPrompt: systemPromptForTurn,
             maxTokens: this.options.maxTokens,
             messages: modelMessages,
             tools: modelTools,
@@ -2167,7 +2271,27 @@ export class Agent<TContext = unknown> {
         });
       };
 
+      // Every result block reaches the model through here — handler success,
+      // handler failure, abort, and batch rejection alike — so the hook covers
+      // all of them, and runs before the trace event records what was sent.
       const finishToolExecution = async (result: ToolExecutionOutcome): Promise<ToolExecutionOutcome> => {
+        const onToolResult = this.options.hooks?.onToolResult;
+        if (onToolResult) {
+          const block = toolUseBlocks.find(candidate => candidate.id === result.block.tool_use_id);
+          const replacement = await onToolResult({
+            toolName: block?.name ?? "",
+            toolUseId: result.block.tool_use_id,
+            input: block?.input,
+            result: result.block,
+            ...(result.error ? { error: result.error } : {}),
+            context: options.context,
+            source,
+            signal: options.signal,
+          });
+          if (replacement) {
+            result = { ...result, block: replacement };
+          }
+        }
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "tool_result",

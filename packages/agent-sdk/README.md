@@ -416,6 +416,44 @@ policy, tool execution is unchanged. A policy prevents known bad combinations
 inside one model response, but it does not replace database transactions or
 revision checks against concurrent external updates.
 
+## Hooks
+
+`permission` and `toolBatchPolicy` decide whether something runs. Hooks decide
+what it looks like — redacting tool output, trimming context before a request,
+or injecting retrieved documents:
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+  tools: [queryDatabase],
+  hooks: {
+    async onToolResult({ toolName, result, error }) {
+      if (toolName !== "queryDatabase") return; // undefined: leave unchanged
+      return { ...result, content: await redact(result.content) };
+    },
+    onModelRequest({ messages, turn }) {
+      if (messages.length < 40) return;
+      return { messages: compact(messages) };
+    },
+  },
+});
+```
+
+`onToolResult` sees every result on its way to the model, including handler
+failures, aborted calls, and calls blocked by `toolBatchPolicy`. `onModelRequest`
+shapes a single request; the stored conversation is untouched, so trimming
+context does not destroy history.
+
+A hook returns a replacement or nothing, and must not mutate what it receives. A
+hook that throws propagates out of `query()` rather than becoming an error
+`result` — a redaction hook that failed quietly would leak the data it exists to
+protect. Hooks run before the matching trace event, so traces record what was
+actually sent.
+
+Compose independent concerns with `createCompositeAgentHooks([a, b, c])`, which
+chains them in order, each receiving the previous one's output.
+
 ## Business Context For Tools
 
 Pass host application data through `context`. The SDK gives that context to

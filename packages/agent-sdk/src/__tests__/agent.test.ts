@@ -12,6 +12,7 @@ import {
   createAgent,
   createBareAgent,
   createBuiltinTools,
+  createCompositeAgentHooks,
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
@@ -1500,6 +1501,210 @@ describe("agent-sdk", () => {
       type: "stream_event",
       event: { type: "content_block_delta", delta: { text: "hello" } },
     });
+  });
+
+  test("onToolResult rewrites what the model actually receives", async () => {
+    const sentToModel: unknown[] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("secrets", "Returns secrets", z.object({}), async () => ({ content: "ssn=123-45-6789" }))],
+      hooks: {
+        onToolResult({ toolName, result }) {
+          expect(toolName).toBe("secrets");
+          return { ...result, content: String(result.content).replace(/\d{3}-\d{2}-\d{4}/, "[redacted]") };
+        },
+      },
+      modelClient: {
+        async createMessage({ messages }) {
+          sentToModel.push(messages.at(-1)?.content);
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "secrets", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+
+    // The redacted value, not the original, is what reached the model.
+    expect(JSON.stringify(sentToModel.at(-1))).toContain("[redacted]");
+    expect(JSON.stringify(sentToModel.at(-1))).not.toContain("123-45-6789");
+    const userMessage = messages.find(message => message.type === "user");
+    expect(JSON.stringify(userMessage)).not.toContain("123-45-6789");
+  });
+
+  test("onToolResult sees handler failures and can turn one into a success", async () => {
+    const seen: Array<string | undefined> = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("flaky", "Throws", z.object({}), async () => { throw new Error("upstream 503"); })],
+      hooks: {
+        onToolResult({ result, error }) {
+          seen.push(error?.message);
+          return { ...result, content: "cached fallback", is_error: false };
+        },
+      },
+      modelClient: {
+        async createMessage() {
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "flaky", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+
+    expect(seen[0]).toContain("upstream 503");
+    const userMessage = messages.find(message => message.type === "user");
+    expect(JSON.stringify(userMessage)).toContain("cached fallback");
+  });
+
+  test("onToolResult runs before the tool_result trace event", async () => {
+    const trace: ContextTraceEvent[] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("noisy", "Noisy", z.object({}), async () => ({ content: "original" }))],
+      hooks: { onToolResult: ({ result }) => ({ ...result, content: "rewritten" }) },
+      modelClient: {
+        async createMessage() {
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "noisy", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("go", { tracer: { onEvent(event) { trace.push(event); } } });
+
+    const toolResult = trace.find(event => event.type === "tool_result");
+    expect(toolResult?.data.content).toBe("rewritten");
+  });
+
+  test("onToolResult also covers the batch-rejection path", async () => {
+    const seen: string[] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("blocked", "Blocked", z.object({}), async () => ({ content: "never runs" }))],
+      toolBatchPolicy: {
+        validate: () => ({ allowed: false, code: "nope", message: "not allowed" }),
+      },
+      hooks: {
+        onToolResult({ toolName, result }) {
+          seen.push(toolName);
+          return { ...result, content: "policy explained to the model" };
+        },
+      },
+      modelClient: {
+        async createMessage() {
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "blocked", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+
+    expect(seen).toEqual(["blocked"]);
+    expect(JSON.stringify(messages.find(message => message.type === "user"))).toContain(
+      "policy explained to the model",
+    );
+  });
+
+  test("onModelRequest shapes the request without editing stored history", async () => {
+    const sentCounts: number[] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      hooks: {
+        onModelRequest({ messages, turn: turnNumber }) {
+          sentCounts.push(messages.length);
+          // Send only the newest message, mimicking aggressive compaction.
+          return { messages: messages.slice(-1), systemPrompt: `turn ${turnNumber}` };
+        },
+      },
+      modelClient: {
+        async createMessage({ messages, systemPrompt }) {
+          turn++;
+          expect(messages.length).toBe(1);
+          expect(systemPrompt).toBe(`turn ${turn}`);
+          return turn === 1 ? toolUseAssistant("toolu_1", "noop", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("go");
+
+    // The hook saw a growing history each turn, proving nothing was discarded.
+    expect(sentCounts).toEqual([1, 3]);
+  });
+
+  test("a throwing hook fails the query instead of being swallowed", async () => {
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      hooks: {
+        onToolResult() {
+          throw new Error("redaction backend unavailable");
+        },
+      },
+      modelClient: {
+        async createMessage() {
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "noop", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    await expect(agent.prompt("go")).rejects.toThrow("redaction backend unavailable");
+  });
+
+  test("createCompositeAgentHooks chains hooks in order", async () => {
+    const order: string[] = [];
+    const hooks = createCompositeAgentHooks([
+      {
+        onToolResult: ({ result }) => {
+          order.push("first");
+          return { ...result, content: `${result.content}+first` };
+        },
+      },
+      undefined,
+      {
+        onToolResult: ({ result }) => {
+          order.push("second");
+          // Sees the first hook's output, not the original.
+          expect(result.content).toBe("base+first");
+          return { ...result, content: `${result.content}+second` };
+        },
+      },
+    ]);
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "base" }))],
+      hooks,
+      modelClient: {
+        async createMessage() {
+          turn++;
+          return turn === 1 ? toolUseAssistant("toolu_1", "noop", {}) : textAssistant("done");
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+
+    expect(order).toEqual(["first", "second"]);
+    expect(JSON.stringify(messages.find(message => message.type === "user"))).toContain("base+first+second");
   });
 
   test("bounds a model client that ignores the abort signal", async () => {

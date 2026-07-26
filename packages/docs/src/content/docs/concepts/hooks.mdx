@@ -1,0 +1,56 @@
+---
+title: Hooks
+description: Rewrite tool results and outgoing model requests as they cross the agent loop.
+---
+
+`permission` and `toolBatchPolicy` decide whether something runs. Hooks decide what it looks like. Use them to redact tool output, trim context before a request, or inject retrieved documents.
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  hooks: {
+    async onToolResult({ toolName, result }) {
+      if (toolName !== "queryDatabase") return; // undefined: leave unchanged
+      return { ...result, content: await redact(result.content) };
+    },
+    onModelRequest({ messages }) {
+      if (messages.length < 40) return;
+      return { messages: compact(messages) };
+    },
+  },
+});
+```
+
+## onToolResult
+
+Runs for every tool result on its way back to the model — successful handlers, failed ones, calls cancelled by an abort, and calls blocked by `toolBatchPolicy`. The context carries `toolName`, `toolUseId`, the raw `input` the model sent, the `result` block the SDK would return, and `error` when the call failed.
+
+Return a replacement `tool_result` block, or nothing to keep the original. A hook can turn a failure into a success, or a success into an error, by setting `is_error` on what it returns.
+
+A hook cannot add or remove tool calls. Each `tool_use` must be answered by exactly one `tool_result`, and breaking that pairing is rejected by the model API.
+
+## onModelRequest
+
+Runs before each model request, receiving the `messages` and `systemPrompt` that would be sent plus the 1-based `turn`. Return `{ messages }`, `{ systemPrompt }`, or both.
+
+This shapes **one request only**. The agent's stored conversation is untouched, so trimming context for a long turn does not destroy history — the next turn's hook still sees everything. This matches how skills are injected.
+
+## Rules
+
+**Return, do not mutate.** A hook receives the value the SDK is about to use. Return a replacement instead of editing it in place; returning nothing means no change.
+
+**A hook that throws propagates out of `query()`.** It does not become an error `result`, and it is not swallowed the way a tracer error is. A hook failure is host code failing, and a redaction hook that failed quietly would leak exactly the data it exists to protect. Handle recoverable errors inside the hook.
+
+**Hooks run before the matching trace event.** A trace therefore records what was actually sent, not the value before rewriting.
+
+**Hooks belong to one Agent.** They are set on `createAgent()` and are not inherited by delegated agents or team members; give those their own. There is no per-query override — a redaction policy that varied by call site would not be auditable.
+
+## Composing
+
+```ts
+import { createCompositeAgentHooks } from "agent-lattice";
+
+const hooks = createCompositeAgentHooks([redactionHooks, truncationHooks, auditHooks]);
+```
+
+Hooks are chained in array order, and each one receives the previous one's output, so separate concerns can be written independently and combined. `undefined` and `null` entries are skipped, which makes conditional composition straightforward.

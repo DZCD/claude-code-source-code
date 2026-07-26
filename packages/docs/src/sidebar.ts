@@ -33,6 +33,7 @@ export const sidebar: SidebarGroup[] = [
       { label: "Streaming Events", translations: { "zh-CN": "流式事件" }, slug: "concepts/streaming-events" },
       { label: "Context Tracing", translations: { "zh-CN": "上下文追踪" }, slug: "concepts/context-tracing" },
       { label: "Tools", translations: { "zh-CN": "工具" }, slug: "concepts/tools" },
+      { label: "Hooks", slug: "concepts/hooks" },
       { label: "MCP", slug: "concepts/mcp" },
       { label: "Skills", translations: { "zh-CN": "技能" }, slug: "concepts/skills" },
       { label: "Delegation and Teams", translations: { "zh-CN": "子智能体委派和团队" }, slug: "concepts/multi-agent" },

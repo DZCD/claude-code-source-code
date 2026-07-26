@@ -21,6 +21,7 @@ description: Stable exports exposed by the SDK package.
 | `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
+| `createCompositeAgentHooks(hooks)` | Chains hooks in array order; each receives the previous one's output. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. After the lead queues a handoff batch, members run before the lead model is called again. Set `runner.maxConcurrentWorkItems` for bounded cross-member concurrency; the default is `1`. |
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. Accepts `maxConcurrentWorkItems`; member failures stay isolated and a run-wide abort cancels remaining work. |
@@ -74,6 +75,7 @@ const agent = createBareAgent({
 | `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
+| `hooks` | `AgentHooks` | Lifecycle callbacks that rewrite tool results and outgoing model requests. Not inherited by delegated agents. |
 | `toolConcurrency` | `ToolConcurrencyOptions` | Tool-call scheduling. Defaults to `{ mode: "safe", maxConcurrency: 10 }`; undeclared tools stay sequential. |
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Optional override for the private agent workspace. Defaults to `~/.agent/workspaces/<name>` when `name` is set, otherwise `~/.agent/workspaces/agent-<session-id>`. |
@@ -185,6 +187,10 @@ IDs remain available as `agent_session_id` metadata.
 | `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check. |
 | `ToolConcurrencyMode` | Tool scheduling mode: `"safe"`, `"all"`, or `"sequential"`. |
 | `ToolConcurrencyOptions` | Agent tool scheduling mode and positive `maxConcurrency` limit. |
+| `AgentHooks` | Lifecycle callbacks accepted by `AgentOptions.hooks`: `onToolResult` and `onModelRequest`. A hook that throws propagates out of `query()`. |
+| `ToolResultHookContext` | `onToolResult` input: tool name, raw input, the result block, and the error when the call failed. |
+| `ModelRequestHookContext` | `onModelRequest` input: the messages and system prompt about to be sent, plus the turn number. |
+| `ModelRequestHookResult` | Replacement `messages` and/or `systemPrompt` for one request; the stored history is untouched. |
 | `ToolBatchPolicy` | Optional Agent policy that validates a complete tool-call batch before execution. |
 | `ToolBatchPolicyContext` | Policy input containing source, host context, signal, and tool calls with `tool` or `agent_tool` kind. |
 | `ToolBatchPolicyResult` | Allows a batch or rejects it with a code, message, conflicting call IDs, and suggested next step. |
