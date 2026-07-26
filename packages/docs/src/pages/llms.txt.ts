@@ -2,6 +2,7 @@ import type { APIRoute } from "astro";
 import { getCollection } from "astro:content";
 import { sidebar } from "../sidebar";
 import { isEnglish, isSplash, markdownUrl, type DocEntry } from "../lib/page-markdown";
+import { VERSION_NOTE } from "../lib/sdk-version";
 
 const INTRO = `# AgentLattice
 
@@ -10,6 +11,8 @@ const INTRO = `# AgentLattice
 AgentLattice runs an agent loop against any Anthropic-compatible model, executes
 tools you define, and coordinates several agents through supervisor delegation or
 durable mailbox teams. Install it with \`npm install agent-lattice zod\`.
+
+${VERSION_NOTE}
 
 Every link below serves clean Markdown. Fetch the page that matches the task at
 hand, or read llms-full.txt for the whole documentation in one request.`;

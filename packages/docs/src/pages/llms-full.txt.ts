@@ -2,6 +2,7 @@ import type { APIRoute } from "astro";
 import { getCollection } from "astro:content";
 import { sidebar } from "../sidebar";
 import { isEnglish, isSplash, pageMarkdown, type DocEntry } from "../lib/page-markdown";
+import { VERSION_NOTE } from "../lib/sdk-version";
 
 const INTRO = `# AgentLattice — full documentation
 
@@ -9,7 +10,9 @@ const INTRO = `# AgentLattice — full documentation
 
 Every English documentation page, in sidebar order. Install with
 \`npm install agent-lattice zod\`. Individual pages are also available as
-Markdown at their own URLs; see llms.txt for the index.`;
+Markdown at their own URLs; see llms.txt for the index.
+
+${VERSION_NOTE}`;
 
 export const GET: APIRoute = async () => {
   const entries = await getCollection("docs");
