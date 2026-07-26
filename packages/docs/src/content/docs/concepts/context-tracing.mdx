@@ -139,6 +139,11 @@ LangSmith receives:
 | `tool_use` to `tool_result` | Child `tool` run. |
 | `team_message` and other auxiliary events | Run events on the active chain. |
 
+Each run's duration reflects the work itself. A `tool` run starts when that
+handler starts, so sequential calls appear one after another and concurrent
+calls overlap. An `llm` run ends when the model request settles, not when the
+host finishes consuming the events yielded from it.
+
 Use `createCompositeContextTracer()` to send the same trace stream to multiple
 sinks:
 

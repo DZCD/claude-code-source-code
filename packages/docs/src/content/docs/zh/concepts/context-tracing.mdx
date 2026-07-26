@@ -135,6 +135,10 @@ LangSmith 会收到这样的投影：
 | `tool_use` 到 `tool_result` | 子 `tool` run。 |
 | `team_message` 和其它辅助事件 | 当前 chain 上的 run event。 |
 
+每个 run 的耗时对应真实的执行时间。`tool` run 从该工具的 handler 真正开始时计时，
+所以串行调用在时间轴上依次排开，并发调用才会重叠。`llm` run 在模型请求结束时收尾，
+不包含宿主消费流式事件所花的时间。
+
 可以用 `createCompositeContextTracer()` 把同一份 trace stream 同时发送到多个
 sink：
 

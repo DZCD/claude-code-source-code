@@ -2072,7 +2072,10 @@ export class Agent<TContext = unknown> {
       const batchError = batchRejection
         ? new ToolBatchRejectedError(batchRejection)
         : undefined;
-      for (const block of toolUseBlocks) {
+      // Emitted per call at its own start rather than for the whole batch up
+      // front, so a trace shows when each tool really began and which calls
+      // overlapped.
+      const startToolExecution = async (block: ToolUseBlock): Promise<void> => {
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "tool_use",
@@ -2082,7 +2085,7 @@ export class Agent<TContext = unknown> {
             input: block.input,
           },
         });
-      }
+      };
 
       const finishToolExecution = async (result: ToolExecutionOutcome): Promise<ToolExecutionOutcome> => {
         await emitTraceEvent(tracer, {
@@ -2097,15 +2100,18 @@ export class Agent<TContext = unknown> {
         });
         return result;
       };
-      const executeTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> =>
-        finishToolExecution(await this.runTool(
+      const executeTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> => {
+        await startToolExecution(block);
+        return finishToolExecution(await this.runTool(
           block,
           options.signal,
           options.agentRuntime,
           options.permissions,
           options.context,
         ));
+      };
       const cancelTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> => {
+        await startToolExecution(block);
         const error = new AbortError(`Tool ${block.name} was not started because the operation was aborted`);
         return finishToolExecution({
           block: {
@@ -2122,6 +2128,7 @@ export class Agent<TContext = unknown> {
       if (batchRejection && batchError) {
         executionResults = [];
         for (const block of toolUseBlocks) {
+          await startToolExecution(block);
           executionResults.push(await finishToolExecution({
             block: {
               type: "tool_result",

@@ -520,6 +520,56 @@ describe("agent-sdk", () => {
     )).toEqual(["id_c", "id_b", "id_a"]);
   });
 
+  test("traces each tool call from its own start rather than the batch start", async () => {
+    const emptySchema = z.object({});
+    const trace: ContextTraceEvent[] = [];
+    const slowTool = (name: string) => tool(name, `Slow tool ${name}`, emptySchema, async () => {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return { content: name };
+    });
+    let modelCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      // Neither tool declares isConcurrencySafe, so they run one after another.
+      tools: [slowTool("alpha"), slowTool("beta")],
+      modelClient: {
+        async createMessage() {
+          modelCalls++;
+          return modelCalls === 1
+            ? toolUseBatchAssistant([
+                { id: "id_alpha", name: "alpha" },
+                { id: "id_beta", name: "beta" },
+              ])
+            : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("run", { tracer: { onEvent(event) { trace.push(event); } } });
+
+    // A batch-level stamp would interleave as use, use, result, result and give
+    // both tools the same start time.
+    expect(trace.filter(event => event.type === "tool_use" || event.type === "tool_result")
+      .map(event => `${event.type}:${event.data.id ?? event.data.tool_use_id}`))
+      .toEqual([
+        "tool_use:id_alpha",
+        "tool_result:id_alpha",
+        "tool_use:id_beta",
+        "tool_result:id_beta",
+      ]);
+
+    const at = (type: string, id: string) => Date.parse(
+      trace.find(event => event.type === type && (event.data.id ?? event.data.tool_use_id) === id)!.timestamp,
+    );
+    // beta starts only after alpha finishes, so its traced duration must not
+    // swallow alpha's runtime.
+    expect(at("tool_use", "id_beta")).toBeGreaterThanOrEqual(at("tool_result", "id_alpha"));
+    expect(at("tool_result", "id_beta") - at("tool_use", "id_beta")).toBeLessThan(
+      at("tool_result", "id_beta") - at("tool_use", "id_alpha"),
+    );
+  });
+
   test("createAgent all mode limits concurrency and allows repeated calls to one tool", async () => {
     let active = 0;
     let maxActive = 0;
