@@ -28,3 +28,40 @@ const result = await agent.prompt("What kind of project is this?");
 ```
 
 `maxTurns` defaults to `50` and protects the host application from infinite tool loops. It counts model requests. Tool executions, permission callbacks, and stream events do not increment it. When the limit is reached, the SDK emits a result with `subtype: "error_max_turns"`.
+
+## One Agent holds one conversation
+
+An `Agent` is a conversation, not a reusable client. Its message history is instance state, so a second query started while one is still running would interleave turns from both. The SDK rejects that second query with `ConcurrentQueryError` rather than corrupting either conversation.
+
+Create one Agent per concurrent conversation. In a server, that means constructing an Agent per request or per user session, not sharing a module-level instance:
+
+```ts
+// Wrong: every request appends to the same history.
+const shared = createAgent({ model: "claude-sonnet-4-6" });
+app.post("/ask", async req => shared.prompt(req.body.question));
+
+// Right: one conversation per caller.
+app.post("/ask", async req => {
+  const agent = createAgent({ model: "claude-sonnet-4-6" });
+  return agent.prompt(req.body.question);
+});
+```
+
+Sequential reuse is fine and is how multi-turn conversations work: await one query before starting the next, as in the example above. The guard releases when a query finishes, including on error or abort.
+
+## Token usage and truncation
+
+Every `result` message carries `usage`, summed over the model requests in that query, and `stop_reason` from the last response:
+
+```ts
+const result = await agent.prompt("Summarize this file.");
+console.log(result.usage); // { input_tokens, output_tokens, cache_read_input_tokens?, ... }
+
+if (result.stop_reason === "max_tokens") {
+  // subtype is still "success", but result is a fragment, not an answer.
+}
+```
+
+`stop_reason: "max_tokens"` means the model ran out of output budget mid-response. The SDK does not treat that as an error, so checking it is the only way to tell a complete answer from a truncated one. Raise `maxTokens` or ask for less output.
+
+Usage is reported by the model client. The built-in Anthropic client fills it in; a custom `ModelClient` that omits `usage` yields zeroed counts rather than an error.

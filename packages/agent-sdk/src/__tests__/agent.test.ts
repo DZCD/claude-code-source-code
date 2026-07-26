@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import {
   AbortError,
+  ConcurrentQueryError,
   MaxTurnsError,
   ToolExecutionError,
   createAgent,
@@ -1498,6 +1499,107 @@ describe("agent-sdk", () => {
       type: "stream_event",
       event: { type: "content_block_delta", delta: { text: "hello" } },
     });
+  });
+
+  test("rejects a second query while one is still running", async () => {
+    const modelClient: ModelClient = {
+      async createMessage() {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return textAssistant("ok");
+      },
+    };
+    const agent = createAgent({ apiKey: "test-key", model: "claude-test", modelClient });
+
+    const [first, second] = await Promise.allSettled([
+      agent.prompt("QUESTION-A"),
+      agent.prompt("QUESTION-B"),
+    ]);
+
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    expect((second as PromiseRejectedResult).reason).toBeInstanceOf(ConcurrentQueryError);
+    // The guard releases, so the instance stays usable for the next turn.
+    await agent.prompt("QUESTION-B");
+  });
+
+  test("reports token usage and stop_reason from an Anthropic stream", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          [
+            { type: "message_start", message: { type: "message", role: "assistant", content: [], usage: { input_tokens: 1200, output_tokens: 0, cache_read_input_tokens: 800 } } },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "cut off here" } },
+            { type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 512 } },
+            { type: "message_stop" },
+          ]
+            .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    });
+
+    try {
+      const agent = createAgent({ apiKey: "test-key", baseURL: server.url.origin, model: "claude-test" });
+      const result = await agent.prompt("go");
+
+      // A truncated response still reports success, so stop_reason is the only
+      // way a host can tell the text is a fragment.
+      expect(result.subtype).toBe("success");
+      expect(result.stop_reason).toBe("max_tokens");
+      expect(result.usage).toEqual({
+        input_tokens: 1200,
+        output_tokens: 512,
+        cache_read_input_tokens: 800,
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("sums usage across the turns of one query", async () => {
+    let turn = 0;
+    const modelClient: ModelClient = {
+      async createMessage() {
+        turn++;
+        return turn === 1
+          ? {
+              ...toolUseAssistant("toolu_1", "noop", {}),
+              usage: { input_tokens: 100, output_tokens: 10 },
+              stopReason: "tool_use" as const,
+            }
+          : {
+              ...textAssistant("done"),
+              usage: { input_tokens: 150, output_tokens: 20 },
+              stopReason: "end_turn" as const,
+            };
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(result.usage).toEqual({ input_tokens: 250, output_tokens: 30 });
+    expect(result.stop_reason).toBe("end_turn");
+  });
+
+  test("reports zeroed usage when the model client does not supply any", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("hello")]),
+    });
+
+    const result = await agent.prompt("hi");
+
+    expect(result.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
+    expect(result.stop_reason).toBeUndefined();
   });
 
   test("delivers stream events while the model request is still running", async () => {

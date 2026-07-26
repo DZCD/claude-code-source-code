@@ -168,6 +168,8 @@ IDs remain available as `agent_session_id` metadata.
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
+| `TokenUsage` | Token counts reported on `SDKResultMessage.usage` and `AssistantModelMessage.usage`. |
+| `StopReason` | Why the model stopped. `"max_tokens"` means the response was truncated mid-way. |
 | `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
 | `TeamRunnerConfig` | Team runtime limits: `maxDelegateDepth` and `maxConcurrentWorkItems`. Concurrency defaults to `1`, and the same target mailbox remains serial. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
@@ -213,3 +215,4 @@ IDs remain available as `agent_session_id` metadata.
 | `MaxTurnsError` | Agent loop reached `maxTurns`. |
 | `AbortError` | Request was aborted. |
 | `ToolBatchRejectedError` | Tool batch was rejected before any tool executed. |
+| `ConcurrentQueryError` | A second query was started while the Agent was still running one. An Agent holds one conversation. |

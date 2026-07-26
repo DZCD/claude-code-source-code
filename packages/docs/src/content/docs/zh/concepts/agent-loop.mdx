@@ -27,6 +27,43 @@ const result = await agent.prompt("我叫什么？");
 
 这个状态只在当前进程和当前实例里存在。持久化 transcript、resume、跨进程 session 不属于第一版核心能力，可以由宿主应用自己实现。
 
+## 一个 Agent 只承载一个会话
+
+`Agent` 是一个会话，不是可复用的客户端。对话历史是实例状态，因此在一次 query 还没结束时再发起第二次，两个会话的轮次会互相穿插。SDK 会用 `ConcurrentQueryError` 拒绝第二次调用，而不是让两边的对话都被污染。
+
+并发多少个会话，就创建多少个 Agent。在服务端意味着按请求或按用户会话构造，而不是共享一个模块级实例：
+
+```ts
+// 错误：每个请求都往同一份历史里追加。
+const shared = createAgent({ model: "claude-sonnet-4-6" });
+app.post("/ask", async req => shared.prompt(req.body.question));
+
+// 正确：一个调用方一个会话。
+app.post("/ask", async req => {
+  const agent = createAgent({ model: "claude-sonnet-4-6" });
+  return agent.prompt(req.body.question);
+});
+```
+
+顺序复用没有问题，多轮对话正是这样工作的——等上一次 query 结束再发起下一次，就像上面那个记名字的例子。query 结束时守卫会释放，出错和中断也一样。
+
+## Token 用量与截断
+
+每个 `result` 都带 `usage`（该次 query 内所有模型请求的合计）和最后一次响应的 `stop_reason`：
+
+```ts
+const result = await agent.prompt("总结这个文件。");
+console.log(result.usage); // { input_tokens, output_tokens, cache_read_input_tokens?, ... }
+
+if (result.stop_reason === "max_tokens") {
+  // subtype 仍然是 "success"，但 result 是被截断的片段，不是完整答案。
+}
+```
+
+`stop_reason: "max_tokens"` 表示模型在输出预算用尽时被截断。SDK 不把它当作错误，所以**检查这个字段是区分完整答案和截断片段的唯一方式**。遇到时调大 `maxTokens` 或让模型少输出。
+
+用量由 model client 上报。内置的 Anthropic 客户端会填好；自定义 `ModelClient` 若不提供 `usage`，得到的是全零计数而不是报错。
+
 ## 轮次限制
 
 `maxTurns` 用来避免模型和工具无限循环。默认值是 `50`，统计的是模型请求次数，不是工具执行次数：

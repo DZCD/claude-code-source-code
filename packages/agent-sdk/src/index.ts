@@ -239,9 +239,32 @@ export type ModelMessage = {
   content: string | ContentBlock[];
 };
 
+export type TokenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+};
+
+/**
+ * Why the model stopped. `"max_tokens"` means the response was cut off mid-way:
+ * the text is a fragment, not an answer. Left open because providers add values.
+ */
+export type StopReason =
+  | "end_turn"
+  | "max_tokens"
+  | "stop_sequence"
+  | "tool_use"
+  | "pause_turn"
+  | "refusal"
+  | (string & {});
+
 export type AssistantModelMessage = {
   role: "assistant";
   content: ContentBlock[];
+  /** Absent when a custom ModelClient does not report it. */
+  usage?: TokenUsage;
+  stopReason?: StopReason;
 };
 
 export type ModelToolDefinition = {
@@ -667,6 +690,13 @@ export type SDKResultMessage = {
   session_id: string;
   num_turns: number;
   error?: Error;
+  /** Summed over every model request in the query. Zeroed when unreported. */
+  usage: TokenUsage;
+  /**
+   * From the last model response. Check for `"max_tokens"`: `subtype` is still
+   * `"success"` there, but `result` is a truncated fragment.
+   */
+  stop_reason?: StopReason;
 };
 
 export type SDKMessage =
@@ -725,6 +755,8 @@ export class APIError extends AgentSDKError {}
 export class ToolExecutionError extends AgentSDKError {}
 export class MaxTurnsError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
+/** A second query was started on an Agent that was still running one. */
+export class ConcurrentQueryError extends AgentSDKError {}
 
 export class ToolBatchRejectedError extends AgentSDKError {
   readonly rejection: ToolBatchPolicyRejection;
@@ -1819,6 +1851,7 @@ export class Agent<TContext = unknown> {
   private readonly messages: ModelMessage[] = [];
   private readonly sessionId = randomId();
   private readonly toolConcurrency: Required<ToolConcurrencyOptions>;
+  private running = false;
 
   constructor(options: AgentOptions<TContext>) {
     if (!options.model) {
@@ -1844,9 +1877,30 @@ export class Agent<TContext = unknown> {
       });
   }
 
+  /**
+   * One Agent owns one conversation. Overlapping queries would interleave writes
+   * into the shared history, so the second caller is rejected rather than served
+   * a conversation containing someone else's turns.
+   */
   async *query(prompt: string | ContentBlock[], options: QueryOptions<TContext> = {}): AsyncGenerator<SDKMessage> {
+    if (this.running) {
+      throw new ConcurrentQueryError(
+        `Agent ${this.options.name ?? this.sessionId} is already running a query. ` +
+          "An Agent holds one conversation: create a separate Agent per concurrent conversation.",
+      );
+    }
+    this.running = true;
+    try {
+      yield* this.runQuery(prompt, options);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async *runQuery(prompt: string | ContentBlock[], options: QueryOptions<TContext>): AsyncGenerator<SDKMessage> {
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
+    const totals: QueryTotals = { usage: emptyUsage() };
     const queryTraceContext = getQueryTraceContext(options);
     const source: AgentRuntimeSource = options.agentRuntime?.source ?? {
       kind: "agent",
@@ -1878,7 +1932,7 @@ export class Agent<TContext = unknown> {
     const startAbort = abortErrorIfNeeded(options.signal);
     yield this.initMessage();
     if (startAbort) {
-      const result = this.resultMessage("error_abort", "", 0, startAbort);
+      const result = this.resultMessage("error_abort", "", 0, startAbort, totals);
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "result",
@@ -1904,7 +1958,7 @@ export class Agent<TContext = unknown> {
     while (true) {
       const abortError = abortErrorIfNeeded(options.signal);
       if (abortError) {
-        const result = this.resultMessage("error_abort", "", turns, abortError);
+        const result = this.resultMessage("error_abort", "", turns, abortError, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -1917,7 +1971,7 @@ export class Agent<TContext = unknown> {
 
       if (turns >= this.options.maxTurns) {
         const error = new MaxTurnsError(`Reached maximum number of turns (${this.options.maxTurns})`);
-        const result = this.resultMessage("error_max_turns", "", turns, error);
+        const result = this.resultMessage("error_max_turns", "", turns, error, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -1990,7 +2044,7 @@ export class Agent<TContext = unknown> {
             ? outcome.error
             : new APIError(errorMessage(outcome.error), { cause: outcome.error });
         const subtype = wrapped instanceof AbortError ? "error_abort" : "error";
-        const result = this.resultMessage(subtype, "", turns, wrapped);
+        const result = this.resultMessage(subtype, "", turns, wrapped, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -2001,6 +2055,8 @@ export class Agent<TContext = unknown> {
         return;
       }
       assistant = outcome.value;
+      totals.usage = addUsage(totals.usage, assistant.usage);
+      totals.stopReason = assistant.stopReason;
 
       this.messages.push(assistant);
       await emitTraceEvent(tracer, {
@@ -2016,7 +2072,7 @@ export class Agent<TContext = unknown> {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
-        const result = this.resultMessage("success", extractText(assistant), turns);
+        const result = this.resultMessage("success", extractText(assistant), turns, undefined, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -2050,7 +2106,7 @@ export class Agent<TContext = unknown> {
             ? error
             : abortErrorIfNeeded(options.signal);
           if (abortError) {
-            const result = this.resultMessage("error_abort", "", turns, abortError);
+            const result = this.resultMessage("error_abort", "", turns, abortError, totals);
             await emitTraceEvent(tracer, {
               ...traceBase,
               type: "result",
@@ -2176,6 +2232,8 @@ export class Agent<TContext = unknown> {
           "success",
           "Delegated work was queued. Waiting for team runtime reports before continuing.",
           turns,
+          undefined,
+          totals,
         );
         await emitTraceEvent(tracer, {
           ...traceBase,
@@ -2221,6 +2279,7 @@ export class Agent<TContext = unknown> {
     result: string,
     numTurns: number,
     error?: Error,
+    totals?: QueryTotals,
   ): SDKResultMessage {
     return {
       type: "result",
@@ -2230,6 +2289,8 @@ export class Agent<TContext = unknown> {
       session_id: this.sessionId,
       num_turns: numTurns,
       ...(error ? { error } : {}),
+      usage: totals?.usage ?? emptyUsage(),
+      ...(totals?.stopReason ? { stop_reason: totals.stopReason } : {}),
     };
   }
 
@@ -2540,9 +2601,12 @@ class AnthropicModelClient implements ModelClient {
 
       const response = await this.createAnthropicMessage(body, { signal: request.signal });
       if ("type" in response && response.type === "message") {
+        const usage = mergeUsage(undefined, response.usage);
         return {
           role: "assistant",
           content: response.content.map(fromAnthropicBlock).filter(isContentBlock),
+          ...(usage ? { usage } : {}),
+          ...(typeof response.stop_reason === "string" ? { stopReason: response.stop_reason } : {}),
         };
       }
       throw new APIError("Unexpected streaming response from Anthropic client");
@@ -2575,7 +2639,51 @@ class AnthropicModelClient implements ModelClient {
 type AnthropicMessageResponse = {
   type?: unknown;
   content: unknown[];
+  usage?: unknown;
+  stop_reason?: unknown;
 };
+
+/**
+ * Folds a provider usage object into a running total. Anthropic reports input
+ * counts on message_start and output counts on message_delta, so the two have to
+ * be merged rather than replaced.
+ */
+function mergeUsage(current: TokenUsage | undefined, reported: unknown): TokenUsage | undefined {
+  if (!reported || typeof reported !== "object") return current;
+  const source = reported as Record<string, unknown>;
+  const field = (name: string): number | undefined =>
+    typeof source[name] === "number" ? (source[name] as number) : undefined;
+  const next: TokenUsage = {
+    input_tokens: field("input_tokens") ?? current?.input_tokens ?? 0,
+    output_tokens: field("output_tokens") ?? current?.output_tokens ?? 0,
+  };
+  const cacheCreation = field("cache_creation_input_tokens") ?? current?.cache_creation_input_tokens;
+  const cacheRead = field("cache_read_input_tokens") ?? current?.cache_read_input_tokens;
+  if (cacheCreation !== undefined) next.cache_creation_input_tokens = cacheCreation;
+  if (cacheRead !== undefined) next.cache_read_input_tokens = cacheRead;
+  return next;
+}
+
+type QueryTotals = { usage: TokenUsage; stopReason?: StopReason };
+
+function emptyUsage(): TokenUsage {
+  return { input_tokens: 0, output_tokens: 0 };
+}
+
+/** Running total across the model requests in one query. */
+function addUsage(total: TokenUsage, turn: TokenUsage | undefined): TokenUsage {
+  if (!turn) return total;
+  const next: TokenUsage = {
+    input_tokens: total.input_tokens + turn.input_tokens,
+    output_tokens: total.output_tokens + turn.output_tokens,
+  };
+  const cacheCreation =
+    (total.cache_creation_input_tokens ?? 0) + (turn.cache_creation_input_tokens ?? 0);
+  const cacheRead = (total.cache_read_input_tokens ?? 0) + (turn.cache_read_input_tokens ?? 0);
+  if (cacheCreation > 0) next.cache_creation_input_tokens = cacheCreation;
+  if (cacheRead > 0) next.cache_read_input_tokens = cacheRead;
+  return next;
+}
 
 function toAnthropicOutputFormat(outputFormat: OutputFormat): BetaJSONOutputFormat {
   if (outputFormat === "json") {
@@ -2604,8 +2712,27 @@ class AnthropicStreamAssembler {
   private content: ContentBlock[] = [];
   private currentIndex: number | undefined;
   private jsonDeltas = new Map<number, string>();
+  private usage: TokenUsage | undefined;
+  private stopReason: StopReason | undefined;
 
   add(event: Record<string, unknown>): void {
+    // Usage arrives split across the stream: input counts up front, output
+    // counts at the end alongside stop_reason.
+    if (event.type === "message_start") {
+      const message = event.message as Record<string, unknown> | undefined;
+      this.usage = mergeUsage(this.usage, message?.usage);
+      return;
+    }
+
+    if (event.type === "message_delta") {
+      this.usage = mergeUsage(this.usage, event.usage);
+      const delta = event.delta as Record<string, unknown> | undefined;
+      if (typeof delta?.stop_reason === "string") {
+        this.stopReason = delta.stop_reason;
+      }
+      return;
+    }
+
     if (event.type === "content_block_start") {
       const index = typeof event.index === "number" ? event.index : this.content.length;
       const block = fromAnthropicBlock(event.content_block);
@@ -2668,6 +2795,8 @@ class AnthropicStreamAssembler {
     return {
       role: "assistant",
       content: this.content.filter(isContentBlock),
+      ...(this.usage ? { usage: this.usage } : {}),
+      ...(this.stopReason ? { stopReason: this.stopReason } : {}),
     };
   }
 }

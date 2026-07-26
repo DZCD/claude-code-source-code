@@ -944,3 +944,33 @@ console.log(result.result);
 The SDK stores conversation state in memory for the lifetime of the `Agent`
 instance. Persistent transcripts and resume support are intentionally out of
 scope for the first release.
+
+An `Agent` is a conversation, not a reusable client. Because the history is
+instance state, starting a query while another is still running would interleave
+both conversations; the SDK rejects the second one with `ConcurrentQueryError`.
+Create one Agent per concurrent conversation — in a server, per request or per
+user session rather than a shared module-level instance. Sequential reuse, as
+above, is the intended pattern.
+
+## Token Usage And Truncation
+
+Every `result` message reports `usage`, summed over the model requests in that
+query, plus the `stop_reason` of the last response:
+
+```ts
+const result = await agent.prompt("Summarize this file.");
+console.log(result.usage);
+// { input_tokens: 1200, output_tokens: 512, cache_read_input_tokens: 800 }
+
+if (result.stop_reason === "max_tokens") {
+  // subtype is still "success", but result is a fragment, not an answer.
+}
+```
+
+`stop_reason: "max_tokens"` means the model hit its output budget mid-response.
+The SDK does not treat that as an error, so checking this field is the only way
+to distinguish a complete answer from a truncated one.
+
+Usage comes from the model client. The built-in Anthropic client fills it in from
+the response, including the streaming path; a custom `ModelClient` that omits
+`usage` produces zeroed counts rather than an error.
