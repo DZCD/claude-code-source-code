@@ -22,8 +22,8 @@ description: Stable exports exposed by the SDK package.
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
-| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. Member failures become upstream failure reports while other accepted handoffs continue; a run-wide abort cancels remaining accepted work. |
-| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. It isolates member work-item failures, resumes the caller with upstream reports, and yields the root final result. |
+| `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. After the lead queues a handoff batch, members run before the lead model is called again. Set `runner.maxConcurrentWorkItems` for bounded cross-member concurrency; the default is `1`. |
+| `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. Accepts `maxConcurrentWorkItems`; member failures stay isolated and a run-wide abort cancels remaining work. |
 | `createMemoryMailbox()` | Creates the default in-memory team mailbox adapter. |
 | `createSQLiteMailbox(options)` | Creates a durable team mailbox adapter from a SQLite-like database. |
 | `createBuiltinTools(options)` | Creates the built-in file and shell tools for manual tool assembly. |
@@ -70,7 +70,10 @@ const agent = createBareAgent({
 | `maxTokens` | `number` | Maximum output tokens per model request. |
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
 | `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. When omitted, the SDK sends no thinking configuration. |
+| `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort`. When omitted, the provider applies its default. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
+| `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
+| `toolConcurrency` | `ToolConcurrencyOptions` | Tool-call scheduling. Defaults to `{ mode: "safe", maxConcurrency: 10 }`; undeclared tools stay sequential. |
 | `skills` | `SkillDefinition[]` | Reusable instruction bundles selected per query. |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | Optional override for the private agent workspace. Defaults to `~/.agent/workspaces/<name>` when `name` is set, otherwise `~/.agent/workspaces/agent-<session-id>`. |
 | `permission` | `function` | Callback that can allow or deny tool execution. |
@@ -88,6 +91,7 @@ const agent = createBareAgent({
 | `stream` | `boolean` | Enables raw provider stream events. Defaults to `true`. |
 | `outputFormat` | `OutputFormat` | Requests structured output via `"json"` or JSON Schema output via `{ type: "json_schema", schema }`; the final text is returned unchanged. |
 | `thinkingConfig` | `ThinkingConfig` | Overrides the agent's reasoning configuration for this query. A fixed budget is capped at `maxTokens - 1`. |
+| `reasoningEffort` | `ReasoningEffort` | Overrides the agent's provider reasoning effort for this query. |
 | `signal` | `AbortSignal` | Cancels the running query. |
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
@@ -144,6 +148,11 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 In short-lived tests or scripts, close or flush the tracer in `finally` before
 the process exits so LangSmith receives the final root run patch.
 
+When the tracer is passed to `team.query()` or `team.prompt()`, one Team call
+creates one root chain. Lead runs, delegated Member runs, and later Lead runs
+share its trace session and appear as child chains. Their original Agent session
+IDs remain available as `agent_session_id` metadata.
+
 ## Types
 
 | Export | Description |
@@ -158,7 +167,9 @@ the process exits so LangSmith receives the final root run patch.
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
+| `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
 | `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
+| `TeamRunnerConfig` | Team runtime limits: `maxDelegateDepth` and `maxConcurrentWorkItems`. Concurrency defaults to `1`, and the same target mailbox remains serial. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |
@@ -167,6 +178,12 @@ the process exits so LangSmith receives the final root run patch.
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
 | `ToolDefinition` | Tool shape passed to an agent. |
+| `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check. |
+| `ToolConcurrencyMode` | Tool scheduling mode: `"safe"`, `"all"`, or `"sequential"`. |
+| `ToolConcurrencyOptions` | Agent tool scheduling mode and positive `maxConcurrency` limit. |
+| `ToolBatchPolicy` | Optional Agent policy that validates a complete tool-call batch before execution. |
+| `ToolBatchPolicyContext` | Policy input containing source, host context, signal, and tool calls with `tool` or `agent_tool` kind. |
+| `ToolBatchPolicyResult` | Allows a batch or rejects it with a code, message, conflicting call IDs, and suggested next step. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
 | `AgentToolOptions` | Description and target mailbox options for `agentTool()`. |
 | `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
@@ -195,3 +212,4 @@ the process exits so LangSmith receives the final root run patch.
 | `ToolExecutionError` | Tool handler failure. |
 | `MaxTurnsError` | Agent loop reached `maxTurns`. |
 | `AbortError` | Request was aborted. |
+| `ToolBatchRejectedError` | Tool batch was rejected before any tool executed. |

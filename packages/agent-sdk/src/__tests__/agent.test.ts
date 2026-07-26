@@ -13,6 +13,8 @@ import {
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
+  createTeam,
+  teamMember,
   tool,
   type ContextTraceEvent,
   type ModelClient,
@@ -31,6 +33,20 @@ function toolUseAssistant(id: string, name: string, input: Record<string, unknow
   return {
     role: "assistant" as const,
     content: [{ type: "tool_use" as const, id, name, input }],
+  };
+}
+
+function toolUseBatchAssistant(
+  calls: Array<{ id: string; name: string; input?: Record<string, unknown> }>,
+) {
+  return {
+    role: "assistant" as const,
+    content: calls.map(call => ({
+      type: "tool_use" as const,
+      id: call.id,
+      name: call.name,
+      input: call.input ?? {},
+    })),
   };
 }
 
@@ -264,6 +280,28 @@ describe("agent-sdk", () => {
     expect(requests[1]?.thinkingConfig).toEqual({ type: "disabled" });
   });
 
+  test("passes agent reasoning effort to the model request and allows query overrides", async () => {
+    const requests: ModelRequest[] = [];
+    const modelClient: ModelClient = {
+      async createMessage(request) {
+        requests.push(request);
+        return textAssistant("done");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "kimi-k3",
+      reasoningEffort: "high",
+      modelClient,
+    });
+
+    await agent.prompt("Use the default.");
+    await agent.prompt("Use less reasoning.", { reasoningEffort: "low" });
+
+    expect(requests[0]?.reasoningEffort).toBe("high");
+    expect(requests[1]?.reasoningEffort).toBe("low");
+  });
+
   test("does not reject non-json text when outputFormat is ignored by the provider", async () => {
     const agent = createAgent({
       apiKey: "test-key",
@@ -340,7 +378,8 @@ describe("agent-sdk", () => {
         type: "system",
         tools: ["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"],
       });
-      expect(requests[0]?.systemPrompt).toBe("You are a deliberately configured agent.");
+      expect(requests[0]?.systemPrompt).toContain("You are a deliberately configured agent.");
+      expect(requests[0]?.systemPrompt).toContain("request multiple independent tools");
       expect(requests[0]?.tools.map(tool => tool.name)).toEqual(["Read", "Write", "Edit", "LS", "Glob", "Grep", "Bash"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -400,6 +439,340 @@ describe("agent-sdk", () => {
       subtype: "success",
       result: "The answer is 4",
     });
+  });
+
+  test("createBareAgent runs concurrency-safe tools together and preserves result order", async () => {
+    type BusinessContext = { requestId: string };
+    const emptySchema = z.object({});
+    let active = 0;
+    let maxActive = 0;
+    const completed: string[] = [];
+    const trace: ContextTraceEvent[] = [];
+    const seenExecutionContext: Array<{ id: string; requestId?: string; signal?: AbortSignal }> = [];
+    const controller = new AbortController();
+    const delays: Record<string, number> = { a: 30, b: 15, c: 1 };
+    const delayedTool = (name: string) => tool<typeof emptySchema, BusinessContext>(
+      name,
+      `Delayed tool ${name}`,
+      emptySchema,
+      async (_input, executionContext) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        seenExecutionContext.push({
+          id: executionContext.toolUseId,
+          requestId: executionContext.context?.requestId,
+          signal: executionContext.signal,
+        });
+        await new Promise(resolve => setTimeout(resolve, delays[name]));
+        completed.push(name);
+        active--;
+        return { content: name };
+      },
+      { isConcurrencySafe: () => true },
+    );
+    let modelCalls = 0;
+    const agent = createBareAgent<BusinessContext>({
+      model: "claude-test",
+      tools: [delayedTool("a"), delayedTool("b"), delayedTool("c")],
+      modelClient: {
+        async createMessage({ messages, systemPrompt }) {
+          modelCalls++;
+          if (modelCalls === 1) {
+            expect(systemPrompt).toContain("request multiple independent tools");
+            return toolUseBatchAssistant([
+              { id: "id_a", name: "a" },
+              { id: "id_b", name: "b" },
+              { id: "id_c", name: "c" },
+            ]);
+          }
+          const results = messages.at(-1)?.content;
+          expect(Array.isArray(results) ? results.map(result =>
+            result.type === "tool_result" ? [result.tool_use_id, result.content] : undefined
+          ) : []).toEqual([
+            ["id_a", "a"],
+            ["id_b", "b"],
+            ["id_c", "c"],
+          ]);
+          return textAssistant("done");
+        },
+      },
+    });
+
+    const result = await agent.prompt("run", {
+      context: { requestId: "request-1" },
+      signal: controller.signal,
+      tracer: {
+        onEvent(event) {
+          trace.push(event);
+        },
+      },
+    });
+
+    expect(result.result).toBe("done");
+    expect(maxActive).toBe(3);
+    expect(completed).toEqual(["c", "b", "a"]);
+    expect(seenExecutionContext.map(item => item.id).sort()).toEqual(["id_a", "id_b", "id_c"]);
+    expect(seenExecutionContext.every(item =>
+      item.requestId === "request-1" && item.signal === controller.signal
+    )).toBe(true);
+    expect(trace.filter(event => event.type === "tool_result").map(event =>
+      event.data.tool_use_id
+    )).toEqual(["id_c", "id_b", "id_a"]);
+  });
+
+  test("createAgent all mode limits concurrency and allows repeated calls to one tool", async () => {
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const repeated = tool(
+      "repeated",
+      "Run one repeatable operation.",
+      z.object({ value: z.number() }),
+      async ({ value }) => {
+        calls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        active--;
+        return { content: String(value) };
+      },
+    );
+    let modelCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [repeated],
+      toolConcurrency: { mode: "all", maxConcurrency: 2 },
+      modelClient: {
+        async createMessage() {
+          modelCalls++;
+          return modelCalls === 1
+            ? toolUseBatchAssistant([
+              { id: "repeat_1", name: "repeated", input: { value: 1 } },
+              { id: "repeat_2", name: "repeated", input: { value: 2 } },
+              { id: "repeat_3", name: "repeated", input: { value: 3 } },
+            ])
+            : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("repeat");
+
+    expect(calls).toBe(3);
+    expect(maxActive).toBe(2);
+  });
+
+  test("sequential mode overrides tool concurrency safety", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const safeTool = tool(
+      "safe",
+      "A concurrency-safe operation.",
+      z.object({ value: z.number() }),
+      async ({ value }) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active--;
+        return { content: String(value) };
+      },
+      { isConcurrencySafe: () => true },
+    );
+    let modelCalls = 0;
+    const agent = createBareAgent({
+      model: "claude-test",
+      tools: [safeTool],
+      toolConcurrency: { mode: "sequential" },
+      modelClient: {
+        async createMessage() {
+          modelCalls++;
+          return modelCalls === 1
+            ? toolUseBatchAssistant([
+              { id: "safe_1", name: "safe", input: { value: 1 } },
+              { id: "safe_2", name: "safe", input: { value: 2 } },
+            ])
+            : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("run sequentially");
+
+    expect(maxActive).toBe(1);
+  });
+
+  test("tools without a concurrency declaration remain sequential by default", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const undeclared = tool(
+      "undeclared",
+      "A tool without a concurrency declaration.",
+      z.object({ value: z.number() }),
+      async ({ value }) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active--;
+        return { content: String(value) };
+      },
+    );
+    let modelCalls = 0;
+    const agent = createBareAgent({
+      model: "claude-test",
+      tools: [undeclared],
+      modelClient: {
+        async createMessage() {
+          modelCalls++;
+          return modelCalls === 1
+            ? toolUseBatchAssistant([
+              { id: "default_1", name: "undeclared", input: { value: 1 } },
+              { id: "default_2", name: "undeclared", input: { value: 2 } },
+            ])
+            : textAssistant("done");
+        },
+      },
+    });
+
+    await agent.prompt("run with defaults");
+
+    expect(maxActive).toBe(1);
+  });
+
+  test("parallel tool failure does not discard successful results", async () => {
+    const completed = new Set<string>();
+    const makeTool = (name: string, shouldFail = false) => tool(
+      name,
+      `Tool ${name}`,
+      z.object({}),
+      async () => {
+        await new Promise(resolve => setTimeout(resolve, name === "failure" ? 1 : 5));
+        completed.add(name);
+        if (shouldFail) throw new Error("expected failure");
+        return { content: `${name} completed` };
+      },
+      { isConcurrencySafe: () => true },
+    );
+    let modelCalls = 0;
+    const agent = createBareAgent({
+      model: "claude-test",
+      tools: [makeTool("first"), makeTool("failure", true), makeTool("last")],
+      modelClient: {
+        async createMessage({ messages }) {
+          modelCalls++;
+          if (modelCalls === 1) {
+            return toolUseBatchAssistant([
+              { id: "first_id", name: "first" },
+              { id: "failure_id", name: "failure" },
+              { id: "last_id", name: "last" },
+            ]);
+          }
+          const results = messages.at(-1)?.content;
+          expect(Array.isArray(results) ? results.map(result =>
+            result.type === "tool_result"
+              ? [result.tool_use_id, result.is_error ?? false]
+              : undefined
+          ) : []).toEqual([
+            ["first_id", false],
+            ["failure_id", true],
+            ["last_id", false],
+          ]);
+          return textAssistant("handled partial failure");
+        },
+      },
+    });
+
+    const result = await agent.prompt("run all");
+
+    expect(result.result).toBe("handled partial failure");
+    expect(completed).toEqual(new Set(["first", "failure", "last"]));
+  });
+
+  test("abort prevents queued parallel tools from starting", async () => {
+    const controller = new AbortController();
+    const started: number[] = [];
+    const cancellable = tool(
+      "cancellable",
+      "Abort the batch from its first call.",
+      z.object({ value: z.number() }),
+      async ({ value }) => {
+        started.push(value);
+        if (value === 1) controller.abort();
+        return { content: String(value) };
+      },
+    );
+    const agent = createBareAgent({
+      model: "claude-test",
+      tools: [cancellable],
+      toolConcurrency: { mode: "all", maxConcurrency: 1 },
+      modelClient: {
+        async createMessage() {
+          return toolUseBatchAssistant([
+            { id: "cancel_1", name: "cancellable", input: { value: 1 } },
+            { id: "cancel_2", name: "cancellable", input: { value: 2 } },
+            { id: "cancel_3", name: "cancellable", input: { value: 3 } },
+          ]);
+        },
+      },
+    });
+
+    const result = await agent.prompt("abort after the first call", { signal: controller.signal });
+
+    expect(started).toEqual([1]);
+    expect(result).toMatchObject({ subtype: "error_abort", is_error: true });
+  });
+
+  test("validates tool concurrency options", () => {
+    expect(() => createBareAgent({
+      model: "claude-test",
+      toolConcurrency: { maxConcurrency: 0 },
+    })).toThrow("AgentOptions.toolConcurrency.maxConcurrency must be a positive integer");
+  });
+
+  test("does not execute tools when the tool batch policy throws", async () => {
+    let toolCalls = 0;
+    let modelCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [
+        tool(
+          "sideEffect",
+          "A tool with a visible side effect.",
+          z.object({ value: z.number() }),
+          async () => {
+            toolCalls++;
+            return { content: "executed" };
+          },
+        ),
+      ],
+      toolBatchPolicy: {
+        validate() {
+          throw new Error("Policy implementation failed");
+        },
+      },
+      modelClient: {
+        async createMessage({ messages }) {
+          modelCalls++;
+          if (modelCalls === 1) {
+            return toolUseAssistant("toolu_side_effect", "sideEffect", { value: 1 });
+          }
+          const blocks = messages.at(-1)?.content;
+          const result = Array.isArray(blocks) ? blocks[0] : undefined;
+          expect(result).toMatchObject({
+            type: "tool_result",
+            is_error: true,
+          });
+          expect(String(result && "content" in result ? result.content : "")).toContain("tool_batch_policy_error");
+          return textAssistant("Recovered after policy rejection");
+        },
+      },
+    });
+
+    const result = await agent.prompt("Run the side effect.");
+
+    expect(toolCalls).toBe(0);
+    expect(result.result).toBe("Recovered after policy rejection");
   });
 
   test("passes host business context to custom tools without AgentRuntime shape", async () => {
@@ -690,6 +1063,71 @@ describe("agent-sdk", () => {
       { type: "post", run: "researcher", options: { excludeChildRuns: true } },
       { type: "patch", run: "researcher", options: { excludeInputs: false } },
     ]));
+  });
+
+  test("maps one team handoff invocation to one LangSmith root chain", async () => {
+    FakeRunTree.reset();
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+    });
+    const member = createAgent({
+      apiKey: "test-key",
+      name: "worker",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("Worker completed")]),
+    });
+    let leadCalls = 0;
+    const lead = createAgent({
+      apiKey: "test-key",
+      name: "lead",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          leadCalls++;
+          return leadCalls === 1
+            ? toolUseAssistant("toolu_worker", "worker", {
+              mode: "handoff",
+              task: "Complete the delegated work",
+            })
+            : textAssistant("Team completed");
+        },
+      },
+    });
+    const team = createTeam({
+      name: "trace-team",
+      lead,
+      members: [
+        teamMember({ name: "worker", role: "executor", agent: member }),
+      ],
+    });
+
+    for await (const _message of team.query("Run the team.", {
+      stream: false,
+      tracer,
+    })) {
+      // Consume the complete team invocation before inspecting the trace tree.
+    }
+    await tracer.flush?.();
+
+    const chains = FakeRunTree.runs.filter(run => run.run_type === "chain");
+    const roots = chains.filter(run => !run.parent_run);
+    expect(roots).toHaveLength(1);
+    expect(roots[0]).toMatchObject({
+      name: "trace-team",
+      metadata: {
+        runtime: "team",
+        team: "trace-team",
+      },
+      outputs: {
+        subtype: "success",
+        result: "Team completed",
+      },
+    });
+    const childChains = chains.filter(run => run.parent_run === roots[0]);
+    expect(childChains).toHaveLength(3);
+    expect(new Set(chains.map(run => run.metadata.sdk_session_id)).size).toBe(1);
+    expect(new Set(childChains.map(run => run.metadata.agent_session_id)).size).toBe(2);
   });
 
   test("closes LangSmith tracer by draining RunTree clients", async () => {
@@ -1387,6 +1825,42 @@ describe("agent-sdk", () => {
           ],
         },
       });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Anthropic-compatible client serializes Kimi reasoning effort", async () => {
+    let requestBody: any;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestBody = await request.json();
+        return Response.json({
+          id: "msg_kimi",
+          type: "message",
+          role: "assistant",
+          model: "kimi-k3",
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 2 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "kimi-k3",
+        reasoningEffort: "max",
+      });
+
+      await agent.prompt("Think carefully.", { stream: false });
+
+      expect(requestBody.reasoning_effort).toBe("max");
+      expect(requestBody.thinking).toBeUndefined();
     } finally {
       server.stop(true);
     }

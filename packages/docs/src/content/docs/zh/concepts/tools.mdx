@@ -47,3 +47,71 @@ return { content: "done" };
 ```
 
 `content` 可以是字符串，也可以是内容块数组。工具抛错时，SDK 会把错误转成 `is_error: true` 的 `tool_result`，让模型有机会解释或选择其它路径。
+
+## 并发执行互不依赖的工具
+
+模型在同一次回复中返回多个 `tool_use`，表示希望一起执行这些工具；哪些 handler 可以真正同时运行，仍由 SDK 判断。当工具输入不会引发冲突的副作用时，通过 `isConcurrencySafe(input)` 标记：
+
+```ts
+const search = tool(
+  "search",
+  "Search documents",
+  z.object({ query: z.string() }),
+  async ({ query }) => {
+    // 业务代码：替换成你的数据库或搜索客户端。
+    return { content: await documentIndex.search(query) };
+  },
+  { isConcurrencySafe: () => true },
+);
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [search],
+  toolConcurrency: {
+    mode: "safe",
+    maxConcurrency: 8,
+  },
+});
+```
+
+默认使用 `mode: "safe"`。连续的工具调用只有在 `isConcurrencySafe(input)` 返回 `true` 时才会并发。工具没有声明安全规则、规则返回 `false`、输入无效或规则抛错时，该调用都会顺序执行。内置的 `Read`、`LS`、`Glob` 和 `Grep` 已标记为安全；`Write`、`Edit` 和 `Bash` 没有标记。
+
+存在可并发工具时，SDK 会告诉模型：互不依赖的调用可以放在同一次回复中；后一个调用需要前一个结果时，必须分成两次回复。模型不能绕过 `isConcurrencySafe`、`maxConcurrency` 或 `toolBatchPolicy`。
+
+只有确认 Agent 中所有工具都能安全地同时运行时，才使用 `mode: "all"`。需要强制逐个执行时，使用 `mode: "sequential"`。`maxConcurrency` 默认是 `10`，并且必须是正整数。
+
+整批工具结束后，SDK 才会再次请求模型。Handler 可以按不同顺序完成，但发回模型的 `tool_result` 始终保持原始 `tool_use` 顺序。一个 handler 失败不会丢失同批其它成功结果。取消请求时，已启动的 handler 会收到本次 query 的 `AbortSignal`，仍在等待并发名额的调用不会启动；SDK 会等待已经启动的 handler 结束。
+
+## 执行前检查整批工具
+
+如果某些工具不能出现在同一次模型响应中，通过 `AgentOptions.toolBatchPolicy` 提供检查规则。任何工具 handler 运行前，策略会先收到当前响应中的全部工具调用。
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [incrementRevision],
+  toolBatchPolicy: {
+    validate({ toolCalls }) {
+      const update = toolCalls.find(call => call.name === "incrementRevision");
+      const handoff = toolCalls.find(
+        call => call.kind === "agent_tool" &&
+          (call.input as { mode?: string }).mode === "handoff",
+      );
+      if (update && handoff) {
+        return {
+          allowed: false,
+          code: "invalid_tool_batch",
+          message: "请先更新 revision，再安排依赖新 revision 的成员任务。",
+          conflictingToolCallIds: [update.id, handoff.id],
+          suggestedNextStep: "先执行更新工具，拿到新 revision 后再 handoff。",
+        };
+      }
+      return { allowed: true };
+    },
+  },
+});
+```
+
+策略拒绝时，整批工具都不会执行，handoff 也不会进入 mailbox。SDK 会给本批每个工具调用返回 `is_error: true`。如果策略自身抛错，SDK 返回 `tool_batch_policy_error`，同样不会执行任何工具。配置策略后，SDK 总会先检查完整批次，再进行并发调度。
+
+该检查只能阻止同一次模型响应中的已知冲突。其它请求或进程也可能修改数据，因此数据库事务和 revision 校验仍然必须保留。

@@ -134,7 +134,7 @@ LangSmith receives:
 
 | SDK event sequence | LangSmith projection |
 | --- | --- |
-| `run_start` to `result` | Root `chain` run. |
+| `run_start` to `result` | `chain` run; it is a root unless `parent_run_id` links it to another chain. |
 | `model_request` to `assistant_message` | Child `llm` run. |
 | `tool_use` to `tool_result` | Child `tool` run. |
 | `team_message` and other auxiliary events | Run events on the active chain. |
@@ -183,6 +183,15 @@ for await (const event of team.query("Ask engineering to inspect tracing.", {
   console.log(event);
 }
 ```
+
+One `team.query()` or `team.prompt()` call creates one Team-level root run. The
+Lead's initial work, each delegated Member run, and every later Lead run are
+children of that root. They share one trace `session_id`, so LangSmith displays
+the complete handoff as one trace instead of separate top-level traces.
+
+The shared trace session does not replace an Agent's own SDK session. Trace
+metadata keeps that original value as `agent_session_id`, and emitted SDK
+messages continue to use the Agent's existing `session_id`.
 
 Delegated agents include their runtime source:
 

@@ -5,6 +5,7 @@ import {
   createTeam,
   teamMember,
   type AgentLikeEvent,
+  type ContextTraceEvent,
   type ModelClient,
 } from "../index.js";
 
@@ -155,13 +156,11 @@ describe("team", () => {
               });
             }
             if (leadCalls === 2) {
-              const receipt = String((messages.at(-1)?.content as Array<{ content?: string }> | undefined)?.[0]?.content ?? "");
-              expect(receipt).toContain('"status": "accepted"');
-              return textAssistant("Assigned to researcher.");
+              const update = String(messages.at(-1)?.content ?? "");
+              expect(update).toContain("Research handoff complete.");
+              return textAssistant("Engineering final after handoff.");
             }
-            const update = String(messages.at(-1)?.content ?? "");
-            expect(update).toContain("Research handoff complete.");
-            return textAssistant("Engineering final after handoff.");
+            throw new Error(`Unexpected lead call ${leadCalls}`);
           },
         },
       }),
@@ -178,12 +177,12 @@ describe("team", () => {
 
     const events = await collect(team.query("Ask the researcher asynchronously."));
 
-    expect(leadCalls).toBe(3);
+    expect(leadCalls).toBe(2);
     expect(events.some(event =>
       event.type === "agent_message" &&
       event.source.kind === "root" &&
       event.message.type === "result" &&
-      event.message.result === "Assigned to researcher."
+      event.message.result.includes("Delegated work was queued")
     )).toBe(true);
     expect(events.find(event => event.type === "result")).toMatchObject({
       type: "result",
@@ -216,10 +215,8 @@ describe("team", () => {
                 task: "Research prompt semantics.",
               });
             }
-            if (leadCalls === 2) {
-              return textAssistant("Assigned to researcher.");
-            }
-            return textAssistant("Engineering prompt final.");
+            if (leadCalls === 2) return textAssistant("Engineering prompt final.");
+            throw new Error(`Unexpected lead call ${leadCalls}`);
           },
         },
       }),
@@ -235,7 +232,7 @@ describe("team", () => {
 
     const result = await team.prompt("Ask the researcher asynchronously.");
 
-    expect(leadCalls).toBe(3);
+    expect(leadCalls).toBe(2);
     expect(result).toMatchObject({
       type: "result",
       result: "Engineering prompt final.",
@@ -243,6 +240,7 @@ describe("team", () => {
   });
 
   test("nested teams are driven when talking directly to the parent team", async () => {
+    const trace: ContextTraceEvent[] = [];
     const backendAgent = createAgent({
       apiKey: "test-key",
       model: "claude-test",
@@ -309,7 +307,25 @@ describe("team", () => {
       ],
     });
 
-    const events = await collect(companyTeam.query("Design a RAG feature."));
+    const events = await collect(companyTeam.query("Design a RAG feature.", {
+      tracer: {
+        onEvent(event) {
+          trace.push(event);
+        },
+      },
+    }));
+
+    const teamRuns = trace.filter(entry =>
+      entry.type === "run_start" && entry.data.runtime === "team"
+    );
+    const companyRun = teamRuns.find(entry => entry.data.team === "company");
+    const engineeringRun = teamRuns.find(entry => entry.data.team === "engineering");
+    expect(companyRun?.parent_run_id).toBeUndefined();
+    expect(engineeringRun?.parent_run_id).toBe(companyRun?.run_id);
+    expect(trace.filter(entry =>
+      entry.type === "run_start" && entry.parent_run_id === undefined
+    )).toHaveLength(1);
+    expect(new Set(trace.map(entry => entry.session_id)).size).toBe(1);
 
     expect(events.some(event =>
       event.type === "agent_message" &&

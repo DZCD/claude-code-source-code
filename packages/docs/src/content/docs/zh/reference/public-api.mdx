@@ -22,8 +22,8 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
 | `teamMember(options)` | 创建一个团队成员，带 name、role、focus 和 agent。 |
-| `createTeam(options)` | 创建一个围绕 lead 的可调用 Team，包含成员、mailbox 和内置 runtime。成员失败会转换为上游失败报告，其它已接收的 handoff 会继续；全局中止会取消剩余的已接收工作。 |
-| `createTeamRunner(options)` | 高级 runtime，用于手动运行带 mailbox AgentLike 委托工具的 root `AgentLike`。它会隔离成员工作项失败、通过上游报告唤醒调用方，再输出 root 最终结果。 |
+| `createTeam(options)` | 创建一个围绕 Lead 的可调用 Team，包含成员、mailbox 和内置 runtime。Lead 提交一批 handoff 后，SDK 会先执行成员，再继续调用 Lead 模型。通过 `runner.maxConcurrentWorkItems` 设置跨成员并发上限，默认值为 `1`。 |
+| `createTeamRunner(options)` | 高级 runtime，用于手动运行带 mailbox AgentLike 委托工具的 root `AgentLike`。它接收 `maxConcurrentWorkItems`，同时保留成员失败隔离和全局中止清理。 |
 | `createMemoryMailbox()` | 创建默认内存 mailbox adapter。 |
 | `createSQLiteMailbox(options)` | 基于 SQLite-like database 创建持久化 mailbox adapter。 |
 | `createBuiltinTools(options)` | 创建内置文件与 Shell 工具，用于手动组装工具列表。 |
@@ -70,7 +70,10 @@ const agent = createBareAgent({
 | `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。省略时，SDK 不发送 thinking 配置。 |
+| `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`。省略时使用 provider 默认值。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
+| `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
+| `toolConcurrency` | `ToolConcurrencyOptions` | 工具调用调度。默认是 `{ mode: "safe", maxConcurrency: 10 }`；未声明安全规则的工具保持顺序执行。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。传了 `name` 时默认是 `~/.agent/workspaces/<name>`，否则是 `~/.agent/workspaces/agent-<session-id>`。 |
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
@@ -88,6 +91,7 @@ const agent = createBareAgent({
 | `stream` | `boolean` | 是否输出底层 provider stream event，默认 `true`。 |
 | `outputFormat` | `OutputFormat` | 请求结构化输出，可传 `"json"`，也可通过 `{ type: "json_schema", schema }` 指定 JSON Schema 输出；最终文本会原样返回。 |
 | `thinkingConfig` | `ThinkingConfig` | 覆盖当前 query 的 Agent 推理配置。固定预算最大为 `maxTokens - 1`。 |
+| `reasoningEffort` | `ReasoningEffort` | 覆盖当前 query 的 Agent 默认推理强度。 |
 | `signal` | `AbortSignal` | 中断当前 query。 |
 | `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
 | `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
@@ -142,6 +146,11 @@ LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith
 短生命周期的测试或脚本退出前，请在 `finally` 中 close 或 flush tracer，确保
 LangSmith 收到根 run 的最终 patch。
 
+把 tracer 传给 `team.query()` 或 `team.prompt()` 时，一次 Team 调用只创建一个
+顶层 chain。Lead 执行、Member 执行以及 Lead 收到报告后的后续执行共享同一个
+trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 会保留在
+`agent_session_id` metadata 中。
+
 ## 核心类型
 
 | Export | 说明 |
@@ -156,7 +165,9 @@ LangSmith 收到根 run 的最终 patch。
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
 | `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
+| `ReasoningEffort` | `AgentOptions.reasoningEffort` 和 `QueryOptions.reasoningEffort` 接收的 provider 推理强度：`"low"`、`"high"` 或 `"max"`。 |
 | `AgentRuntimeFailure` | 写入失败事件和上游报告 metadata 的归一化成员错误。 |
+| `TeamRunnerConfig` | Team runtime 限制，包括 `maxDelegateDepth` 和 `maxConcurrentWorkItems`。并发默认值为 `1`，同一目标 mailbox 始终串行。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
@@ -165,6 +176,12 @@ LangSmith 收到根 run 的最终 patch。
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
+| `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`。 |
+| `ToolConcurrencyMode` | 工具调度模式：`"safe"`、`"all"` 或 `"sequential"`。 |
+| `ToolConcurrencyOptions` | Agent 的工具调度模式和正整数 `maxConcurrency` 上限。 |
+| `ToolBatchPolicy` | 在执行前检查完整工具批次的可选 Agent 策略。 |
+| `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
+| `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
 | `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
@@ -193,3 +210,4 @@ LangSmith 收到根 run 的最终 patch。
 | `ToolExecutionError` | 工具 handler 执行失败。 |
 | `MaxTurnsError` | Agent loop 达到 `maxTurns`。 |
 | `AbortError` | 请求被中断。 |
+| `ToolBatchRejectedError` | 工具批次在任何工具执行前被拒绝。 |

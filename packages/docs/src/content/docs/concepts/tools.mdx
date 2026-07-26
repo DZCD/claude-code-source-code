@@ -41,3 +41,71 @@ type ToolResult = {
 ```
 
 If a tool handler throws, the SDK returns an error `tool_result` to the model instead of crashing the entire loop.
+
+## Run independent tools concurrently
+
+The model asks to run tools together by returning multiple `tool_use` blocks in one assistant message. The SDK still decides which handlers may overlap. Mark a tool as concurrency-safe when its parsed input does not cause conflicting side effects:
+
+```ts
+const search = tool(
+  "search",
+  "Search documents",
+  z.object({ query: z.string() }),
+  async ({ query }) => {
+    // App code: replace with your database or search client.
+    return { content: await documentIndex.search(query) };
+  },
+  { isConcurrencySafe: () => true },
+);
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [search],
+  toolConcurrency: {
+    mode: "safe",
+    maxConcurrency: 8,
+  },
+});
+```
+
+`mode: "safe"` is the default. It concurrently executes consecutive calls whose tools return `true` from `isConcurrencySafe(input)`. A missing declaration, a `false` result, invalid input, or an exception from the safety check makes that call sequential. The built-in `Read`, `LS`, `Glob`, and `Grep` tools are marked safe; `Write`, `Edit`, and `Bash` are not.
+
+When concurrency is available, the SDK tells the model to place independent calls in one assistant response and to use separate responses when a later call needs an earlier result. The model cannot override `isConcurrencySafe`, `maxConcurrency`, or `toolBatchPolicy`.
+
+Use `mode: "all"` only when every tool registered on that Agent is safe to overlap. Use `mode: "sequential"` to force every call to run one at a time. `maxConcurrency` defaults to `10` and must be a positive integer.
+
+The SDK waits for the whole batch before requesting the model again. Handlers may finish in any order, but `tool_result` blocks are sent back in the original `tool_use` order. One handler failure does not remove successful results from the same batch. On abort, running handlers receive the query's `AbortSignal`, calls still waiting for a concurrency slot do not start, and the SDK waits for handlers that already started to settle.
+
+## Validate a tool batch before execution
+
+Use `AgentOptions.toolBatchPolicy` when specific tools must run in separate model responses. The policy receives every tool call from the current response before any handler runs.
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [incrementRevision],
+  toolBatchPolicy: {
+    validate({ toolCalls }) {
+      const update = toolCalls.find(call => call.name === "incrementRevision");
+      const handoff = toolCalls.find(
+        call => call.kind === "agent_tool" &&
+          (call.input as { mode?: string }).mode === "handoff",
+      );
+      if (update && handoff) {
+        return {
+          allowed: false,
+          code: "invalid_tool_batch",
+          message: "Update the revision before delegating dependent work.",
+          conflictingToolCallIds: [update.id, handoff.id],
+          suggestedNextStep: "Run the update first, then hand off the new revision.",
+        };
+      }
+      return { allowed: true };
+    },
+  },
+});
+```
+
+When rejected, no handler runs and no handoff enters the mailbox. The SDK returns an `is_error: true` result for every tool call in the batch. If the policy throws, the SDK uses `tool_batch_policy_error` and still executes no tools. When configured, the policy always checks the complete batch before concurrency scheduling begins.
+
+This check prevents known conflicts inside one model response. Keep database transactions and revision checks for changes made by other requests or processes.

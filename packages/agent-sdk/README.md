@@ -103,6 +103,30 @@ Use `{ type: "adaptive" }` for models that support adaptive thinking. Use
 budget is capped at `maxTokens - 1` to satisfy the Anthropic API constraint.
 When omitted, the SDK does not send a thinking configuration.
 
+For Kimi K3 through an Anthropic-compatible endpoint or gateway, use
+`reasoningEffort` to send the provider's top-level `reasoning_effort` parameter:
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.MOONSHOT_API_KEY,
+  baseURL: process.env.KIMI_ANTHROPIC_BASE_URL,
+  model: "kimi-k3",
+  reasoningEffort: "high",
+});
+
+const result = await agent.prompt("Solve this carefully.", {
+  reasoningEffort: "low",
+});
+```
+
+The supported values are `"low"`, `"high"`, and `"max"`. A query-level value
+overrides the agent default. When omitted, the SDK does not send
+`reasoning_effort`, so the provider applies its own default (`"max"` for Kimi
+K3). Kimi K3 does not accept `thinkingConfig`; use `reasoningEffort` instead.
+The Kimi Open Platform endpoint at `https://api.moonshot.cn/v1` uses the OpenAI
+Chat Completions protocol and is not a valid `baseURL` for the SDK's built-in
+Anthropic client.
+
 ## Multimodal Input
 
 Pass Anthropic-compatible content blocks for image or document prompts:
@@ -230,9 +254,13 @@ const tracer = createLangSmithContextTracer({
 });
 ```
 
-LangSmith receives one root `chain` run per SDK query, child `llm` runs for
-model turns, child `tool` runs for SDK tool calls, and run events for auxiliary
-trace events.
+LangSmith receives one root `chain` run per SDK query. For an `Agent` query,
+model turns and SDK tool calls appear as child `llm` and `tool` runs. For a
+`Team` query, the root represents the complete Team invocation; the initial
+Lead run, delegated Member runs, and later Lead runs all appear beneath that
+root and share one trace session. Each Agent keeps its own SDK session identity,
+recorded as `agent_session_id` metadata, so tracing does not change Agent state
+or returned SDK messages.
 
 Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
 storage, or host-specific observability. The functions below are application
@@ -282,6 +310,88 @@ const agent = createAgent({
 const result = await agent.prompt("What is 2+2?");
 console.log(result.result);
 ```
+
+## Concurrent Tool Calls
+
+The model requests concurrency by returning multiple `tool_use` blocks in one
+assistant message. The SDK makes the final safety decision. By default, only
+tools whose parsed input passes `isConcurrencySafe(input)` run together:
+
+```ts
+const search = tool(
+  "search",
+  "Search documents",
+  z.object({ query: z.string() }),
+  async ({ query }) => {
+    // App code: replace with your database or search client.
+    return { content: await documentIndex.search(query) };
+  },
+  { isConcurrencySafe: () => true },
+);
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [search],
+  toolConcurrency: { mode: "safe", maxConcurrency: 8 },
+});
+```
+
+`safe` is the default mode, `maxConcurrency` defaults to `10`, and tools without
+an `isConcurrencySafe` declaration stay sequential. Use `mode: "all"` only when
+every tool in the Agent is safe to overlap. Use `mode: "sequential"` to disable
+tool concurrency even for tools marked safe.
+
+When concurrency is available, the SDK tells the model to batch independent
+calls and to use separate assistant responses when a later call needs an earlier
+result. Runtime safety checks and `toolBatchPolicy` remain authoritative.
+
+The SDK waits for the complete batch before requesting the model again. Tools
+may finish in any order, while the `tool_result` blocks sent to the model remain
+in the original `tool_use` order. One tool failure does not discard the other
+results. On abort, running handlers receive the shared `AbortSignal`, queued
+handlers do not start, and the SDK waits for handlers that already started to
+settle.
+
+## Tool Batch Policy
+
+Use `toolBatchPolicy` when some tools must not run in the same model response.
+The policy sees the complete batch before any tool executes. If it rejects the
+batch, no tool runs and every tool call receives a structured `is_error: true`
+result.
+
+```ts
+const lead = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [incrementRevision],
+  toolBatchPolicy: {
+    validate({ toolCalls }) {
+      const incrementsRevision = toolCalls.find(
+        call => call.name === "incrementRevision",
+      );
+      const handoff = toolCalls.find(
+        call => call.kind === "agent_tool" &&
+          (call.input as { mode?: string }).mode === "handoff",
+      );
+      if (incrementsRevision && handoff) {
+        return {
+          allowed: false,
+          code: "invalid_tool_batch",
+          message: "Update the revision before delegating dependent work.",
+          conflictingToolCallIds: [incrementsRevision.id, handoff.id],
+          suggestedNextStep: "Run incrementRevision first, then hand off the new revision.",
+        };
+      }
+      return { allowed: true };
+    },
+  },
+});
+```
+
+The policy may be synchronous or asynchronous. If it throws, the SDK rejects
+the whole batch with `tool_batch_policy_error`; no tool has executed. Without a
+policy, tool execution is unchanged. A policy prevents known bad combinations
+inside one model response, but it does not replace database transactions or
+revision checks against concurrent external updates.
 
 ## Business Context For Tools
 
@@ -533,6 +643,13 @@ delivery: the runtime waits for the member's upstream reply, feeds it back to
 the lead, and keeps going until the root lead returns the final result or the
 run terminates.
 
+After one model response queues one or more handoffs, the SDK does not call the
+lead model again immediately. It first runs those members, collects their
+completed or failed reports, and only then calls the lead again. All handoffs
+from the current tool batch are queued before the lead pauses. The receipt keeps
+`status: "accepted"` for compatibility and also includes `phase: "queued"`,
+`completion_pending: true`, `message_id`, `work_item_id`, and `thread_id`.
+
 Accepted handoffs use work-item failure isolation by default. If one member
 returns an agent error such as `MaxTurnsError` or `APIError`, the runtime marks
 that work item `failed`, sends a failure report to the lead, and continues the
@@ -540,6 +657,25 @@ other accepted handoffs. The lead receives successful and failed reports
 together and decides whether to retry, revise the task, accept a partial result,
 or finish. A run-wide `AbortError` still stops the runner; the runtime marks the
 current and remaining accepted work `cancelled` before propagating the abort.
+
+Handoff work is serial by default. Set a bounded concurrency limit on the team
+when independent members should run at the same time:
+
+```ts
+const team = createTeam({
+  name: "research",
+  lead,
+  members,
+  runner: { maxConcurrentWorkItems: 4 },
+});
+```
+
+You can also pass `maxConcurrentWorkItems` to `createTeamRunner()`. The limit
+must be a positive integer and defaults to `1`. It applies across different
+member mailboxes; work addressed to the same mailbox remains serial because an
+Agent may keep mutable conversation state. Runtime events are emitted as work
+actually progresses, while the reports injected back into the lead stay in the
+original handoff order.
 
 Team member tools can also request explicit shared workspace write grants:
 

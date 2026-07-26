@@ -130,7 +130,7 @@ LangSmith 会收到这样的投影：
 
 | SDK 事件序列 | LangSmith 投影 |
 | --- | --- |
-| `run_start` 到 `result` | 根 `chain` run。 |
+| `run_start` 到 `result` | `chain` run；没有 `parent_run_id` 时是根节点，否则挂在对应的父 chain 下。 |
 | `model_request` 到 `assistant_message` | 子 `llm` run。 |
 | `tool_use` 到 `tool_result` | 子 `tool` run。 |
 | `team_message` 和其它辅助事件 | 当前 chain 上的 run event。 |
@@ -179,6 +179,14 @@ for await (const event of team.query("请 engineering 检查 tracing 设计。",
   console.log(event);
 }
 ```
+
+每次 `team.query()` 或 `team.prompt()` 只创建一个 Team 顶层 run。Lead 首次处理、
+各个 Member 执行以及 Lead 收到报告后的后续处理，都会成为这个顶层 run 的子节点。
+这些节点共享同一个 trace `session_id`，因此 LangSmith 会把一次完整 handoff 显示成
+一条 trace，而不是多个互不相关的顶层 trace。
+
+共享 trace session 不会替换 Agent 自己的 SDK session。Trace metadata 会把 Agent
+原来的 session 记录为 `agent_session_id`，SDK 对外消息中的 `session_id` 也保持不变。
 
 被委托的 agent 会带上运行来源：
 

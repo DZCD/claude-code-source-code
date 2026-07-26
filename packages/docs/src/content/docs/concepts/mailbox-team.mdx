@@ -63,7 +63,26 @@ console.log(result.result);
 | `handoff` | Assign work and get an acceptance receipt as the tool result. In `team.query()` or `team.prompt()`, the runtime continues the accepted mailbox work, waits for the member's upstream reply, resumes the lead, and returns the root final result. |
 | `observe` | Start observable long-running work if the host runtime supports it. |
 
-The receipt from `handoff` is not a final delivery. It is only proof that the work was accepted into the mailbox. The team runtime owns the lifecycle after that.
+The receipt from `handoff` is not a final delivery. It is only proof that the work was accepted into the mailbox. For compatibility, the receipt keeps `status: "accepted"`; `phase: "queued"` and `completion_pending: true` make the current state explicit. It also includes `message_id`, `work_item_id`, and `thread_id`.
+
+After the lead queues every handoff in the current tool batch, the SDK stops calling the lead model. The TeamRunner runs those members first. When every member has completed or failed, the SDK passes their reports to the lead and calls the lead model again. The lead therefore cannot start another model turn and poll dependent tools while those handoffs are still pending.
+
+## Controlled handoff concurrency
+
+Handoff work is serial by default. Set `runner.maxConcurrentWorkItems` when independent members should run at the same time:
+
+```ts
+const team = createTeam({
+  name: "research",
+  lead,
+  members,
+  runner: { maxConcurrentWorkItems: 4 },
+});
+```
+
+Advanced callers can pass the same option directly to `createTeamRunner()`. The value must be a positive integer and defaults to `1`.
+
+The limit applies across different member mailboxes. Multiple work items addressed to the same mailbox remain serial because an Agent may keep mutable conversation state. Runtime events follow actual start and completion order; the mailbox reports passed back to the lead stay in the original handoff order and retain their message, thread, and work-item identifiers.
 
 ## Handoff failure isolation
 

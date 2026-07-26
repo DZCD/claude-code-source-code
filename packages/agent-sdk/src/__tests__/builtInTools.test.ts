@@ -33,6 +33,16 @@ describe("agent workspace tools", () => {
     expect(builtinNames).toEqual(names);
   });
 
+  test("marks read-only workspace tools as concurrency-safe", async () => {
+    const cwd = await tempWorkspace();
+    const tools = createAgentWorkspaceTools({ cwd });
+    const safeNames = tools
+      .filter(definition => definition.isConcurrencySafe?.({} as never) === true)
+      .map(definition => definition.name);
+
+    expect(safeNames).toEqual(["Read", "LS", "Glob", "Grep"]);
+  });
+
   test("Read reads files with optional offset and limit", async () => {
     const cwd = await tempWorkspace();
     await writeFile(join(cwd, "notes.txt"), "one\ntwo\nthree\n");

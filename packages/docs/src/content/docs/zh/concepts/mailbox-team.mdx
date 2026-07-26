@@ -63,7 +63,26 @@ console.log(result.result);
 | `handoff` | 把任务交给该成员，并把接收回执作为工具结果返回。在 `team.query()` 或 `team.prompt()` 中，runtime 会继续推进已接收的 mailbox 任务，等待成员向上级回复，唤醒 lead，最终返回 root lead 的最终结果。 |
 | `observe` | 在宿主 runtime 支持时，启动可观察的长任务。 |
 
-`handoff` 的接收回执不是最终交付。它只表示工作已经进入 mailbox。后续生命周期由 team runtime 管理。
+`handoff` 的接收回执不是最终交付，只表示工作已经进入 mailbox。为了兼容旧代码，回执继续保留 `status: "accepted"`；同时增加 `phase: "queued"` 和 `completion_pending: true`，明确表示成员尚未完成。回执还包含 `message_id`、`work_item_id` 和 `thread_id`。
+
+Lead 把当前这批 handoff 全部放入 mailbox 后，SDK 不会继续调用 Lead 模型。TeamRunner 会先执行这些成员；所有成员完成或失败后，SDK 再把报告交给 Lead，并继续调用 Lead 模型。因此，handoff 尚未完成时，Lead 不会进入下一次模型调用并轮询依赖结果的工具。
+
+## 受控 handoff 并发
+
+handoff 工作默认串行执行。如果多个独立成员可以同时工作，通过 `runner.maxConcurrentWorkItems` 设置并发上限：
+
+```ts
+const team = createTeam({
+  name: "research",
+  lead,
+  members,
+  runner: { maxConcurrentWorkItems: 4 },
+});
+```
+
+高级调用方也可以直接向 `createTeamRunner()` 传入同名参数。该值必须是正整数，默认值为 `1`。
+
+并发上限作用于不同的成员 mailbox。发给同一个 mailbox 的多个工作项仍然串行执行，因为 Agent 可能保留可变的对话状态。runtime 事件按照实际启动和完成顺序输出；交给 lead 的 mailbox 报告仍按原 handoff 顺序排列，并保留各自的消息、thread 和工作项标识。
 
 ## Handoff 失败隔离
 

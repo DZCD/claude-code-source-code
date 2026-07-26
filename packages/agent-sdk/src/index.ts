@@ -51,6 +51,11 @@ export type ToolResultBlock = {
   content: string | ContentBlock[];
   is_error?: boolean;
 };
+
+type ToolExecutionOutcome = {
+  block: ToolResultBlock;
+  error?: Error;
+};
 export type ThinkingBlock = {
   type: "thinking";
   thinking: string;
@@ -162,6 +167,7 @@ export type AgentRuntimeContext = {
   permissions: RuntimePermissions;
   delegate(input: AgentRuntimeDelegateInput): Promise<AgentRuntimeDelegateResult>;
   emit(message: TeamRunnerMessage): void;
+  shouldPauseAfterToolBatch?(): boolean;
 };
 
 export type ContextTraceEventType =
@@ -253,6 +259,7 @@ export type ModelRequest = {
   stream: boolean;
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
+  reasoningEffort?: ReasoningEffort;
   onStreamEvent?: (event: Record<string, unknown>) => void;
   signal?: AbortSignal;
 };
@@ -263,6 +270,38 @@ export interface ModelClient {
 
 export type ToolResult = {
   content: string | ContentBlock[];
+};
+
+export type ToolKind = "tool" | "agent_tool";
+
+export type ToolBatchCall = {
+  id: string;
+  name: string;
+  input: unknown;
+  kind: ToolKind;
+};
+
+export type ToolBatchPolicyContext<TContext = unknown> = {
+  source?: AgentRuntimeSource;
+  toolCalls: ToolBatchCall[];
+  context?: TContext;
+  signal?: AbortSignal;
+};
+
+export type ToolBatchPolicyRejection = {
+  allowed: false;
+  code: string;
+  message: string;
+  conflictingToolCallIds?: string[];
+  suggestedNextStep?: string;
+};
+
+export type ToolBatchPolicyResult = { allowed: true } | ToolBatchPolicyRejection;
+
+export type ToolBatchPolicy<TContext = unknown> = {
+  validate(
+    context: ToolBatchPolicyContext<TContext>,
+  ): ToolBatchPolicyResult | Promise<ToolBatchPolicyResult>;
 };
 
 export type ToolExecutionContext<TContext = unknown> = {
@@ -278,13 +317,26 @@ export type ToolHandler<TInput = unknown, TContext = unknown> = (
   context: ToolExecutionContext<TContext>,
 ) => Promise<ToolResult> | ToolResult;
 
+export type ToolOptions<TInput = unknown> = {
+  isConcurrencySafe?: (input: TInput) => boolean;
+};
+
 export type ToolDefinition<TInput = unknown, TContext = unknown> = {
   name: string;
   description: string;
+  kind?: ToolKind;
   inputSchema: unknown;
   jsonSchema: Record<string, unknown>;
   parse(input: unknown): TInput;
   handler: ToolHandler<TInput, TContext>;
+  isConcurrencySafe?: (input: TInput) => boolean;
+};
+
+export type ToolConcurrencyMode = "safe" | "all" | "sequential";
+
+export type ToolConcurrencyOptions = {
+  mode?: ToolConcurrencyMode;
+  maxConcurrency?: number;
 };
 
 export type SkillDefinition = {
@@ -428,12 +480,18 @@ export type SQLiteMailboxOptions = {
   tableName?: string;
 };
 
+export type TeamRunnerConfig = {
+  maxDelegateDepth?: number;
+  maxConcurrentWorkItems?: number;
+};
+
 export type TeamOptions = {
   name: string;
   lead: Agent<any>;
   members: TeamMemberDefinition[];
   mailbox?: TeamMailbox;
   exposeLeadMailboxTools?: boolean;
+  runner?: TeamRunnerConfig;
 };
 
 export type Team = {
@@ -443,6 +501,7 @@ export type Team = {
   mailbox: TeamMailbox;
   tools: Array<ToolDefinition<any, any>>;
   memberTools: Record<string, Array<ToolDefinition<any, any>>>;
+  readonly runnerOptions?: TeamRunnerConfig;
   send(from: string, to: string, content: string, options?: TeamSendOptions): Promise<TeamMessage>;
   drain(options?: TeamDrainOptions): Promise<TeamDrainResult>;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
@@ -461,12 +520,11 @@ export type TeamDrainResult = {
   rounds: number;
 };
 
-export type TeamRunnerOptions = {
+export type TeamRunnerOptions = TeamRunnerConfig & {
   team?: Team;
   root?: AgentLike<any>;
   mailbox?: TeamMailbox;
   source?: AgentRuntimeSource;
-  maxDelegateDepth?: number;
 };
 
 export type TeamRunner = {
@@ -514,7 +572,10 @@ export type AgentOptions<TContext = unknown> = {
   maxTokens?: number;
   maxTurns?: number;
   thinkingConfig?: ThinkingConfig;
+  reasoningEffort?: ReasoningEffort;
   tools?: Array<ToolDefinition<any, TContext>>;
+  toolBatchPolicy?: ToolBatchPolicy<TContext>;
+  toolConcurrency?: ToolConcurrencyOptions;
   skills?: SkillDefinition[];
   workspace?: AgentWorkspaceOptions;
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
@@ -542,11 +603,23 @@ export type QueryOptions<TContext = unknown> = {
   stream?: boolean;
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   context?: TContext;
   agentRuntime?: AgentRuntimeContext;
   permissions?: RuntimePermissions;
   tracer?: ContextTracer;
+};
+
+type QueryTraceContext = {
+  sessionId: string;
+  parentRunId: string;
+};
+
+const QUERY_TRACE_CONTEXT = Symbol("queryTraceContext");
+
+type InternalQueryOptions<TContext = unknown> = QueryOptions<TContext> & {
+  [QUERY_TRACE_CONTEXT]?: QueryTraceContext;
 };
 
 export type OutputFormat = "json" | BetaJSONOutputFormat;
@@ -555,6 +628,8 @@ export type ThinkingConfig =
   | { type: "adaptive" }
   | { type: "enabled"; budgetTokens: number }
   | { type: "disabled" };
+
+export type ReasoningEffort = "low" | "high" | "max";
 
 export type SDKSystemInitMessage = {
   type: "system";
@@ -651,6 +726,15 @@ export class ToolExecutionError extends AgentSDKError {}
 export class MaxTurnsError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
 
+export class ToolBatchRejectedError extends AgentSDKError {
+  readonly rejection: ToolBatchPolicyRejection;
+
+  constructor(rejection: ToolBatchPolicyRejection) {
+    super(rejection.message);
+    this.rejection = rejection;
+  }
+}
+
 export class ToolPermissionDeniedError extends AgentSDKError {
   readonly denial: PermissionDenial;
 
@@ -665,6 +749,7 @@ export function tool<TContext = unknown>(): <TSchema>(
   description: string,
   inputSchema: TSchema,
   handler: ToolHandler<InferInput<TSchema>, TContext>,
+  options?: ToolOptions<InferInput<TSchema>>,
 ) => ToolDefinition<InferInput<TSchema>, TContext>;
 
 export function tool<TSchema, TContext = unknown>(
@@ -672,6 +757,7 @@ export function tool<TSchema, TContext = unknown>(
   description: string,
   inputSchema: TSchema,
   handler: ToolHandler<InferInput<TSchema>, TContext>,
+  options?: ToolOptions<InferInput<TSchema>>,
 ): ToolDefinition<InferInput<TSchema>, TContext>;
 
 export function tool<TSchema, TContext = unknown>(
@@ -679,6 +765,7 @@ export function tool<TSchema, TContext = unknown>(
   description?: string,
   inputSchema?: TSchema,
   handler?: ToolHandler<InferInput<TSchema>, TContext>,
+  options?: ToolOptions<InferInput<TSchema>>,
 ):
   | ToolDefinition<InferInput<TSchema>, TContext>
   | (<TFactorySchema>(
@@ -686,6 +773,7 @@ export function tool<TSchema, TContext = unknown>(
     description: string,
     inputSchema: TFactorySchema,
     handler: ToolHandler<InferInput<TFactorySchema>, TContext>,
+    options?: ToolOptions<InferInput<TFactorySchema>>,
   ) => ToolDefinition<InferInput<TFactorySchema>, TContext>) {
   if (name === undefined) {
     return <TFactorySchema>(
@@ -693,15 +781,16 @@ export function tool<TSchema, TContext = unknown>(
       factoryDescription: string,
       factoryInputSchema: TFactorySchema,
       factoryHandler: ToolHandler<InferInput<TFactorySchema>, TContext>,
+      factoryOptions?: ToolOptions<InferInput<TFactorySchema>>,
     ): ToolDefinition<InferInput<TFactorySchema>, TContext> =>
-      createToolDefinition(factoryName, factoryDescription, factoryInputSchema, factoryHandler);
+      createToolDefinition(factoryName, factoryDescription, factoryInputSchema, factoryHandler, factoryOptions);
   }
 
   if (description === undefined || inputSchema === undefined || handler === undefined) {
     throw new Error("tool(name, description, inputSchema, handler) requires all arguments");
   }
 
-  return createToolDefinition(name, description, inputSchema, handler);
+  return createToolDefinition(name, description, inputSchema, handler, options);
 }
 
 function createToolDefinition<TSchema, TContext = unknown>(
@@ -709,6 +798,7 @@ function createToolDefinition<TSchema, TContext = unknown>(
   description: string,
   inputSchema: TSchema,
   handler: ToolHandler<InferInput<TSchema>, TContext>,
+  options?: ToolOptions<InferInput<TSchema>>,
 ): ToolDefinition<InferInput<TSchema>, TContext> {
   return {
     name,
@@ -719,6 +809,7 @@ function createToolDefinition<TSchema, TContext = unknown>(
       return parseWithSchema(inputSchema, input) as InferInput<TSchema>;
     },
     handler,
+    ...(options?.isConcurrencySafe ? { isConcurrencySafe: options.isConcurrencySafe } : {}),
   };
 }
 
@@ -756,7 +847,7 @@ export function agentTool(
   options: AgentToolOptions,
 ): ToolDefinition<AgentToolInput> {
   const toolName = sanitizeToolName(name);
-  return tool(
+  const definition = tool(
     toolName,
     formatAgentToolDescription(options.description),
     agentToolInputSchema,
@@ -809,6 +900,7 @@ export function agentTool(
       return { content: result.result };
     },
   );
+  return { ...definition, kind: "agent_tool" };
 }
 
 export function delegateTool(
@@ -818,7 +910,7 @@ export function delegateTool(
   options: DelegateToolOptions = {},
 ): ToolDefinition<{ task: string }> {
   const toolName = sanitizeToolName(name);
-  return tool(
+  const definition = tool(
     toolName,
     description,
     z.object({
@@ -840,6 +932,7 @@ export function delegateTool(
       return { content: result.content };
     },
   );
+  return { ...definition, kind: "agent_tool" };
 }
 
 export function createAgent<TContext = unknown>(options: AgentOptions<TContext>): Agent<TContext> {
@@ -931,6 +1024,20 @@ function formatRuntimePermissionInstructions(permissions: RuntimePermissions | u
     ]),
     "Read-only tools may inspect any path. Workspace grants are required for writing outside your private workspace; if a write tool returns permission_denied, write under an allowed root or ask your manager/host for a write grant.",
   ].join("\n");
+}
+
+function formatToolConcurrencyInstructions(
+  tools: Array<ToolDefinition<any, any>>,
+  options: Required<ToolConcurrencyOptions>,
+): string | undefined {
+  if (tools.length === 0 || options.mode === "sequential") return undefined;
+  if (options.mode === "safe" && !tools.some(definition => definition.isConcurrencySafe)) {
+    return undefined;
+  }
+  return [
+    "You can request multiple independent tools in one assistant response; the runtime will execute calls concurrently when allowed.",
+    "If a tool needs the result of an earlier tool to build its input, call them in separate assistant responses instead.",
+  ].join(" ");
 }
 
 function joinPromptSections(sections: Array<string | undefined>): string | undefined {
@@ -1448,6 +1555,7 @@ export function createTeam(options: TeamOptions): Team {
     mailbox,
     tools: leadTools,
     memberTools,
+    runnerOptions: { ...options.runner },
     send: (from, to, content, sendOptions) => mailbox.send(from, resolveMailbox(to), content, sendOptions),
     drain: drainOptions => drainTeam({
       members,
@@ -1458,11 +1566,13 @@ export function createTeam(options: TeamOptions): Team {
       root: options.lead,
       mailbox,
       source: { kind: "root", name, team: name, mailbox: "manager" },
+      ...options.runner,
     }).query(prompt, queryOptions),
     prompt: (prompt, queryOptions) => createTeamRunner({
       root: options.lead,
       mailbox,
       source: { kind: "root", name, team: name, mailbox: "manager" },
+      ...options.runner,
     }).prompt(prompt, queryOptions),
   };
 }
@@ -1478,7 +1588,13 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
     name: options.team?.name ?? "root",
     mailbox: "manager",
   };
-  const maxDelegateDepth = options.maxDelegateDepth ?? 8;
+  const maxDelegateDepth = options.maxDelegateDepth ?? options.team?.runnerOptions?.maxDelegateDepth ?? 8;
+  const maxConcurrentWorkItems = options.maxConcurrentWorkItems
+    ?? options.team?.runnerOptions?.maxConcurrentWorkItems
+    ?? 1;
+  if (!Number.isInteger(maxConcurrentWorkItems) || maxConcurrentWorkItems < 1) {
+    throw new Error("TeamRunnerOptions.maxConcurrentWorkItems must be a positive integer");
+  }
 
   return {
     root,
@@ -1486,13 +1602,14 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
     async *query(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): AsyncGenerator<TeamRunnerMessage> {
       const queue = new AsyncMessageQueue<TeamRunnerMessage>();
       let runError: unknown;
-      const run = runAgentLikeToFinal({
+      const run = runTeamInvocation({
         agent: root,
         prompt,
         mailbox,
         source,
         emit: message => queue.push(message),
         maxDelegateDepth,
+        maxConcurrentWorkItems,
         depth: 0,
         queryOptions,
         emitAgentMessage: emitRootAgentMessage,
@@ -1552,6 +1669,7 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
         const end = input.limit ? start + input.limit : undefined;
         return { content: lines.slice(start, end).join("\n") };
       },
+      { isConcurrencySafe: () => true },
     ),
     tool(
       "Write",
@@ -1604,6 +1722,7 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
           .join("\n");
         return { content: output };
       },
+      { isConcurrencySafe: () => true },
     ),
     tool(
       "Glob",
@@ -1623,6 +1742,7 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
           .join("\n");
         return { content: output };
       },
+      { isConcurrencySafe: () => true },
     ),
     tool(
       "Grep",
@@ -1650,6 +1770,7 @@ export function createAgentWorkspaceTools(options: AgentWorkspaceToolsOptions = 
         }
         return { content: lines.join("\n") };
       },
+      { isConcurrencySafe: () => true },
     ),
     tool(
       "Bash",
@@ -1676,6 +1797,7 @@ export async function* query<TContext = unknown>(
     stream?: boolean;
     outputFormat?: OutputFormat;
     thinkingConfig?: ThinkingConfig;
+    reasoningEffort?: ReasoningEffort;
     signal?: AbortSignal;
     context?: TContext;
   },
@@ -1685,6 +1807,7 @@ export async function* query<TContext = unknown>(
     stream: params.stream,
     outputFormat: params.outputFormat,
     thinkingConfig: params.thinkingConfig,
+    reasoningEffort: params.reasoningEffort,
     signal: params.signal,
     context: params.context,
   });
@@ -1695,6 +1818,7 @@ export class Agent<TContext = unknown> {
   private readonly modelClient: ModelClient;
   private readonly messages: ModelMessage[] = [];
   private readonly sessionId = randomId();
+  private readonly toolConcurrency: Required<ToolConcurrencyOptions>;
 
   constructor(options: AgentOptions<TContext>) {
     if (!options.model) {
@@ -1711,6 +1835,7 @@ export class Agent<TContext = unknown> {
       maxTurns: 50,
       ...configuredOptions,
     };
+    this.toolConcurrency = normalizeToolConcurrencyOptions(configuredOptions.toolConcurrency);
     this.modelClient =
       options.modelClient ??
       new AnthropicModelClient({
@@ -1722,6 +1847,7 @@ export class Agent<TContext = unknown> {
   async *query(prompt: string | ContentBlock[], options: QueryOptions<TContext> = {}): AsyncGenerator<SDKMessage> {
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
+    const queryTraceContext = getQueryTraceContext(options);
     const source: AgentRuntimeSource = options.agentRuntime?.source ?? {
       kind: "agent",
       name: this.options.name ?? "agent",
@@ -1729,11 +1855,13 @@ export class Agent<TContext = unknown> {
     const effectivePermissions = options.agentRuntime?.permissions ?? options.permissions;
     const systemPrompt = joinPromptSections([
       this.options.systemPrompt,
+      formatToolConcurrencyInstructions(this.options.tools ?? [], this.toolConcurrency),
       formatRuntimePermissionInstructions(effectivePermissions),
     ]);
     const traceBase = {
-      session_id: this.sessionId,
+      session_id: queryTraceContext?.sessionId ?? this.sessionId,
       run_id: runId,
+      ...(queryTraceContext ? { parent_run_id: queryTraceContext.parentRunId } : {}),
       source,
     };
 
@@ -1743,6 +1871,7 @@ export class Agent<TContext = unknown> {
       data: {
         model: this.options.model,
         tools: (this.options.tools ?? []).map(tool => tool.name),
+        ...(queryTraceContext ? { agent_session_id: this.sessionId } : {}),
       },
     });
 
@@ -1806,6 +1935,7 @@ export class Agent<TContext = unknown> {
       const modelTools = this.modelTools();
       const stream = options.stream ?? true;
       const thinkingConfig = options.thinkingConfig ?? this.options.thinkingConfig;
+      const reasoningEffort = options.reasoningEffort ?? this.options.reasoningEffort;
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "model_request",
@@ -1819,6 +1949,7 @@ export class Agent<TContext = unknown> {
           stream,
           ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
           ...(thinkingConfig ? { thinkingConfig } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
         },
       });
       try {
@@ -1831,6 +1962,7 @@ export class Agent<TContext = unknown> {
           stream,
           outputFormat: options.outputFormat,
           thinkingConfig,
+          reasoningEffort,
           onStreamEvent: event => {
             if (stream) {
               streamEvents.push(event);
@@ -1890,6 +2022,49 @@ export class Agent<TContext = unknown> {
 
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
+      let batchRejection: ToolBatchPolicyRejection | undefined;
+      if (this.options.toolBatchPolicy) {
+        const toolCalls: ToolBatchCall[] = toolUseBlocks.map(block => ({
+          id: block.id,
+          name: block.name,
+          input: block.input,
+          kind: this.options.tools?.find(tool => tool.name === block.name)?.kind ?? "tool",
+        }));
+        try {
+          const decision = await this.options.toolBatchPolicy.validate({
+            source: options.agentRuntime?.source,
+            toolCalls,
+            context: options.context,
+            signal: options.signal,
+          });
+          if (!decision.allowed) batchRejection = decision;
+        } catch (error) {
+          const abortError = error instanceof AbortError
+            ? error
+            : abortErrorIfNeeded(options.signal);
+          if (abortError) {
+            const result = this.resultMessage("error_abort", "", turns, abortError);
+            await emitTraceEvent(tracer, {
+              ...traceBase,
+              type: "result",
+              data: traceResultData(result),
+            });
+            await flushTracer(tracer);
+            yield result;
+            return;
+          }
+          batchRejection = {
+            allowed: false,
+            code: "tool_batch_policy_error",
+            message: "Tool batch validation failed before execution.",
+            suggestedNextStep: "Retry with the tool calls split into separate steps.",
+          };
+        }
+      }
+
+      const batchError = batchRejection
+        ? new ToolBatchRejectedError(batchRejection)
+        : undefined;
       for (const block of toolUseBlocks) {
         await emitTraceEvent(tracer, {
           ...traceBase,
@@ -1900,16 +2075,9 @@ export class Agent<TContext = unknown> {
             input: block.input,
           },
         });
-        const result = await this.runTool(
-          block,
-          options.signal,
-          options.agentRuntime,
-          options.permissions,
-          options.context,
-        );
-        if (result.error && !firstToolError) {
-          firstToolError = result.error;
-        }
+      }
+
+      const finishToolExecution = async (result: ToolExecutionOutcome): Promise<ToolExecutionOutcome> => {
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "tool_result",
@@ -1920,6 +2088,54 @@ export class Agent<TContext = unknown> {
             ...(result.error ? { error: result.error } : {}),
           },
         });
+        return result;
+      };
+      const executeTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> =>
+        finishToolExecution(await this.runTool(
+          block,
+          options.signal,
+          options.agentRuntime,
+          options.permissions,
+          options.context,
+        ));
+      const cancelTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> => {
+        const error = new AbortError(`Tool ${block.name} was not started because the operation was aborted`);
+        return finishToolExecution({
+          block: {
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: error.message,
+            is_error: true,
+          },
+          error,
+        });
+      };
+
+      let executionResults: ToolExecutionOutcome[];
+      if (batchRejection && batchError) {
+        executionResults = [];
+        for (const block of toolUseBlocks) {
+          executionResults.push(await finishToolExecution({
+            block: {
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: formatToolBatchRejection(batchRejection),
+              is_error: true,
+            },
+            error: batchError,
+          }));
+        }
+      } else {
+        executionResults = await this.executeToolBatch(
+          toolUseBlocks,
+          options.signal,
+          executeTool,
+          cancelTool,
+        );
+      }
+
+      firstToolError = executionResults.find(result => result.error)?.error;
+      for (const result of executionResults) {
         toolResults.push(result.block);
       }
 
@@ -1940,6 +2156,22 @@ export class Agent<TContext = unknown> {
         tool_use_result: toolResults.length === 1 ? toolResults[0]?.content : toolResults,
         ...(firstToolError ? { error: firstToolError } : {}),
       };
+
+      if (options.agentRuntime?.shouldPauseAfterToolBatch?.()) {
+        const result = this.resultMessage(
+          "success",
+          "Delegated work was queued. Waiting for team runtime reports before continuing.",
+          turns,
+        );
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
+        return;
+      }
     }
   }
 
@@ -2030,7 +2262,7 @@ export class Agent<TContext = unknown> {
     agentRuntime: AgentRuntimeContext | undefined,
     permissions: RuntimePermissions | undefined,
     context: TContext | undefined,
-  ): Promise<{ block: ToolResultBlock; error?: Error }> {
+  ): Promise<ToolExecutionOutcome> {
     const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
     if (!definition) {
       return {
@@ -2043,23 +2275,23 @@ export class Agent<TContext = unknown> {
       };
     }
 
-    const permission = await (this.options.permission?.({
-      toolName: block.name,
-      input: block.input,
-      toolUseId: block.id,
-    }) ?? { behavior: "allow" as const });
-    if (permission.behavior === "deny") {
-      return {
-        block: {
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: permission.message,
-          is_error: true,
-        },
-      };
-    }
-
     try {
+      const permission = await (this.options.permission?.({
+        toolName: block.name,
+        input: block.input,
+        toolUseId: block.id,
+      }) ?? { behavior: "allow" as const });
+      if (permission.behavior === "deny") {
+        return {
+          block: {
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: permission.message,
+            is_error: true,
+          },
+        };
+      }
+
       const parsed = definition.parse(block.input);
       const output = await definition.handler(parsed, {
         signal,
@@ -2101,6 +2333,89 @@ export class Agent<TContext = unknown> {
       };
     }
   }
+
+  private async executeToolBatch(
+    blocks: ToolUseBlock[],
+    signal: AbortSignal | undefined,
+    execute: (block: ToolUseBlock) => Promise<ToolExecutionOutcome>,
+    cancel: (block: ToolUseBlock) => Promise<ToolExecutionOutcome>,
+  ): Promise<ToolExecutionOutcome[]> {
+    const results: ToolExecutionOutcome[] = new Array(blocks.length);
+    let index = 0;
+    while (index < blocks.length) {
+      const block = blocks[index]!;
+      if (!this.isToolCallConcurrencySafe(block)) {
+        results[index] = signal?.aborted ? await cancel(block) : await execute(block);
+        index++;
+        continue;
+      }
+
+      let end = index + 1;
+      while (end < blocks.length && this.isToolCallConcurrencySafe(blocks[end]!)) {
+        end++;
+      }
+      const batch = blocks.slice(index, end);
+      const batchResults = await mapWithConcurrency(
+        batch,
+        this.toolConcurrency.maxConcurrency,
+        item => signal?.aborted ? cancel(item) : execute(item),
+      );
+      for (let offset = 0; offset < batchResults.length; offset++) {
+        results[index + offset] = batchResults[offset]!;
+      }
+      index = end;
+    }
+    return results;
+  }
+
+  private isToolCallConcurrencySafe(block: ToolUseBlock): boolean {
+    if (this.toolConcurrency.mode === "all") return true;
+    if (this.toolConcurrency.mode === "sequential") return false;
+    const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
+    if (!definition?.isConcurrencySafe) return false;
+    try {
+      return Boolean(definition.isConcurrencySafe(definition.parse(block.input)));
+    } catch {
+      return false;
+    }
+  }
+}
+
+function normalizeToolConcurrencyOptions(
+  options: ToolConcurrencyOptions | undefined,
+): Required<ToolConcurrencyOptions> {
+  const mode = options?.mode ?? "safe";
+  if (!(["safe", "all", "sequential"] as ToolConcurrencyMode[]).includes(mode)) {
+    throw new Error('AgentOptions.toolConcurrency.mode must be "safe", "all", or "sequential"');
+  }
+  const maxConcurrency = options?.maxConcurrency ?? 10;
+  if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
+    throw new Error("AgentOptions.toolConcurrency.maxConcurrency must be a positive integer");
+  }
+  return { mode, maxConcurrency };
+}
+
+async function mapWithConcurrency<TInput, TOutput>(
+  inputs: TInput[],
+  maxConcurrency: number,
+  execute: (input: TInput) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const outputs: TOutput[] = new Array(inputs.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(maxConcurrency, inputs.length) },
+    async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= inputs.length) return;
+        outputs[index] = await execute(inputs[index]!);
+      }
+    },
+  );
+  const settled = await Promise.allSettled(workers);
+  const rejected = settled.find(result => result.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
+  return outputs;
 }
 
 class AnthropicModelClient implements ModelClient {
@@ -2128,6 +2443,9 @@ class AnthropicModelClient implements ModelClient {
         ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
         ...(request.thinkingConfig && request.thinkingConfig.type !== "disabled"
           ? { thinking: toAnthropicThinkingConfig(request.thinkingConfig, request.maxTokens) }
+          : {}),
+        ...(request.reasoningEffort
+          ? { reasoning_effort: request.reasoningEffort }
           : {}),
       };
       if (request.stream) {
@@ -2490,6 +2808,90 @@ type AgentLikeMessageEmitter = (
   },
 ) => void;
 
+async function runTeamInvocation(input: {
+  agent: AgentLike<any>;
+  prompt: string | ContentBlock[];
+  mailbox: TeamMailbox;
+  source: AgentRuntimeSource;
+  emit(message: TeamRunnerMessage): void;
+  maxDelegateDepth: number;
+  maxConcurrentWorkItems: number;
+  depth: number;
+  queryOptions: QueryOptions;
+  emitAgentMessage: AgentLikeMessageEmitter;
+}): Promise<SDKResultMessage> {
+  const tracer = input.queryOptions.tracer;
+  const inheritedTraceContext = getQueryTraceContext(input.queryOptions);
+  const sessionId = inheritedTraceContext?.sessionId ?? randomId();
+  const runId = randomId();
+  const traceBase = {
+    session_id: sessionId,
+    run_id: runId,
+    ...(inheritedTraceContext ? { parent_run_id: inheritedTraceContext.parentRunId } : {}),
+    source: input.source,
+  };
+
+  await emitTraceEvent(tracer, {
+    ...traceBase,
+    type: "run_start",
+    data: {
+      runtime: "team",
+      team: input.source.team ?? input.source.name,
+      max_delegate_depth: input.maxDelegateDepth,
+      max_concurrent_work_items: input.maxConcurrentWorkItems,
+    },
+  });
+  await emitTraceEvent(tracer, {
+    ...traceBase,
+    type: "user_message",
+    data: {
+      message: {
+        role: "user",
+        content: input.prompt,
+      },
+    },
+  });
+
+  const childQueryOptions = withQueryTraceContext(input.queryOptions, {
+    sessionId,
+    parentRunId: runId,
+  });
+
+  try {
+    const result = await runAgentLikeToFinal({
+      ...input,
+      queryOptions: childQueryOptions,
+    });
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "result",
+      data: traceResultData(result),
+    });
+    await flushTracer(tracer);
+    return result;
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "error",
+      data: { error: normalized },
+    });
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "result",
+      data: {
+        subtype: normalized instanceof AbortError ? "error_abort" : "error",
+        is_error: true,
+        result: "",
+        num_turns: 0,
+        error: normalized,
+      },
+    });
+    await flushTracer(tracer);
+    throw error;
+  }
+}
+
 async function runAgentLikeToFinal(input: {
   agent: AgentLike<any>;
   prompt: string | ContentBlock[];
@@ -2497,6 +2899,7 @@ async function runAgentLikeToFinal(input: {
   source: AgentRuntimeSource;
   emit(message: TeamRunnerMessage): void;
   maxDelegateDepth: number;
+  maxConcurrentWorkItems: number;
   depth: number;
   queryOptions: QueryOptions;
   emitAgentMessage: AgentLikeMessageEmitter;
@@ -2514,13 +2917,14 @@ async function runAgentLikeToFinal(input: {
       source: input.source,
       emit: input.emit,
       maxDelegateDepth: input.maxDelegateDepth,
+      maxConcurrentWorkItems: input.maxConcurrentWorkItems,
       depth: input.depth,
       queryOptions: input.queryOptions,
       acceptedHandoffs,
     });
     let finalResult: SDKResultMessage | undefined;
 
-    for await (const agentMessage of input.agent.query(nextPrompt, {
+    const agentQueryOptions = withInheritedQueryTraceContext(input.queryOptions, {
       stream: input.queryOptions.stream,
       outputFormat: input.queryOptions.outputFormat,
       signal: input.queryOptions.signal,
@@ -2528,7 +2932,8 @@ async function runAgentLikeToFinal(input: {
       tracer: input.queryOptions.tracer,
       agentRuntime,
       permissions: agentRuntime.permissions,
-    })) {
+    });
+    for await (const agentMessage of input.agent.query(nextPrompt, agentQueryOptions)) {
       if (agentMessage.type === "result") {
         finalResult = agentMessage;
       }
@@ -2556,32 +2961,15 @@ async function runAgentLikeToFinal(input: {
       throw new Error("Team runner exceeded maximum handoff follow-up rounds (50)");
     }
 
-    const replies: TeamMessage[] = [];
-    for (let index = 0; index < acceptedHandoffs.length; index++) {
-      const handoff = acceptedHandoffs[index]!;
-      let result: AgentRuntimeDelegateResult;
-      try {
-        result = await executeDelegateWork({
-          ...handoff,
-          mailbox: input.mailbox,
-          emit: input.emit,
-          maxDelegateDepth: input.maxDelegateDepth,
-          queryOptions: input.queryOptions,
-        });
-      } catch (error) {
-        if (error instanceof AbortError || abortErrorIfNeeded(input.queryOptions.signal)) {
-          await cancelAcceptedDelegateWork(
-            acceptedHandoffs.slice(index + 1),
-            input.mailbox,
-            input.emit,
-          );
-        }
-        throw error;
-      }
-      if (result.reply) {
-        replies.push(result.reply);
-      }
-    }
+    const delegateResults = await executeAcceptedDelegateWork({
+      handoffs: acceptedHandoffs,
+      mailbox: input.mailbox,
+      emit: input.emit,
+      maxDelegateDepth: input.maxDelegateDepth,
+      maxConcurrentWorkItems: input.maxConcurrentWorkItems,
+      queryOptions: input.queryOptions,
+    });
+    const replies = delegateResults.flatMap(result => result.reply ? [result.reply] : []);
 
     if (replies.length === 0) {
       return finalResult;
@@ -2591,10 +2979,100 @@ async function runAgentLikeToFinal(input: {
   }
 }
 
+async function executeAcceptedDelegateWork(input: {
+  handoffs: AcceptedDelegateWork[];
+  mailbox: TeamMailbox;
+  emit(message: TeamRunnerMessage): void;
+  maxDelegateDepth: number;
+  maxConcurrentWorkItems: number;
+  queryOptions: QueryOptions;
+}): Promise<AgentRuntimeDelegateResult[]> {
+  const pending = new Set(input.handoffs.map((_, index) => index));
+  const activeTargets = new Set<string>();
+  const inFlight = new Map<number, Promise<{
+    index: number;
+    ok: true;
+    result: AgentRuntimeDelegateResult;
+  } | {
+    index: number;
+    ok: false;
+    error: unknown;
+  }>>();
+  const results: Array<AgentRuntimeDelegateResult | undefined> = new Array(input.handoffs.length);
+  const runtimeAbort = new AbortController();
+  const signal = combineAbortSignals(input.queryOptions.signal, runtimeAbort.signal);
+  let hasFatalError = false;
+  let fatalError: unknown;
+
+  const start = (index: number): void => {
+    const handoff = input.handoffs[index]!;
+    pending.delete(index);
+    activeTargets.add(handoff.targetMailbox);
+    const execution = executeDelegateWork({
+      ...handoff,
+      mailbox: input.mailbox,
+      emit: input.emit,
+      maxDelegateDepth: input.maxDelegateDepth,
+      maxConcurrentWorkItems: input.maxConcurrentWorkItems,
+      queryOptions: { ...input.queryOptions, signal },
+    }).then(
+      result => ({ index, ok: true as const, result }),
+      error => ({ index, ok: false as const, error }),
+    );
+    inFlight.set(index, execution);
+  };
+
+  while (pending.size > 0 || inFlight.size > 0) {
+    const abortError = abortErrorIfNeeded(signal);
+    if (abortError) {
+      hasFatalError = true;
+      fatalError = abortError;
+      break;
+    }
+
+    while (inFlight.size < input.maxConcurrentWorkItems) {
+      const nextIndex = [...pending].find(index =>
+        !activeTargets.has(input.handoffs[index]!.targetMailbox)
+      );
+      if (nextIndex === undefined) break;
+      start(nextIndex);
+    }
+
+    if (inFlight.size === 0) break;
+    const settled = await Promise.race(inFlight.values());
+    const handoff = input.handoffs[settled.index]!;
+    inFlight.delete(settled.index);
+    activeTargets.delete(handoff.targetMailbox);
+    if (settled.ok) {
+      results[settled.index] = settled.result;
+    } else {
+      hasFatalError = true;
+      fatalError = settled.error;
+      break;
+    }
+  }
+
+  if (hasFatalError) {
+    runtimeAbort.abort(fatalError);
+    const remaining = await Promise.all(inFlight.values());
+    for (const settled of remaining) {
+      if (settled.ok) results[settled.index] = settled.result;
+    }
+    await cancelAcceptedDelegateWork(input.handoffs, input.mailbox, input.emit);
+    throw fatalError;
+  }
+
+  return results.map((result, index) => {
+    if (!result) throw new Error(`Accepted handoff ${index} completed without a result`);
+    return result;
+  });
+}
+
 async function executeDelegateWork(input: AcceptedDelegateWork & {
   mailbox: TeamMailbox;
   emit(message: TeamRunnerMessage): void;
   maxDelegateDepth: number;
+  maxConcurrentWorkItems: number;
   queryOptions: QueryOptions;
 }): Promise<AgentRuntimeDelegateResult> {
   const claimed = await input.mailbox.claimNext(input.targetMailbox);
@@ -2623,6 +3101,7 @@ async function executeDelegateWork(input: AcceptedDelegateWork & {
       source: input.targetSource,
       emit: input.emit,
       maxDelegateDepth: input.maxDelegateDepth,
+      maxConcurrentWorkItems: input.maxConcurrentWorkItems,
       depth: input.depth + 1,
       queryOptions: {
         ...input.queryOptions,
@@ -2846,6 +3325,7 @@ function createTeamRunnerRuntime(input: {
   source: AgentRuntimeSource;
   emit(message: TeamRunnerMessage): void;
   maxDelegateDepth: number;
+  maxConcurrentWorkItems: number;
   depth: number;
   queryOptions: QueryOptions;
   acceptedHandoffs: AcceptedDelegateWork[];
@@ -2855,6 +3335,7 @@ function createTeamRunnerRuntime(input: {
     source: input.source,
     permissions,
     emit: input.emit,
+    shouldPauseAfterToolBatch: () => input.acceptedHandoffs.length > 0,
     async delegate(delegateInput) {
       if (input.depth >= input.maxDelegateDepth) {
         throw new Error(`Reached maximum delegate depth (${input.maxDelegateDepth})`);
@@ -2865,6 +3346,7 @@ function createTeamRunnerRuntime(input: {
       const targetSource: AgentRuntimeSource = {
         kind: "team_member",
         name: delegateInput.name,
+        ...(input.source.team ? { team: input.source.team } : {}),
         member: delegateInput.name,
         mailbox: targetMailbox,
       };
@@ -2912,6 +3394,7 @@ function createTeamRunnerRuntime(input: {
         mailbox: input.mailbox,
         emit: input.emit,
         maxDelegateDepth: input.maxDelegateDepth,
+        maxConcurrentWorkItems: input.maxConcurrentWorkItems,
         queryOptions: input.queryOptions,
       });
     },
@@ -2936,7 +3419,7 @@ function formatAgentToolDescription(description: string): string {
     "",
     "This tool calls another AgentLike. Choose the action mode explicitly:",
     '- mode="ask": ask the AgentLike and wait for its final answer in this tool call.',
-    '- mode="handoff": assign work and receive an acceptance receipt immediately; requires a team/runtime context.',
+    '- mode="handoff": queue work and receive an acceptance receipt immediately; requires a team/runtime context. The receipt means queued, not completed. After the current tool batch, the team runtime runs the member and resumes you with a completed or failed report. Do not call tools that depend on the delegated result before that report arrives.',
     '- mode="observe": request observable long-running work; currently unsupported and will return a clear error.',
     "Provide a clear task, expected output, and acceptance criteria when useful.",
     "If the target needs to write in a shared workspace, include workspaceGrants with root, access, and reason. The runtime will only grant write access that the caller is already allowed to delegate, and the result will say which grants were accepted or why they were denied. Read-only tools do not require workspace grants.",
@@ -3019,11 +3502,28 @@ function renderAcceptedHandoffReplyPrompt(source: AgentRuntimeSource, replies: T
 function formatDelegateAccepted(message: TeamMessage, workspaceGrants: WorkspaceGrant[] = []): string {
   return JSON.stringify({
     status: "accepted",
+    phase: "queued",
+    completion_pending: true,
     message_id: message.id,
+    work_item_id: message.workItemId,
     thread_id: message.threadId,
     to: message.to,
     ...(workspaceGrants.length > 0
       ? { workspaceGrants: workspaceGrants.map(formatWorkspaceGrantForReceipt) }
+      : {}),
+  }, null, 2);
+}
+
+function formatToolBatchRejection(rejection: ToolBatchPolicyRejection): string {
+  return JSON.stringify({
+    status: "rejected",
+    code: rejection.code,
+    message: rejection.message,
+    ...(rejection.conflictingToolCallIds
+      ? { conflicting_tool_call_ids: rejection.conflictingToolCallIds }
+      : {}),
+    ...(rejection.suggestedNextStep
+      ? { suggested_next_step: rejection.suggestedNextStep }
       : {}),
   }, null, 2);
 }
@@ -3499,6 +3999,34 @@ function abortErrorIfNeeded(signal: AbortSignal | undefined): AbortError | undef
   return signal?.aborted ? new AbortError("Operation aborted") : undefined;
 }
 
+function getQueryTraceContext(options: QueryOptions): QueryTraceContext | undefined {
+  return (options as InternalQueryOptions)[QUERY_TRACE_CONTEXT];
+}
+
+function withQueryTraceContext<TContext>(
+  options: QueryOptions<TContext>,
+  traceContext: QueryTraceContext,
+): QueryOptions<TContext> {
+  return {
+    ...options,
+    [QUERY_TRACE_CONTEXT]: traceContext,
+  } as InternalQueryOptions<TContext>;
+}
+
+function withInheritedQueryTraceContext<TContext>(
+  source: QueryOptions,
+  target: QueryOptions<TContext>,
+): QueryOptions<TContext> {
+  const traceContext = getQueryTraceContext(source);
+  return traceContext ? withQueryTraceContext(target, traceContext) : target;
+}
+
+function combineAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (active.length === 1) return active[0]!;
+  return AbortSignal.any(active);
+}
+
 async function startLangSmithRootRun(
   event: ContextTraceEvent,
   options: LangSmithContextTracerOptions,
@@ -3520,6 +4048,9 @@ async function startLangSmithRootRun(
     metadata: langSmithMetadata(event, options, {
       model: event.data.model,
       tools: event.data.tools,
+      agent_session_id: event.data.agent_session_id,
+      runtime: event.data.runtime,
+      team: event.data.team,
     }),
     tags: langSmithTags(event, options),
     ...langSmithConnectionConfig(options),
