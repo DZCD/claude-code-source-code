@@ -9,12 +9,12 @@ import { isSplash, pageMarkdown, type DocEntry } from "../lib/page-markdown";
  */
 export const getStaticPaths: GetStaticPaths = async () => {
   const entries = await getCollection("docs");
-  return entries
-    .filter(entry => !isSplash(entry))
-    .map(entry => ({ params: { slug: entry.id }, props: { entry } }));
+  const pages = entries.filter(entry => !isSplash(entry));
+  const knownSlugs = new Set(pages.map(entry => entry.id));
+  return pages.map(entry => ({ params: { slug: entry.id }, props: { entry, knownSlugs } }));
 };
 
 export const GET: APIRoute = ({ props }) =>
-  new Response(pageMarkdown(props.entry as DocEntry), {
+  new Response(pageMarkdown(props.entry as DocEntry, props.knownSlugs as Set<string>), {
     headers: { "Content-Type": "text/markdown; charset=utf-8" },
   });

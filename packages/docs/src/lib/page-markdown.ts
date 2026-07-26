@@ -25,8 +25,8 @@ export function markdownUrl(site: URL | undefined, slug: string): string {
  * frontmatter, then the body verbatim. Astro's own metadata is dropped since it
  * means nothing outside the site build.
  */
-export function pageMarkdown(entry: DocEntry): string {
-  const body = (entry.body ?? "").trim();
+export function pageMarkdown(entry: DocEntry, knownSlugs: ReadonlySet<string>): string {
+  const body = linkToMarkdownPages((entry.body ?? "").trim(), knownSlugs);
   if (body.includes("@astrojs/starlight/components")) {
     // Not fatal, but the mirror will contain raw JSX until the page is reworked
     // or marked as a splash page.
@@ -36,4 +36,16 @@ export function pageMarkdown(entry: DocEntry): string {
   }
   const description = entry.data.description ? `> ${entry.data.description}\n\n` : "";
   return `# ${entry.data.title}\n\n${description}${body}\n`;
+}
+
+/**
+ * Repoints cross-references at the Markdown mirrors. Without this an agent
+ * reading a mirror would follow `/concepts/tools/` straight back into HTML,
+ * which is the thing these files exist to avoid. Paths that do not name a real
+ * page are left alone.
+ */
+function linkToMarkdownPages(body: string, knownSlugs: ReadonlySet<string>): string {
+  return body.replace(/\]\(\/([^)\s#]*?)\/?(#[^)\s]*)?\)/g, (match, path: string, anchor?: string) =>
+    knownSlugs.has(path) ? `](/${path}.md${anchor ?? ""})` : match,
+  );
 }

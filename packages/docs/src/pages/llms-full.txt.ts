@@ -15,11 +15,12 @@ export const GET: APIRoute = async () => {
   const entries = await getCollection("docs");
   const bySlug = new Map<string, DocEntry>(entries.map(entry => [entry.id, entry]));
 
+  const knownSlugs = new Set(entries.filter(entry => !isSplash(entry)).map(entry => entry.id));
   const pages = sidebar
     .flatMap(group => group.items)
     .map(item => bySlug.get(item.slug))
     .filter((entry): entry is DocEntry => entry !== undefined && isEnglish(entry) && !isSplash(entry))
-    .map(pageMarkdown);
+    .map(entry => pageMarkdown(entry, knownSlugs));
 
   return new Response([INTRO, ...pages].join("\n\n---\n\n"), {
     headers: { "Content-Type": "text/plain; charset=utf-8" },
