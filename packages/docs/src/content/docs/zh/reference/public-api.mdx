@@ -22,6 +22,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
 | `createCompositeAgentHooks(hooks)` | 按数组顺序串联 hook，后一个收到前一个的输出。 |
+| `DEFAULT_COMPACTION_PROMPT` | `autoCompact` 使用的内置摘要指令。 |
 | `teamMember(options)` | 创建一个团队成员，带 name、role、focus 和 agent。 |
 | `createTeam(options)` | 创建一个围绕 Lead 的可调用 Team，包含成员、mailbox 和内置 runtime。Lead 提交一批 handoff 后，SDK 会先执行成员，再继续调用 Lead 模型。通过 `runner.maxConcurrentWorkItems` 设置跨成员并发上限，默认值为 `1`。 |
 | `createTeamRunner(options)` | 高级 runtime，用于手动运行带 mailbox AgentLike 委托工具的 root `AgentLike`。它接收 `maxConcurrentWorkItems`，同时保留成员失败隔离和全局中止清理。 |
@@ -76,6 +77,7 @@ const agent = createBareAgent({
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
 | `hooks` | `AgentHooks` | 改写工具结果和外发模型请求的生命周期回调。委派的子 agent 不会继承。 |
+| `autoCompact` | `boolean \| AutoCompactOptions` | 超过 token 阈值后把较早历史替换为模型写出的摘要。默认关闭；传 `true` 使用默认配置。 |
 | `toolConcurrency` | `ToolConcurrencyOptions` | 工具调用调度。默认是 `{ mode: "safe", maxConcurrency: 10 }`；未声明安全规则的工具保持顺序执行。 |
 | `skills` | `SkillDefinition[]` | 每次 query 按需选择的可复用指令包。 |
 | `workspace` | `string \| { cwd: string; allowedDirectories?: string[]; bashTimeoutMs?: number }` | 可选的私有 workspace 覆盖配置。传了 `name` 时默认是 `~/.agent/workspaces/<name>`，否则是 `~/.agent/workspaces/agent-<session-id>`。 |
@@ -185,6 +187,8 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`。 |
 | `ToolConcurrencyMode` | 工具调度模式：`"safe"`、`"all"` 或 `"sequential"`。 |
 | `ToolConcurrencyOptions` | Agent 的工具调度模式和正整数 `maxConcurrency` 上限。 |
+| `AutoCompactOptions` | 压缩配置：`thresholdTokens`（100000）、`keepRecentMessages`（6）、`prompt`、`model`、`maxTokens`。 |
+| `SDKSystemCompactionMessage` | `subtype: "compaction"` 的 `system` 消息，历史被摘要时输出，包含消息条数和摘要自身的用量。 |
 | `AgentHooks` | `AgentOptions.hooks` 接收的生命周期回调：`onToolResult` 和 `onModelRequest`。hook 抛错会直接从 `query()` 抛出。 |
 | `ToolResultHookContext` | `onToolResult` 的入参：工具名、原始输入、结果块，以及调用失败时的 error。 |
 | `ModelRequestHookContext` | `onModelRequest` 的入参：即将发出的 messages 和 system prompt，以及轮次编号。 |

@@ -416,6 +416,50 @@ policy, tool execution is unchanged. A policy prevents known bad combinations
 inside one model response, but it does not replace database transactions or
 revision checks against concurrent external updates.
 
+## Automatic Context Compaction
+
+History only grows, so a long-running agent eventually exceeds the model's
+context window. Enable `autoCompact` to replace the older part of the
+conversation with a model-written summary:
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+  autoCompact: true, // or { thresholdTokens: 150_000, keepRecentMessages: 8 }
+});
+```
+
+Compaction runs between turns, once a response reports more input tokens than
+`thresholdTokens` (default `100000`). Everything except the last
+`keepRecentMessages` messages (default `6`) is summarized, and the history is
+rebuilt as that summary followed by the retained messages. The summary is
+wrapped in an instruction telling the model that compaction just happened and to
+continue from it, so the next turn resumes the task instead of restarting it.
+
+Unlike the `onModelRequest` hook, which shapes a single request, this **rewrites
+the stored conversation** — that is what makes the saving persist, but the
+replaced turns are gone.
+
+The cut point never separates a `tool_result` from the `tool_use` that produced
+it, because the model API rejects that. If no safe cut leaves anything to
+summarize, compaction is skipped.
+
+Compaction costs a model call. Its tokens are folded into `result.usage`, and a
+`system` message with `subtype: "compaction"` reports what happened:
+
+```ts
+for await (const message of agent.query("Refactor this module.")) {
+  if (message.type === "system" && message.subtype === "compaction") {
+    console.log(`compacted ${message.compacted_messages} messages`, message.usage);
+  }
+}
+```
+
+The trigger depends on reported usage, so a custom `ModelClient` that omits
+`usage` never compacts. Override the instruction with `prompt`, or read the
+built-in one from `DEFAULT_COMPACTION_PROMPT`.
+
 ## Hooks
 
 `permission` and `toolBatchPolicy` decide whether something runs. Hooks decide

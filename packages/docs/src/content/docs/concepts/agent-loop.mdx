@@ -94,3 +94,32 @@ if (result.stop_reason === "max_tokens") {
 `stop_reason: "max_tokens"` means the model ran out of output budget mid-response. The SDK does not treat that as an error, so checking it is the only way to tell a complete answer from a truncated one. Raise `maxTokens` or ask for less output.
 
 Usage is reported by the model client. The built-in Anthropic client fills it in; a custom `ModelClient` that omits `usage` yields zeroed counts rather than an error.
+
+## Automatic context compaction
+
+History only grows, so a long-running agent eventually exceeds the model's context window. Enable `autoCompact` to have the SDK replace the older part of the conversation with a model-written summary:
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  autoCompact: true, // or { thresholdTokens: 150_000, keepRecentMessages: 8 }
+});
+```
+
+Compaction runs **between turns**, once a response has reported more input tokens than `thresholdTokens` (default `100000`). The SDK summarizes everything except the last `keepRecentMessages` messages (default `6`), then rebuilds the history as the summary followed by those retained messages. The summary is wrapped in an instruction telling the model that compaction just happened and to continue from it, so the next turn resumes the task rather than restarting it.
+
+Unlike the `onModelRequest` hook, which only shapes one outgoing request, **this rewrites the stored conversation**. That is the point — the saving has to persist across turns — but it means the replaced turns are gone from the agent.
+
+The cut point is chosen so the retained messages stand on their own: a `tool_result` is never separated from the `tool_use` that produced it, since the model API rejects that pairing. If no safe cut leaves anything to summarize, compaction is skipped.
+
+Compaction costs a model call. Its tokens are folded into `result.usage`, so the total stays honest, and a `system` message with `subtype: "compaction"` is emitted when it happens:
+
+```ts
+for await (const message of agent.query("Refactor this module.")) {
+  if (message.type === "system" && message.subtype === "compaction") {
+    console.log(`compacted ${message.compacted_messages} messages`, message.usage);
+  }
+}
+```
+
+The trigger depends on reported usage, so an agent using a custom `ModelClient` that omits `usage` never compacts. Override the summarization instruction with `prompt`, or read the built-in one from `DEFAULT_COMPACTION_PROMPT`.

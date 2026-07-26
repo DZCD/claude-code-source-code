@@ -21,6 +21,7 @@ import {
   tool,
   type ContextTraceEvent,
   type ModelClient,
+  type ModelMessage,
   type ModelRequest,
   type SDKMessage,
 } from "../index.js";
@@ -1501,6 +1502,158 @@ describe("agent-sdk", () => {
       type: "stream_event",
       event: { type: "content_block_delta", delta: { text: "hello" } },
     });
+  });
+
+  test("auto-compaction replaces history with a summary once the threshold is crossed", async () => {
+    const requests: ModelMessage[][] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      autoCompact: { thresholdTokens: 1_000, keepRecentMessages: 2 },
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ messages, systemPrompt }) {
+          // The summarization call is the one carrying the compaction prompt.
+          if (systemPrompt?.includes("create a detailed summary")) {
+            return { ...textAssistant("SUMMARY OF EARLIER WORK"), usage: { input_tokens: 900, output_tokens: 50 } };
+          }
+          requests.push(messages);
+          turn++;
+          if (turn <= 2) {
+            return {
+              ...toolUseAssistant(`toolu_${turn}`, "noop", {}),
+              usage: { input_tokens: 5_000, output_tokens: 10 },
+            };
+          }
+          return { ...textAssistant("done"), usage: { input_tokens: 100, output_tokens: 10 } };
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("start the task"));
+
+    const compaction = messages.find(
+      message => message.type === "system" && message.subtype === "compaction",
+    );
+    expect(compaction).toBeDefined();
+    expect(compaction).toMatchObject({ trigger_input_tokens: 5_000 });
+
+    // The request after compaction carries the summary, not the original turns.
+    const afterCompaction = requests.at(-1)!;
+    expect(JSON.stringify(afterCompaction)).toContain("SUMMARY OF EARLIER WORK");
+    expect(JSON.stringify(afterCompaction)).toContain("Context compaction has just been performed");
+    expect(JSON.stringify(afterCompaction)).not.toContain("start the task");
+    expect(afterCompaction.length).toBeLessThan(requests[0]!.length + 4);
+  });
+
+  test("compaction never orphans a tool_result from its tool_use", async () => {
+    const requests: ModelMessage[][] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      // keepRecentMessages: 1 would land the cut on a tool_result message.
+      autoCompact: { thresholdTokens: 1_000, keepRecentMessages: 1 },
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ messages, systemPrompt }) {
+          if (systemPrompt?.includes("create a detailed summary")) {
+            return { ...textAssistant("SUMMARY"), usage: { input_tokens: 10, output_tokens: 5 } };
+          }
+          requests.push(messages);
+          turn++;
+          if (turn <= 2) {
+            return {
+              ...toolUseAssistant(`toolu_${turn}`, "noop", {}),
+              usage: { input_tokens: 5_000, output_tokens: 10 },
+            };
+          }
+          return { ...textAssistant("done"), usage: { input_tokens: 100, output_tokens: 10 } };
+        },
+      },
+    });
+
+    await agent.prompt("go");
+
+    for (const request of requests) {
+      const toolUseIds = new Set(
+        request.flatMap(message =>
+          Array.isArray(message.content)
+            ? message.content.filter(block => block.type === "tool_use").map(block => block.id)
+            : [],
+        ),
+      );
+      const toolResultIds = request.flatMap(message =>
+        Array.isArray(message.content)
+          ? message.content.filter(block => block.type === "tool_result").map(block => block.tool_use_id)
+          : [],
+      );
+      // Every tool_result the model sees must have its tool_use in the same request.
+      for (const id of toolResultIds) expect(toolUseIds.has(id)).toBe(true);
+    }
+  });
+
+  test("counts the summarization call in the query's usage", async () => {
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      autoCompact: { thresholdTokens: 1_000, keepRecentMessages: 2 },
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ systemPrompt }) {
+          if (systemPrompt?.includes("create a detailed summary")) {
+            return { ...textAssistant("SUMMARY"), usage: { input_tokens: 900, output_tokens: 50 } };
+          }
+          turn++;
+          return turn === 1
+            ? { ...toolUseAssistant("toolu_1", "noop", {}), usage: { input_tokens: 5_000, output_tokens: 10 } }
+            : { ...textAssistant("done"), usage: { input_tokens: 100, output_tokens: 10 } };
+        },
+      },
+    });
+
+    const result = await agent.prompt("go");
+
+    // 5000 + 900 (summary) + 100, so compaction cost is visible rather than hidden.
+    expect(result.usage.input_tokens).toBe(6_000);
+    expect(result.usage.output_tokens).toBe(70);
+  });
+
+  test("leaves history alone when auto-compaction is not enabled", async () => {
+    const requests: ModelMessage[][] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ messages }) {
+          requests.push(messages);
+          turn++;
+          return turn === 1
+            ? { ...toolUseAssistant("toolu_1", "noop", {}), usage: { input_tokens: 900_000, output_tokens: 10 } }
+            : { ...textAssistant("done"), usage: { input_tokens: 900_000, output_tokens: 10 } };
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("start the task"));
+
+    expect(messages.some(message => message.type === "system" && message.subtype === "compaction")).toBe(false);
+    expect(JSON.stringify(requests.at(-1))).toContain("start the task");
+  });
+
+  test("rejects invalid auto-compaction settings", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      autoCompact: { thresholdTokens: 0 },
+      modelClient: clientFromResponses([textAssistant("ok")]),
+    });
+
+    await expect(agent.prompt("go")).rejects.toThrow(/positive integer/);
   });
 
   test("onToolResult rewrites what the model actually receives", async () => {

@@ -93,6 +93,35 @@ if (result.stop_reason === "max_tokens") {
 
 用量由 model client 上报。内置的 Anthropic 客户端会填好；自定义 `ModelClient` 若不提供 `usage`，得到的是全零计数而不是报错。
 
+## 上下文自动压缩
+
+历史只增不减，长时间运行的 agent 迟早会超出模型的上下文窗口。打开 `autoCompact`，SDK 会把较早的对话替换成由模型写出的摘要：
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  autoCompact: true, // 或 { thresholdTokens: 150_000, keepRecentMessages: 8 }
+});
+```
+
+压缩发生在**两轮之间**——某次响应报告的输入 token 超过 `thresholdTokens`（默认 `100000`）之后。SDK 会把除最后 `keepRecentMessages` 条（默认 `6`）之外的全部消息做成摘要，然后用「摘要 + 保留的消息」重建历史。摘要外面包了一段说明，告诉模型压缩刚刚发生、请据此继续，因此下一轮是接着做任务，而不是从头开始。
+
+与只影响单次请求的 `onModelRequest` hook 不同，**它会改写存储的对话历史**。这正是目的所在——节省必须跨轮次持续生效——但代价是被替换掉的轮次在 agent 里就没有了。
+
+切分点的选择保证保留部分能独立成立：**`tool_result` 绝不会与产生它的 `tool_use` 分离**，因为模型 API 会直接拒绝这种配对残缺的请求。如果找不到既安全又还有内容可摘要的切点，就跳过这次压缩。
+
+压缩本身要花一次模型调用。它的 token 会计入 `result.usage`，所以总账是诚实的；同时会输出一条 `subtype: "compaction"` 的 `system` 消息：
+
+```ts
+for await (const message of agent.query("重构这个模块。")) {
+  if (message.type === "system" && message.subtype === "compaction") {
+    console.log(`压缩了 ${message.compacted_messages} 条消息`, message.usage);
+  }
+}
+```
+
+触发依赖上报的用量，因此使用自定义 `ModelClient` 且不提供 `usage` 时永远不会触发压缩。可以用 `prompt` 覆盖摘要指令，内置的那份可以从 `DEFAULT_COMPACTION_PROMPT` 读到。
+
 ## 轮次限制
 
 `maxTurns` 用来避免模型和工具无限循环。默认值是 `50`，统计的是模型请求次数，不是工具执行次数：

@@ -179,6 +179,7 @@ export type ContextTraceEventType =
   | "tool_result"
   | "team_message"
   | "result"
+  | "compaction"
   | "error";
 
 export type ContextTraceEvent = {
@@ -365,6 +366,48 @@ export type ModelRequestHookContext<TContext = unknown> = {
 export type ModelRequestHookResult = {
   messages?: ModelMessage[];
   systemPrompt?: string;
+};
+
+export const DEFAULT_COMPACTION_PROMPT = `Your task is to create a detailed summary of the conversation so far,
+paying close attention to the user's explicit requests and your previous actions.
+
+This summary should be thorough in capturing:
+- technical details
+- code patterns
+- architectural decisions
+- files that were modified
+- commands that were run
+- errors encountered
+- solutions attempted
+- important context needed to continue the work
+
+Preserve:
+- user's intent
+- important constraints
+- decisions already made
+- reasoning behind decisions
+- unresolved issues
+- next steps
+
+The summary will replace the conversation history, so include everything
+necessary for another Claude instance to continue the task successfully.
+
+Output only the summary.`;
+
+export type AutoCompactOptions = {
+  /**
+   * Compact once a model response reports more input tokens than this.
+   * Defaults to 100000, chosen to leave headroom on a 200k-token model.
+   */
+  thresholdTokens?: number;
+  /** Trailing messages left verbatim after the summary. Defaults to 6. */
+  keepRecentMessages?: number;
+  /** Replaces DEFAULT_COMPACTION_PROMPT. */
+  prompt?: string;
+  /** Model used for the summary. Defaults to the agent's model. */
+  model?: string;
+  /** Output cap for the summary. Defaults to 8192. */
+  maxTokens?: number;
 };
 
 /**
@@ -660,6 +703,11 @@ export type AgentOptions<TContext = unknown> = {
   toolBatchPolicy?: ToolBatchPolicy<TContext>;
   /** Lifecycle callbacks that rewrite tool results and outgoing model requests. */
   hooks?: AgentHooks<TContext>;
+  /**
+   * Replaces older conversation history with a model-written summary once it
+   * grows past a threshold. Off unless set; `true` uses the defaults.
+   */
+  autoCompact?: boolean | AutoCompactOptions;
   toolConcurrency?: ToolConcurrencyOptions;
   skills?: SkillDefinition[];
   workspace?: AgentWorkspaceOptions;
@@ -726,6 +774,20 @@ export type SDKSystemInitMessage = {
   session_id: string;
 };
 
+export type SDKSystemCompactionMessage = {
+  type: "system";
+  subtype: "compaction";
+  session_id: string;
+  /** Messages replaced by the summary. */
+  compacted_messages: number;
+  /** Messages kept verbatim after it. */
+  retained_messages: number;
+  /** Input tokens of the turn that triggered compaction. */
+  trigger_input_tokens: number;
+  /** Cost of producing the summary, already folded into the result usage. */
+  usage: TokenUsage;
+};
+
 export type SDKAssistantMessage = {
   type: "assistant";
   message: AssistantModelMessage;
@@ -765,6 +827,7 @@ export type SDKResultMessage = {
 
 export type SDKMessage =
   | SDKSystemInitMessage
+  | SDKSystemCompactionMessage
   | SDKStreamEventMessage
   | SDKAssistantMessage
   | SDKUserMessage
@@ -1997,6 +2060,9 @@ export class Agent<TContext = unknown> {
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
     const totals: QueryTotals = { usage: emptyUsage() };
+    const autoCompact = normalizeAutoCompact(this.options.autoCompact);
+    let lastInputTokens = 0;
+    let triggerInputTokens = 0;
     const queryTraceContext = getQueryTraceContext(options);
     const source: AgentRuntimeSource = options.agentRuntime?.source ?? {
       kind: "agent",
@@ -2076,6 +2142,38 @@ export class Agent<TContext = unknown> {
         await flushTracer(tracer);
         yield result;
         return;
+      }
+
+      // Compaction happens between turns, once a response has shown how large
+      // the context has become, and before the next request pays for it again.
+      if (autoCompact && lastInputTokens > autoCompact.thresholdTokens) {
+        const compaction = await this.compactHistory(autoCompact, options);
+        if (compaction) {
+          lastInputTokens = 0;
+          totals.usage = addUsage(totals.usage, compaction.usage);
+          await emitTraceEvent(tracer, {
+            ...traceBase,
+            type: "compaction",
+            data: {
+              compacted_messages: compaction.compacted,
+              retained_messages: compaction.retained,
+              trigger_input_tokens: triggerInputTokens,
+              summary: compaction.summary,
+            },
+          });
+          yield {
+            type: "system",
+            subtype: "compaction",
+            session_id: this.sessionId,
+            compacted_messages: compaction.compacted,
+            retained_messages: compaction.retained,
+            trigger_input_tokens: triggerInputTokens,
+            usage: compaction.usage ?? emptyUsage(),
+          };
+        } else {
+          // Nothing safe to cut; do not retry every turn.
+          lastInputTokens = 0;
+        }
       }
 
       turns++;
@@ -2185,6 +2283,8 @@ export class Agent<TContext = unknown> {
       assistant = outcome.value;
       totals.usage = addUsage(totals.usage, assistant.usage);
       totals.stopReason = assistant.stopReason;
+      lastInputTokens = assistant.usage?.input_tokens ?? 0;
+      triggerInputTokens = lastInputTokens;
 
       this.messages.push(assistant);
       await emitTraceEvent(tracer, {
@@ -2448,6 +2548,45 @@ export class Agent<TContext = unknown> {
       description: tool.description,
       input_schema: tool.jsonSchema,
     }));
+  }
+
+  /**
+   * Replaces the summarizable head of the conversation with a model-written
+   * summary. Returns undefined when there is nothing safe to compact, and lets a
+   * failed summarization surface so the caller can decide: compaction is best
+   * effort, and continuing with a full history is better than losing it.
+   */
+  private async compactHistory(
+    settings: NonNullable<ReturnType<typeof normalizeAutoCompact>>,
+    options: QueryOptions<TContext>,
+  ): Promise<{ summary: string; compacted: number; retained: number; usage?: TokenUsage } | undefined> {
+    const splitIndex = compactionSplitIndex(this.messages, settings.keepRecentMessages);
+    if (splitIndex === 0) return undefined;
+
+    const head = this.messages.slice(0, splitIndex);
+    const tail = this.messages.slice(splitIndex);
+    const response = await this.modelClient.createMessage({
+      model: settings.model ?? this.options.model,
+      systemPrompt: settings.prompt,
+      maxTokens: settings.maxTokens,
+      // The history to summarize, plus the instruction to do it now.
+      messages: [...head, { role: "user", content: "Summarize the conversation so far." }],
+      tools: [],
+      stream: false,
+      signal: options.signal,
+    });
+
+    const summary = extractText(response).trim();
+    if (!summary) return undefined;
+
+    this.messages.length = 0;
+    this.messages.push(compactionHandoffMessage(summary), ...tail);
+    return {
+      summary,
+      compacted: head.length,
+      retained: tail.length,
+      ...(response.usage ? { usage: response.usage } : {}),
+    };
   }
 
   private messagesForModel(prompt: string | ContentBlock[]): ModelMessage[] {
@@ -2867,6 +3006,64 @@ function mergeUsage(current: TokenUsage | undefined, reported: unknown): TokenUs
 }
 
 type QueryTotals = { usage: TokenUsage; stopReason?: StopReason };
+
+function normalizeAutoCompact(
+  option: boolean | AutoCompactOptions | undefined,
+): Required<Omit<AutoCompactOptions, "model">> & { model?: string } | undefined {
+  if (!option) return undefined;
+  const options = option === true ? {} : option;
+  const thresholdTokens = options.thresholdTokens ?? 100_000;
+  const keepRecentMessages = options.keepRecentMessages ?? 6;
+  if (!Number.isInteger(thresholdTokens) || thresholdTokens < 1) {
+    throw new Error("AgentOptions.autoCompact.thresholdTokens must be a positive integer");
+  }
+  if (!Number.isInteger(keepRecentMessages) || keepRecentMessages < 1) {
+    throw new Error("AgentOptions.autoCompact.keepRecentMessages must be a positive integer");
+  }
+  return {
+    thresholdTokens,
+    keepRecentMessages,
+    prompt: options.prompt ?? DEFAULT_COMPACTION_PROMPT,
+    maxTokens: options.maxTokens ?? 8192,
+    ...(options.model ? { model: options.model } : {}),
+  };
+}
+
+function isToolResultMessage(message: ModelMessage): boolean {
+  return (
+    message.role === "user" &&
+    Array.isArray(message.content) &&
+    message.content.some(block => block.type === "tool_result")
+  );
+}
+
+/**
+ * Picks where history can be cut so the retained tail stays valid on its own.
+ *
+ * A `tool_result` whose matching `tool_use` was summarized away is rejected by
+ * the model API, so the cut walks backwards off any tool-result message until it
+ * lands on the assistant turn that issued the call. Returns 0 when no safe cut
+ * leaves anything to summarize.
+ */
+function compactionSplitIndex(messages: ModelMessage[], keepRecent: number): number {
+  let index = Math.max(0, messages.length - keepRecent);
+  while (index > 0 && isToolResultMessage(messages[index]!)) {
+    index--;
+  }
+  return index;
+}
+
+/** The note that turns a summary into a usable first turn for the next request. */
+function compactionHandoffMessage(summary: string): ModelMessage {
+  return {
+    role: "user",
+    content:
+      "Context compaction has just been performed. The conversation history above this point " +
+      "was replaced by the following summary. Continue the task from here as if you had the " +
+      "full history, relying on this summary for everything that came before.\n\n" +
+      `<conversation_summary>\n${summary}\n</conversation_summary>`,
+  };
+}
 
 function emptyUsage(): TokenUsage {
   return { input_tokens: 0, output_tokens: 0 };
