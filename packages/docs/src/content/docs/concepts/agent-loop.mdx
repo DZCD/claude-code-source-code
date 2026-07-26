@@ -31,6 +31,8 @@ const result = await agent.prompt("What kind of project is this?");
 
 ## One Agent holds one conversation
 
+*Requires 0.10.0 or later.*
+
 An `Agent` is a conversation, not a reusable client. Its message history is instance state, so a second query started while one is still running would interleave turns from both. The SDK rejects that second query with `ConcurrentQueryError` rather than corrupting either conversation.
 
 Create one Agent per concurrent conversation. In a server, that means constructing an Agent per request or per user session, not sharing a module-level instance:
@@ -50,6 +52,8 @@ app.post("/ask", async req => {
 Sequential reuse is fine and is how multi-turn conversations work: await one query before starting the next, as in the example above. The guard releases when a query finishes, including on error or abort.
 
 ## Deadlines
+
+*`requestTimeoutMs` requires 0.11.0 or later.*
 
 Two limits apply at different scopes, and long-running agents usually need both.
 
@@ -80,6 +84,8 @@ Both limits are enforced by the SDK itself rather than delegated. `ModelRequest`
 
 ## Token usage and truncation
 
+*Requires 0.10.0 or later.*
+
 Every `result` message carries `usage`, summed over the model requests in that query, and `stop_reason` from the last response:
 
 ```ts
@@ -96,6 +102,8 @@ if (result.stop_reason === "max_tokens") {
 Usage is reported by the model client. The built-in Anthropic client fills it in; a custom `ModelClient` that omits `usage` yields zeroed counts rather than an error.
 
 ## Automatic context compaction
+
+*Requires 0.13.0 or later; recovery after an overflow requires 0.14.0.*
 
 History only grows, so a long-running agent eventually exceeds the model's context window. Enable `autoCompact` to have the SDK replace the older part of the conversation with a model-written summary:
 

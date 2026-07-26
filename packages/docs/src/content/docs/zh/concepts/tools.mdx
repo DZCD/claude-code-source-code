@@ -50,6 +50,8 @@ return { content: "done" };
 
 ## 并发执行互不依赖的工具
 
+*需要 0.9.25 及以上版本。*
+
 模型在同一次回复中返回多个 `tool_use`，表示希望一起执行这些工具；哪些 handler 可以真正同时运行，仍由 SDK 判断。当工具输入不会引发冲突的副作用时，通过 `isConcurrencySafe(input)` 标记：
 
 ```ts
@@ -83,6 +85,8 @@ const agent = createAgent({
 整批工具结束后，SDK 才会再次请求模型。Handler 可以按不同顺序完成，但发回模型的 `tool_result` 始终保持原始 `tool_use` 顺序。一个 handler 失败不会丢失同批其它成功结果。取消请求时，已启动的 handler 会收到本次 query 的 `AbortSignal`，仍在等待并发名额的调用不会启动；SDK 会等待已经启动的 handler 结束。
 
 ## 执行前检查整批工具
+
+*需要 0.9.25 及以上版本。*
 
 如果某些工具不能出现在同一次模型响应中，通过 `AgentOptions.toolBatchPolicy` 提供检查规则。任何工具 handler 运行前，策略会先收到当前响应中的全部工具调用。
 

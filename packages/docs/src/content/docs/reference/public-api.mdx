@@ -159,6 +159,25 @@ creates one root chain. Lead runs, delegated Member runs, and later Lead runs
 share its trace session and appear as child chains. Their original Agent session
 IDs remain available as `agent_session_id` metadata.
 
+## Feature availability
+
+Everything below works on the version shown and later. The SDK ignores unknown
+options rather than rejecting them, so calling a newer API on an older install
+succeeds with the feature silently absent — check the installed version rather
+than relying on an error.
+
+| Feature | Requires |
+| --- | --- |
+| `toolConcurrency`, `isConcurrencySafe`, `toolBatchPolicy`, `reasoningEffort` | 0.9.25 |
+| `SDKResultMessage.usage`, `stop_reason`, `TokenUsage`, `ConcurrentQueryError` | 0.10.0 |
+| `requestTimeoutMs`, `TimeoutError`, result subtype `error_timeout` | 0.11.0 |
+| `hooks`, `AgentHooks`, `createCompositeAgentHooks` | 0.12.0 |
+| `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
+| Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
+
+Read the installed version from `node_modules/agent-lattice/package.json`; the
+package does not export it as an importable path.
+
 ## Types
 
 | Export | Description |

@@ -157,6 +157,21 @@ LangSmith 收到根 run 的最终 patch。
 trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 会保留在
 `agent_session_id` metadata 中。
 
+## 版本可用性
+
+下表中的能力在所列版本及之后可用。SDK 对**未知选项是忽略而不是报错**，因此在旧版本上调用新 API 会正常成功、而该特性静默失效——请核对已安装版本，不要指望有异常抛出。
+
+| 特性 | 最低版本 |
+| --- | --- |
+| `toolConcurrency`、`isConcurrencySafe`、`toolBatchPolicy`、`reasoningEffort` | 0.9.25 |
+| `SDKResultMessage.usage`、`stop_reason`、`TokenUsage`、`ConcurrentQueryError` | 0.10.0 |
+| `requestTimeoutMs`、`TimeoutError`、result subtype `error_timeout` | 0.11.0 |
+| `hooks`、`AgentHooks`、`createCompositeAgentHooks` | 0.12.0 |
+| `autoCompact`、`DEFAULT_COMPACTION_PROMPT`、`SDKSystemCompactionMessage` | 0.13.0 |
+| 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
+
+已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
+
 ## 核心类型
 
 | Export | 说明 |

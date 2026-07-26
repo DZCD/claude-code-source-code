@@ -3,6 +3,8 @@ title: Hooks
 description: 在工具结果和模型请求跨越 agent 循环边界时改写它们。
 ---
 
+*需要 0.12.0 及以上版本。*
+
 `permission` 和 `toolBatchPolicy` 决定**能不能执行**，hook 决定**执行成什么样**。用它来给工具输出脱敏、在请求前压缩上下文、或注入检索到的文档。
 
 ```ts

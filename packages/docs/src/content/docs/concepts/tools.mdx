@@ -44,6 +44,8 @@ If a tool handler throws, the SDK returns an error `tool_result` to the model in
 
 ## Run independent tools concurrently
 
+*Requires 0.9.25 or later.*
+
 The model asks to run tools together by returning multiple `tool_use` blocks in one assistant message. The SDK still decides which handlers may overlap. Mark a tool as concurrency-safe when its parsed input does not cause conflicting side effects:
 
 ```ts
@@ -77,6 +79,8 @@ Use `mode: "all"` only when every tool registered on that Agent is safe to overl
 The SDK waits for the whole batch before requesting the model again. Handlers may finish in any order, but `tool_result` blocks are sent back in the original `tool_use` order. One handler failure does not remove successful results from the same batch. On abort, running handlers receive the query's `AbortSignal`, calls still waiting for a concurrency slot do not start, and the SDK waits for handlers that already started to settle.
 
 ## Validate a tool batch before execution
+
+*Requires 0.9.25 or later.*
 
 Use `AgentOptions.toolBatchPolicy` when specific tools must run in separate model responses. The policy receives every tool call from the current response before any handler runs.
 
