@@ -952,6 +952,35 @@ Create one Agent per concurrent conversation — in a server, per request or per
 user session rather than a shared module-level instance. Sequential reuse, as
 above, is the intended pattern.
 
+## Deadlines
+
+`QueryOptions.signal` bounds a whole query — every model request, tool call, and
+turn together. `requestTimeoutMs` bounds each single model request, so an agent
+that legitimately runs many tool-using turns does not have to fit them all into
+one budget:
+
+```ts
+const agent = createAgent({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: "claude-sonnet-4-6",
+  requestTimeoutMs: 120_000,
+});
+
+const result = await agent.prompt("Audit this repository.", {
+  signal: AbortSignal.timeout(600_000),
+  requestTimeoutMs: 60_000, // overrides the agent default for this query
+});
+```
+
+A request deadline produces `subtype: "error_timeout"` with a `TimeoutError`,
+distinct from the `"error_abort"` of a caller-initiated cancellation, so hosts
+can retry timeouts without retrying deliberate cancellations.
+
+Both limits are enforced by the SDK rather than delegated. `ModelRequest` carries
+`signal` and `timeoutMs` so a client can cancel its own work, but the agent loop
+also races the call, so a `ModelClient` that honours neither cannot stall the
+loop indefinitely. Losing that race abandons the call rather than cancelling it.
+
 ## Token Usage And Truncation
 
 Every `result` message reports `usage`, summed over the model requests in that

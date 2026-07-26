@@ -49,6 +49,35 @@ app.post("/ask", async req => {
 
 Sequential reuse is fine and is how multi-turn conversations work: await one query before starting the next, as in the example above. The guard releases when a query finishes, including on error or abort.
 
+## Deadlines
+
+Two limits apply at different scopes, and long-running agents usually need both.
+
+`QueryOptions.signal` bounds the whole query — every model request, tool call, and turn together:
+
+```ts
+const result = await agent.prompt("Audit this repository.", {
+  signal: AbortSignal.timeout(600_000),
+});
+// result.subtype === "error_abort"
+```
+
+`requestTimeoutMs` bounds each single model request instead, so an agent that legitimately runs twenty tool-using turns is not forced to share one budget across all of them:
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  requestTimeoutMs: 120_000,
+});
+
+// Or per query, which overrides the agent default.
+await agent.prompt("Answer quickly.", { requestTimeoutMs: 15_000 });
+```
+
+Exceeding it produces `subtype: "error_timeout"` with a `TimeoutError`, distinct from the `"error_abort"` a caller-initiated cancellation produces, so a host can retry timeouts without retrying deliberate cancellations. The value must be a positive integer number of milliseconds. When unset, the SDK applies no deadline of its own and the provider client's default applies.
+
+Both limits are enforced by the SDK itself rather than delegated. `ModelRequest` carries `signal` and `timeoutMs` so a client can cancel its own work, but the agent loop also races the call: a `ModelClient` that ignores both cannot stall the loop indefinitely. Losing that race abandons the call rather than cancelling it, so a non-cooperative client may keep working in the background while the loop moves on.
+
 ## Token usage and truncation
 
 Every `result` message carries `usage`, summed over the model requests in that query, and `stop_reason` from the last response:

@@ -7,6 +7,7 @@ import {
   AbortError,
   ConcurrentQueryError,
   MaxTurnsError,
+  TimeoutError,
   ToolExecutionError,
   createAgent,
   createBareAgent,
@@ -1499,6 +1500,80 @@ describe("agent-sdk", () => {
       type: "stream_event",
       event: { type: "content_block_delta", delta: { text: "hello" } },
     });
+  });
+
+  test("bounds a model client that ignores the abort signal", async () => {
+    // The signal is passed to every model client, but honouring it is up to the
+    // implementation; before the SDK raced the call, this hung forever.
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: { createMessage: () => new Promise<never>(() => {}) },
+    });
+
+    const result = await agent.prompt("go", { signal: AbortSignal.timeout(100) });
+
+    expect(result.subtype).toBe("error_abort");
+    expect(result.error).toBeInstanceOf(AbortError);
+  });
+
+  test("times out a single model request via requestTimeoutMs", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: { createMessage: () => new Promise<never>(() => {}) },
+      requestTimeoutMs: 100,
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(result.subtype).toBe("error_timeout");
+    expect(result.error).toBeInstanceOf(TimeoutError);
+  });
+
+  test("prefers the per-query request timeout over the agent default", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: { createMessage: () => new Promise<never>(() => {}) },
+      requestTimeoutMs: 30_000,
+    });
+
+    const started = Date.now();
+    const result = await agent.prompt("go", { requestTimeoutMs: 100 });
+
+    expect(result.subtype).toBe("error_timeout");
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  test("passes the request deadline to the model client", async () => {
+    const seen: Array<number | undefined> = [];
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      requestTimeoutMs: 4_000,
+      modelClient: {
+        async createMessage(request) {
+          seen.push(request.timeoutMs);
+          return textAssistant("ok");
+        },
+      },
+    });
+
+    await agent.prompt("go");
+
+    expect(seen).toEqual([4_000]);
+  });
+
+  test("rejects a non-positive or fractional request timeout", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("ok")]),
+    });
+
+    await expect(agent.prompt("go", { requestTimeoutMs: 0 })).rejects.toThrow(/positive integer/);
+    await expect(agent.prompt("go", { requestTimeoutMs: 1.5 })).rejects.toThrow(/positive integer/);
   });
 
   test("rejects a second query while one is still running", async () => {

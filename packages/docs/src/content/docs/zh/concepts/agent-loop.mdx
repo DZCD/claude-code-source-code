@@ -47,6 +47,35 @@ app.post("/ask", async req => {
 
 顺序复用没有问题，多轮对话正是这样工作的——等上一次 query 结束再发起下一次，就像上面那个记名字的例子。query 结束时守卫会释放，出错和中断也一样。
 
+## 超时
+
+两种限制作用在不同的尺度上，长任务 agent 通常两个都需要。
+
+`QueryOptions.signal` 约束**整个 query** —— 所有模型请求、工具执行和轮次加在一起：
+
+```ts
+const result = await agent.prompt("审计这个仓库。", {
+  signal: AbortSignal.timeout(600_000),
+});
+// result.subtype === "error_abort"
+```
+
+`requestTimeoutMs` 约束的是**单次模型请求**。一个正常需要跑二十轮工具的 agent，不必让这二十轮共享同一份预算：
+
+```ts
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  requestTimeoutMs: 120_000,
+});
+
+// 也可以按 query 覆盖 agent 默认值。
+await agent.prompt("快速回答。", { requestTimeoutMs: 15_000 });
+```
+
+超时会得到 `subtype: "error_timeout"` 和一个 `TimeoutError`，与调用方主动取消产生的 `"error_abort"` 区分开——宿主可以只重试超时，而不重试用户有意的取消。取值必须是正整数毫秒。不设置时 SDK 不施加自己的期限，由 provider 客户端的默认值兜底。
+
+**两种限制都由 SDK 自己兜底，不外包给 model client。** `ModelRequest` 会带上 `signal` 和 `timeoutMs` 供客户端取消自己的工作，但 agent 循环同时也会和它赛跑：一个两者都不理会的 `ModelClient` 无法让循环无限挂起。赛跑失败意味着**放弃等待而不是取消**——不守规矩的客户端可能仍在后台跑，只是循环不再等它。
+
 ## Token 用量与截断
 
 每个 `result` 都带 `usage`（该次 query 内所有模型请求的合计）和最后一次响应的 `stop_reason`：

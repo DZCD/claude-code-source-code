@@ -71,6 +71,7 @@ const agent = createBareAgent({
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。省略时，SDK 不发送 thinking 配置。 |
 | `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`。省略时使用 provider 默认值。 |
+| `requestTimeoutMs` | `number` | 单次模型请求的期限（毫秒）。即使 model client 忽略它，SDK 也会兜底执行。不设置则 SDK 不加限制。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
 | `toolConcurrency` | `ToolConcurrencyOptions` | 工具调用调度。默认是 `{ mode: "safe", maxConcurrency: 10 }`；未声明安全规则的工具保持顺序执行。 |
@@ -92,6 +93,7 @@ const agent = createBareAgent({
 | `outputFormat` | `OutputFormat` | 请求结构化输出，可传 `"json"`，也可通过 `{ type: "json_schema", schema }` 指定 JSON Schema 输出；最终文本会原样返回。 |
 | `thinkingConfig` | `ThinkingConfig` | 覆盖当前 query 的 Agent 推理配置。固定预算最大为 `maxTokens - 1`。 |
 | `reasoningEffort` | `ReasoningEffort` | 覆盖当前 query 的 Agent 默认推理强度。 |
+| `requestTimeoutMs` | `number` | 覆盖当前 query 的单次请求期限。 |
 | `signal` | `AbortSignal` | 中断当前 query。 |
 | `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
 | `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
@@ -212,5 +214,6 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolExecutionError` | 工具 handler 执行失败。 |
 | `MaxTurnsError` | Agent loop 达到 `maxTurns`。 |
 | `AbortError` | 请求被中断。 |
+| `TimeoutError` | 模型请求超过 `requestTimeoutMs`，result subtype 为 `error_timeout`。 |
 | `ToolBatchRejectedError` | 工具批次在任何工具执行前被拒绝。 |
 | `ConcurrentQueryError` | Agent 上一次 query 尚未结束时又发起了一次。一个 Agent 只承载一个会话。 |

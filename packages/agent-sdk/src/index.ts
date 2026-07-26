@@ -283,6 +283,8 @@ export type ModelRequest = {
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
   reasoningEffort?: ReasoningEffort;
+  /** Deadline for this single request. Clients should honour it; the SDK also enforces it. */
+  timeoutMs?: number;
   onStreamEvent?: (event: Record<string, unknown>) => void;
   signal?: AbortSignal;
 };
@@ -596,6 +598,8 @@ export type AgentOptions<TContext = unknown> = {
   maxTurns?: number;
   thinkingConfig?: ThinkingConfig;
   reasoningEffort?: ReasoningEffort;
+  /** Deadline for each single model request, in milliseconds. Unset means no SDK-side limit. */
+  requestTimeoutMs?: number;
   tools?: Array<ToolDefinition<any, TContext>>;
   toolBatchPolicy?: ToolBatchPolicy<TContext>;
   toolConcurrency?: ToolConcurrencyOptions;
@@ -627,6 +631,8 @@ export type QueryOptions<TContext = unknown> = {
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
   reasoningEffort?: ReasoningEffort;
+  /** Overrides the agent's per-request deadline for this query. */
+  requestTimeoutMs?: number;
   signal?: AbortSignal;
   context?: TContext;
   agentRuntime?: AgentRuntimeContext;
@@ -684,7 +690,7 @@ export type SDKStreamEventMessage = {
 
 export type SDKResultMessage = {
   type: "result";
-  subtype: "success" | "error" | "error_max_turns" | "error_abort";
+  subtype: "success" | "error" | "error_max_turns" | "error_abort" | "error_timeout";
   is_error: boolean;
   result: string;
   session_id: string;
@@ -757,6 +763,8 @@ export class MaxTurnsError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
 /** A second query was started on an Agent that was still running one. */
 export class ConcurrentQueryError extends AgentSDKError {}
+/** A model request exceeded `requestTimeoutMs`. */
+export class TimeoutError extends AgentSDKError {}
 
 export class ToolBatchRejectedError extends AgentSDKError {
   readonly rejection: ToolBatchPolicyRejection;
@@ -1990,6 +1998,12 @@ export class Agent<TContext = unknown> {
       const stream = options.stream ?? true;
       const thinkingConfig = options.thinkingConfig ?? this.options.thinkingConfig;
       const reasoningEffort = options.reasoningEffort ?? this.options.reasoningEffort;
+      const requestTimeoutMs = normalizeRequestTimeout(
+        options.requestTimeoutMs ?? this.options.requestTimeoutMs,
+        options.requestTimeoutMs !== undefined
+          ? "QueryOptions.requestTimeoutMs"
+          : "AgentOptions.requestTimeoutMs",
+      );
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "model_request",
@@ -2007,25 +2021,31 @@ export class Agent<TContext = unknown> {
         },
       });
       // The model call runs alongside the drain loop below so stream events reach
-      // the consumer while the model is still responding.
+      // the consumer while the model is still responding. It is raced against the
+      // signal and the request deadline so that a model client which ignores
+      // either cannot stall the loop forever.
       const modelCall = settle(
-        this.modelClient.createMessage({
-          model: this.options.model,
-          systemPrompt,
-          maxTokens: this.options.maxTokens,
-          messages: modelMessages,
-          tools: modelTools,
-          stream,
-          outputFormat: options.outputFormat,
-          thinkingConfig,
-          reasoningEffort,
-          onStreamEvent: event => {
-            if (stream) {
-              streamEvents.push(event);
-            }
-          },
-          signal: options.signal,
-        }),
+        withDeadline(
+          this.modelClient.createMessage({
+            model: this.options.model,
+            systemPrompt,
+            maxTokens: this.options.maxTokens,
+            messages: modelMessages,
+            tools: modelTools,
+            stream,
+            outputFormat: options.outputFormat,
+            thinkingConfig,
+            reasoningEffort,
+            timeoutMs: requestTimeoutMs,
+            onStreamEvent: event => {
+              if (stream) {
+                streamEvents.push(event);
+              }
+            },
+            signal: options.signal,
+          }),
+          { signal: options.signal, timeoutMs: requestTimeoutMs },
+        ),
         () => streamEvents.finish(),
       );
 
@@ -2040,10 +2060,14 @@ export class Agent<TContext = unknown> {
       const outcome = await modelCall;
       if (!outcome.ok) {
         const wrapped =
-          outcome.error instanceof AbortError
+          outcome.error instanceof AbortError || outcome.error instanceof TimeoutError
             ? outcome.error
             : new APIError(errorMessage(outcome.error), { cause: outcome.error });
-        const subtype = wrapped instanceof AbortError ? "error_abort" : "error";
+        const subtype = wrapped instanceof TimeoutError
+          ? "error_timeout"
+          : wrapped instanceof AbortError
+            ? "error_abort"
+            : "error";
         const result = this.resultMessage(subtype, "", turns, wrapped, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
@@ -2533,6 +2557,57 @@ class StreamEventQueue {
   }
 }
 
+/**
+ * Bounds a model call by the query's signal and its request deadline.
+ *
+ * `ModelRequest` already carries both, but honouring them is up to the client,
+ * and a custom one that ignores them would otherwise hang the agent loop with no
+ * error and no log line. Losing the race abandons the call rather than
+ * cancelling it: the underlying work may continue, but the loop stops waiting.
+ */
+function withDeadline<T>(
+  promise: Promise<T>,
+  deadline: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<T> {
+  const { signal, timeoutMs } = deadline;
+  if (!signal && timeoutMs === undefined) return promise;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const tripped = new Promise<never>((_, reject) => {
+    if (signal) {
+      if (signal.aborted) {
+        reject(new AbortError("Operation was aborted"));
+        return;
+      }
+      onAbort = () => reject(new AbortError("Operation was aborted"));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(
+        () => reject(new TimeoutError(`Model request exceeded requestTimeoutMs of ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    }
+  });
+  // The loser keeps running; swallow its result so an abandoned rejection does
+  // not surface as an unhandled rejection.
+  promise.catch(() => {});
+
+  return Promise.race([promise, tripped]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  });
+}
+
+function normalizeRequestTimeout(timeoutMs: number | undefined, source: string): number | undefined {
+  if (timeoutMs === undefined) return undefined;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error(`${source} must be a positive integer number of milliseconds`);
+  }
+  return timeoutMs;
+}
+
 type SettledOutcome<T> =
   | { ok: true; value: T; settledAt: string }
   | { ok: false; error: unknown; settledAt: string };
@@ -2589,7 +2664,7 @@ class AnthropicModelClient implements ModelClient {
       if (request.stream) {
         const stream = await this.createAnthropicMessage(
           { ...body, stream: true },
-          { signal: request.signal },
+          { signal: request.signal, ...(request.timeoutMs ? { timeout: request.timeoutMs } : {}) },
         );
         const assembler = new AnthropicStreamAssembler();
         for await (const event of stream as AsyncIterable<Record<string, unknown>>) {
@@ -2599,7 +2674,10 @@ class AnthropicModelClient implements ModelClient {
         return assembler.message();
       }
 
-      const response = await this.createAnthropicMessage(body, { signal: request.signal });
+      const response = await this.createAnthropicMessage(body, {
+        signal: request.signal,
+        ...(request.timeoutMs ? { timeout: request.timeoutMs } : {}),
+      });
       if ("type" in response && response.type === "message") {
         const usage = mergeUsage(undefined, response.usage);
         return {
@@ -2621,7 +2699,7 @@ class AnthropicModelClient implements ModelClient {
 
   private createAnthropicMessage(
     body: Record<string, unknown>,
-    options: { signal?: AbortSignal },
+    options: { signal?: AbortSignal; timeout?: number },
   ): Promise<AnthropicMessageResponse | AsyncIterable<Record<string, unknown>>> {
     if (body.output_config) {
       return this.client.beta.messages.create(

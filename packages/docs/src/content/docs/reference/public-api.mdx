@@ -71,6 +71,7 @@ const agent = createBareAgent({
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
 | `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. When omitted, the SDK sends no thinking configuration. |
 | `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort`. When omitted, the provider applies its default. |
+| `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
 | `toolConcurrency` | `ToolConcurrencyOptions` | Tool-call scheduling. Defaults to `{ mode: "safe", maxConcurrency: 10 }`; undeclared tools stay sequential. |
@@ -92,6 +93,7 @@ const agent = createBareAgent({
 | `outputFormat` | `OutputFormat` | Requests structured output via `"json"` or JSON Schema output via `{ type: "json_schema", schema }`; the final text is returned unchanged. |
 | `thinkingConfig` | `ThinkingConfig` | Overrides the agent's reasoning configuration for this query. A fixed budget is capped at `maxTokens - 1`. |
 | `reasoningEffort` | `ReasoningEffort` | Overrides the agent's provider reasoning effort for this query. |
+| `requestTimeoutMs` | `number` | Overrides the agent's per-request deadline for this query. |
 | `signal` | `AbortSignal` | Cancels the running query. |
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
@@ -214,5 +216,6 @@ IDs remain available as `agent_session_id` metadata.
 | `ToolExecutionError` | Tool handler failure. |
 | `MaxTurnsError` | Agent loop reached `maxTurns`. |
 | `AbortError` | Request was aborted. |
+| `TimeoutError` | A model request exceeded `requestTimeoutMs`; the result subtype is `error_timeout`. |
 | `ToolBatchRejectedError` | Tool batch was rejected before any tool executed. |
 | `ConcurrentQueryError` | A second query was started while the Agent was still running one. An Agent holds one conversation. |
