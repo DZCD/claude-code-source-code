@@ -460,6 +460,18 @@ The trigger depends on reported usage, so a custom `ModelClient` that omits
 `usage` never compacts. Override the instruction with `prompt`, or read the
 built-in one from `DEFAULT_COMPACTION_PROMPT`.
 
+The threshold is a forecast, so a single large tool result can still carry a
+request past the window. Compaction then runs as a recovery — summarize, then
+retry the same turn — on either `stop_reason: "model_context_window_exceeded"`
+or an API error naming a too-long prompt. It is attempted once per query; if
+summarizing fails or there is nothing left to summarize, the original failure
+surfaces unchanged.
+
+`stop_reason: "max_tokens"` deliberately does **not** trigger compaction. It
+means the *output* hit `maxTokens`, not that the input was too large — the model
+had room to read and ran out of room to write, so compacting the history would
+not make the answer complete. Raise `maxTokens` instead.
+
 ## Hooks
 
 `permission` and `toolBatchPolicy` decide whether something runs. Hooks decide

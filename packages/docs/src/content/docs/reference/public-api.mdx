@@ -175,7 +175,7 @@ IDs remain available as `agent_session_id` metadata.
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
 | `TokenUsage` | Token counts reported on `SDKResultMessage.usage` and `AssistantModelMessage.usage`. |
-| `StopReason` | Why the model stopped. `"max_tokens"` means the response was truncated mid-way. |
+| `StopReason` | Why the model stopped. `"max_tokens"` means the output was truncated; `"model_context_window_exceeded"` means the context window ran out and is what `autoCompact` recovers from. |
 | `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
 | `TeamRunnerConfig` | Team runtime limits: `maxDelegateDepth` and `maxConcurrentWorkItems`. Concurrency defaults to `1`, and the same target mailbox remains serial. |
 | `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |

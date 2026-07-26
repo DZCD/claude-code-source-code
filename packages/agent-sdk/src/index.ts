@@ -253,11 +253,14 @@ export type TokenUsage = {
  */
 export type StopReason =
   | "end_turn"
+  /** Output hit `maxTokens`. The text is a fragment; compaction does not help. */
   | "max_tokens"
   | "stop_sequence"
   | "tool_use"
   | "pause_turn"
   | "refusal"
+  /** The context window ran out mid-request. This is what compaction is for. */
+  | "model_context_window_exceeded"
   | (string & {});
 
 export type AssistantModelMessage = {
@@ -2063,6 +2066,7 @@ export class Agent<TContext = unknown> {
     const autoCompact = normalizeAutoCompact(this.options.autoCompact);
     let lastInputTokens = 0;
     let triggerInputTokens = 0;
+    let overflowRecovered = false;
     const queryTraceContext = getQueryTraceContext(options);
     const source: AgentRuntimeSource = options.agentRuntime?.source ?? {
       kind: "agent",
@@ -2261,6 +2265,19 @@ export class Agent<TContext = unknown> {
 
       const outcome = await modelCall;
       if (!outcome.ok) {
+        // An input that already exceeds the window is rejected before
+        // generation, so it arrives here rather than as a stop reason.
+        if (autoCompact && !overflowRecovered && isContextOverflowError(outcome.error)) {
+          const recovery = await this.recoverFromOverflow(
+            autoCompact, options, tracer, traceBase, totals, triggerInputTokens,
+          );
+          if (recovery) {
+            overflowRecovered = true;
+            lastInputTokens = 0;
+            yield recovery;
+            continue;
+          }
+        }
         const wrapped =
           outcome.error instanceof AbortError || outcome.error instanceof TimeoutError
             ? outcome.error
@@ -2285,6 +2302,26 @@ export class Agent<TContext = unknown> {
       totals.stopReason = assistant.stopReason;
       lastInputTokens = assistant.usage?.input_tokens ?? 0;
       triggerInputTokens = lastInputTokens;
+
+      // The window ran out mid-request, so this response is unusable and must
+      // not enter the history. Compact and retry the same turn instead.
+      // "max_tokens" is deliberately not handled here: that is an output-budget
+      // failure, and compacting the input would not make the answer complete.
+      if (
+        autoCompact &&
+        !overflowRecovered &&
+        assistant.stopReason === "model_context_window_exceeded"
+      ) {
+        const recovery = await this.recoverFromOverflow(
+          autoCompact, options, tracer, traceBase, totals, triggerInputTokens,
+        );
+        if (recovery) {
+          overflowRecovered = true;
+          lastInputTokens = 0;
+          yield recovery;
+          continue;
+        }
+      }
 
       this.messages.push(assistant);
       await emitTraceEvent(tracer, {
@@ -2586,6 +2623,53 @@ export class Agent<TContext = unknown> {
       compacted: head.length,
       retained: tail.length,
       ...(response.usage ? { usage: response.usage } : {}),
+    };
+  }
+
+  /**
+   * Last-resort compaction after a turn already ran out of context, as opposed
+   * to the threshold check that runs between turns. Returns the message to emit
+   * so the caller can retry, or undefined when compaction cannot help and the
+   * original failure should surface instead.
+   */
+  private async recoverFromOverflow(
+    settings: NonNullable<ReturnType<typeof normalizeAutoCompact>>,
+    options: QueryOptions<TContext>,
+    tracer: ContextTracer | undefined,
+    traceBase: Omit<ContextTraceEvent, "version" | "timestamp" | "seq" | "type" | "data">,
+    totals: QueryTotals,
+    triggerInputTokens: number,
+  ): Promise<SDKSystemCompactionMessage | undefined> {
+    let compaction: Awaited<ReturnType<typeof this.compactHistory>>;
+    try {
+      compaction = await this.compactHistory(settings, options);
+    } catch {
+      // Summarizing may fail for the same reason the turn did. Surfacing the
+      // original overflow is more useful than a second, derived failure.
+      return undefined;
+    }
+    if (!compaction) return undefined;
+
+    totals.usage = addUsage(totals.usage, compaction.usage);
+    await emitTraceEvent(tracer, {
+      ...traceBase,
+      type: "compaction",
+      data: {
+        compacted_messages: compaction.compacted,
+        retained_messages: compaction.retained,
+        trigger_input_tokens: triggerInputTokens,
+        recovered_from_overflow: true,
+        summary: compaction.summary,
+      },
+    });
+    return {
+      type: "system",
+      subtype: "compaction",
+      session_id: this.sessionId,
+      compacted_messages: compaction.compacted,
+      retained_messages: compaction.retained,
+      trigger_input_tokens: triggerInputTokens,
+      usage: compaction.usage ?? emptyUsage(),
     };
   }
 
@@ -3027,6 +3111,26 @@ function normalizeAutoCompact(
     maxTokens: options.maxTokens ?? 8192,
     ...(options.model ? { model: options.model } : {}),
   };
+}
+
+/**
+ * Whether a failed model call ran out of context, as opposed to failing for any
+ * other reason.
+ *
+ * An input that already exceeds the window is rejected before generation, so it
+ * arrives as an API error rather than a stop reason. Providers word this
+ * differently and the SDK sees only the message, so the match is deliberately
+ * narrow: a false negative surfaces the original error, while a false positive
+ * would rewrite history in response to an unrelated failure.
+ */
+function isContextOverflowError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("prompt is too long") ||
+    message.includes("context window") ||
+    message.includes("request_too_large") ||
+    message.includes("too many tokens")
+  );
 }
 
 function isToolResultMessage(message: ModelMessage): boolean {

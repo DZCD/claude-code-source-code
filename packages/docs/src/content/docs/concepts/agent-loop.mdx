@@ -123,3 +123,16 @@ for await (const message of agent.query("Refactor this module.")) {
 ```
 
 The trigger depends on reported usage, so an agent using a custom `ModelClient` that omits `usage` never compacts. Override the summarization instruction with `prompt`, or read the built-in one from `DEFAULT_COMPACTION_PROMPT`.
+
+### Recovering from an overflow that already happened
+
+The threshold is a forecast, so a single large tool result can still carry a request past the window. When that happens, compaction also runs as a recovery: the SDK summarizes, then retries the same turn rather than failing the query. Two signals trigger it:
+
+| Signal | Meaning |
+| --- | --- |
+| `stop_reason: "model_context_window_exceeded"` | The window ran out mid-request. The response is unusable and is never added to the history. |
+| An API error naming a too-long prompt | The input already exceeded the window, so the request was rejected before generation and there is no stop reason at all. |
+
+Recovery is attempted once per query. If summarizing fails, or there is nothing left to summarize, the original failure surfaces unchanged rather than being replaced by a second, derived one.
+
+**`stop_reason: "max_tokens"` deliberately does not trigger compaction.** It means the *output* hit `maxTokens`, not that the input was too large — the model had plenty of room to read and ran out of room to write. Compacting the history would not make the answer complete. Raise `maxTokens` or ask for less output instead.

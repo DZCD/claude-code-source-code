@@ -173,7 +173,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
 | `ReasoningEffort` | `AgentOptions.reasoningEffort` 和 `QueryOptions.reasoningEffort` 接收的 provider 推理强度：`"low"`、`"high"` 或 `"max"`。 |
 | `TokenUsage` | `SDKResultMessage.usage` 和 `AssistantModelMessage.usage` 上报的 token 计数。 |
-| `StopReason` | 模型停止的原因。`"max_tokens"` 表示响应中途被截断。 |
+| `StopReason` | 模型停止的原因。`"max_tokens"` 表示输出被截断；`"model_context_window_exceeded"` 表示上下文窗口耗尽，这才是 `autoCompact` 兜底恢复的对象。 |
 | `AgentRuntimeFailure` | 写入失败事件和上游报告 metadata 的归一化成员错误。 |
 | `TeamRunnerConfig` | Team runtime 限制，包括 `maxDelegateDepth` 和 `maxConcurrentWorkItems`。并发默认值为 `1`，同一目标 mailbox 始终串行。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |

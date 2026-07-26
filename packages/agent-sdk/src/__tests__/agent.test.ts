@@ -1547,6 +1547,121 @@ describe("agent-sdk", () => {
     expect(afterCompaction.length).toBeLessThan(requests[0]!.length + 4);
   });
 
+  test("recovers from a mid-request context overflow by compacting and retrying", async () => {
+    const stopReasons: string[] = [];
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      // Threshold never reached: only the overflow path can trigger compaction.
+      autoCompact: { thresholdTokens: 900_000, keepRecentMessages: 2 },
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ systemPrompt }) {
+          if (systemPrompt?.includes("create a detailed summary")) {
+            return { ...textAssistant("SUMMARY"), usage: { input_tokens: 10, output_tokens: 5 } };
+          }
+          turn++;
+          if (turn === 1) {
+            return { ...toolUseAssistant("toolu_1", "noop", {}), usage: { input_tokens: 100, output_tokens: 5 } };
+          }
+          if (turn === 2) {
+            // The window ran out mid-request: unusable response.
+            return {
+              ...textAssistant(""),
+              usage: { input_tokens: 999_999, output_tokens: 0 },
+              stopReason: "model_context_window_exceeded" as const,
+            };
+          }
+          return { ...textAssistant("done"), usage: { input_tokens: 50, output_tokens: 5 } };
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+    for (const message of messages) {
+      if (message.type === "assistant" && message.message.stopReason) {
+        stopReasons.push(message.message.stopReason);
+      }
+    }
+
+    expect(messages.some(m => m.type === "system" && m.subtype === "compaction")).toBe(true);
+    // The unusable response never became an assistant message or the result.
+    expect(stopReasons).not.toContain("model_context_window_exceeded");
+    expect(messages.at(-1)).toMatchObject({ subtype: "success", result: "done" });
+  });
+
+  test("recovers when the overflow arrives as an API error instead", async () => {
+    let turn = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      autoCompact: { thresholdTokens: 900_000, keepRecentMessages: 2 },
+      tools: [tool("noop", "No-op", z.object({}), async () => ({ content: "ok" }))],
+      modelClient: {
+        async createMessage({ systemPrompt }) {
+          if (systemPrompt?.includes("create a detailed summary")) {
+            return { ...textAssistant("SUMMARY"), usage: { input_tokens: 10, output_tokens: 5 } };
+          }
+          turn++;
+          if (turn === 1) {
+            return { ...toolUseAssistant("toolu_1", "noop", {}), usage: { input_tokens: 100, output_tokens: 5 } };
+          }
+          // An input that is already too large is rejected before generation.
+          if (turn === 2) throw new Error("prompt is too long: 900000 tokens > 200000 maximum");
+          return { ...textAssistant("done"), usage: { input_tokens: 50, output_tokens: 5 } };
+        },
+      },
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(result.subtype).toBe("success");
+    expect(result.result).toBe("done");
+  });
+
+  test("does not compact on max_tokens, which compaction cannot fix", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      autoCompact: { thresholdTokens: 900_000, keepRecentMessages: 2 },
+      modelClient: {
+        async createMessage() {
+          return {
+            ...textAssistant("truncated mid-sen"),
+            usage: { input_tokens: 100, output_tokens: 4_096 },
+            stopReason: "max_tokens" as const,
+          };
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go"));
+
+    // An output-budget failure: the caller is told, and history is left alone.
+    expect(messages.some(m => m.type === "system" && m.subtype === "compaction")).toBe(false);
+    expect(messages.at(-1)).toMatchObject({ subtype: "success", stop_reason: "max_tokens" });
+  });
+
+  test("surfaces the original failure when overflow recovery cannot help", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      // Nothing to summarize on the very first turn.
+      autoCompact: { thresholdTokens: 900_000, keepRecentMessages: 6 },
+      modelClient: {
+        async createMessage() {
+          throw new Error("prompt is too long: 900000 tokens > 200000 maximum");
+        },
+      },
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(result.subtype).toBe("error");
+    expect(result.error?.message).toContain("prompt is too long");
+  });
+
   test("compaction never orphans a tool_result from its tool_use", async () => {
     const requests: ModelMessage[][] = [];
     let turn = 0;
