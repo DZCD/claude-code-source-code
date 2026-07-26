@@ -50,6 +50,24 @@ const agent = createBareAgent({
 });
 ```
 
+`agent.query()` yields `stream_event` messages while the model is still
+responding, so a host can render output incrementally:
+
+```ts
+for await (const message of agent.query("Say hello")) {
+  if (message.type === "stream_event") {
+    const event = message.event as { type: string; delta?: { text?: string } };
+    if (event.type === "content_block_delta" && event.delta?.text) {
+      process.stdout.write(event.delta.text);
+    }
+  }
+}
+```
+
+The SDK produces the next event only after the loop takes the current one.
+Slow work in the loop body delays later events without dropping or reordering
+them, so keep expensive handling off the loop itself.
+
 Pass `{ stream: false }` to disable model streaming for a query:
 
 ```ts
