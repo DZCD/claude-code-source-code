@@ -35,6 +35,7 @@ export const sidebar: SidebarGroup[] = [
       { label: "Tools", translations: { "zh-CN": "工具" }, slug: "concepts/tools" },
       { label: "MCP", slug: "concepts/mcp" },
       { label: "Skills", translations: { "zh-CN": "技能" }, slug: "concepts/skills" },
+      { label: "Delegation and Teams", translations: { "zh-CN": "子智能体委派和团队" }, slug: "concepts/multi-agent" },
       { label: "Supervisor Delegation", translations: { "zh-CN": "Supervisor 子智能体委派" }, slug: "concepts/supervisor-delegation" },
       { label: "Mailbox Team", translations: { "zh-CN": "Mailbox Team 持久团队" }, slug: "concepts/mailbox-team" },
       { label: "Built-in Tools", translations: { "zh-CN": "内置工具" }, slug: "concepts/built-in-tools" },
