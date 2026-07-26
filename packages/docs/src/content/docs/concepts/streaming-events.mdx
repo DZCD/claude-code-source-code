@@ -36,3 +36,9 @@ for await (const message of agent.query("What is 2+2?")) {
 | `assistant` | Assistant message after model assembly. |
 | `user` | Tool result message sent back to the model. |
 | `result` | Final success, API error, abort, or max-turn result. |
+
+## Delivery timing
+
+`stream_event` messages arrive while the model is still responding rather than in a burst after the turn ends, so they can drive incremental UI directly. `assistant` arrives once the model response for that turn is assembled, and `user` arrives after the whole tool batch has finished.
+
+The SDK produces the next event only after the consumer takes the current one. Slow work inside the `for await` body delays later events without dropping or reordering them, so keep expensive handling off the loop itself.

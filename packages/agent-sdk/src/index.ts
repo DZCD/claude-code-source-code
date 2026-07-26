@@ -1930,7 +1930,7 @@ export class Agent<TContext = unknown> {
 
       turns++;
       let assistant: AssistantModelMessage;
-      const streamEvents: Record<string, unknown>[] = [];
+      const streamEvents = new StreamEventQueue();
       const modelMessages = this.messagesForModel(prompt);
       const modelTools = this.modelTools();
       const stream = options.stream ?? true;
@@ -1952,8 +1952,10 @@ export class Agent<TContext = unknown> {
           ...(reasoningEffort ? { reasoningEffort } : {}),
         },
       });
-      try {
-        assistant = await this.modelClient.createMessage({
+      // The model call runs alongside the drain loop below so stream events reach
+      // the consumer while the model is still responding.
+      const modelCall = settle(
+        this.modelClient.createMessage({
           model: this.options.model,
           systemPrompt,
           maxTokens: this.options.maxTokens,
@@ -1969,12 +1971,24 @@ export class Agent<TContext = unknown> {
             }
           },
           signal: options.signal,
-        });
-      } catch (error) {
+        }),
+        () => streamEvents.finish(),
+      );
+
+      for await (const event of streamEvents.drain()) {
+        yield {
+          type: "stream_event",
+          event,
+          session_id: this.sessionId,
+        };
+      }
+
+      const outcome = await modelCall;
+      if (!outcome.ok) {
         const wrapped =
-          error instanceof AbortError
-            ? error
-            : new APIError(errorMessage(error), { cause: error });
+          outcome.error instanceof AbortError
+            ? outcome.error
+            : new APIError(errorMessage(outcome.error), { cause: outcome.error });
         const subtype = wrapped instanceof AbortError ? "error_abort" : "error";
         const result = this.resultMessage(subtype, "", turns, wrapped);
         await emitTraceEvent(tracer, {
@@ -1986,21 +2000,14 @@ export class Agent<TContext = unknown> {
         yield result;
         return;
       }
-
-      for (const event of streamEvents) {
-        yield {
-          type: "stream_event",
-          event,
-          session_id: this.sessionId,
-        };
-      }
+      assistant = outcome.value;
 
       this.messages.push(assistant);
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "assistant_message",
         data: { message: assistant },
-      });
+      }, outcome.settledAt);
       yield {
         type: "assistant",
         message: assistant,
@@ -2416,6 +2423,69 @@ async function mapWithConcurrency<TInput, TOutput>(
   const rejected = settled.find(result => result.status === "rejected");
   if (rejected?.status === "rejected") throw rejected.reason;
   return outputs;
+}
+
+/**
+ * Buffers provider stream events only until the consumer asks for the next one,
+ * so `query()` can yield them while the model request is still in flight.
+ */
+class StreamEventQueue {
+  private readonly pending: Record<string, unknown>[] = [];
+  private wake: (() => void) | undefined;
+  private closed = false;
+
+  push(event: Record<string, unknown>): void {
+    this.pending.push(event);
+    this.notify();
+  }
+
+  finish(): void {
+    this.closed = true;
+    this.notify();
+  }
+
+  async *drain(): AsyncGenerator<Record<string, unknown>> {
+    while (true) {
+      while (this.pending.length > 0) {
+        yield this.pending.shift()!;
+      }
+      if (this.closed) return;
+      // No await between the emptiness check and this assignment, so a push
+      // cannot slip through unnoticed.
+      await new Promise<void>(resolve => {
+        this.wake = resolve;
+      });
+    }
+  }
+
+  private notify(): void {
+    const wake = this.wake;
+    this.wake = undefined;
+    wake?.();
+  }
+}
+
+type SettledOutcome<T> =
+  | { ok: true; value: T; settledAt: string }
+  | { ok: false; error: unknown; settledAt: string };
+
+/**
+ * Turns a promise into a never-rejecting outcome and records when it settled, so
+ * callers can await it after other work without losing the real completion time.
+ */
+function settle<T>(promise: Promise<T>, onSettled: () => void): Promise<SettledOutcome<T>> {
+  return promise.then(
+    value => {
+      const settledAt = new Date().toISOString();
+      onSettled();
+      return { ok: true as const, value, settledAt };
+    },
+    error => {
+      const settledAt = new Date().toISOString();
+      onSettled();
+      return { ok: false as const, error, settledAt };
+    },
+  );
 }
 
 class AnthropicModelClient implements ModelClient {
@@ -4421,13 +4491,16 @@ const traceSequences = new WeakMap<ContextTracer, number>();
 async function emitTraceEvent(
   tracer: ContextTracer | undefined,
   input: Omit<ContextTraceEvent, "version" | "timestamp" | "seq">,
+  // When the traced work finished earlier than this call, pass that moment so the
+  // trace records the work's duration instead of including later SDK bookkeeping.
+  occurredAt?: string,
 ): Promise<void> {
   if (!tracer) return;
   const nextSeq = (traceSequences.get(tracer) ?? 0) + 1;
   traceSequences.set(tracer, nextSeq);
   const event: ContextTraceEvent = {
     version: 1,
-    timestamp: new Date().toISOString(),
+    timestamp: occurredAt ?? new Date().toISOString(),
     seq: nextSeq,
     ...input,
   };

@@ -1450,6 +1450,46 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("delivers stream events while the model request is still running", async () => {
+    const release: Array<() => void> = [];
+    const modelClient: ModelClient = {
+      async createMessage({ onStreamEvent }) {
+        for (let index = 0; index < 3; index++) {
+          onStreamEvent?.({ type: "content_block_delta", index });
+          // Hand control back to the consumer before producing the next event.
+          await new Promise<void>(resolve => release.push(resolve));
+        }
+        return textAssistant("done");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+    });
+
+    const seen: string[] = [];
+    for await (const message of agent.query("Say hello", { stream: true })) {
+      seen.push(message.type);
+      if (message.type === "stream_event") {
+        // The producer is parked inside createMessage waiting to be released, so
+        // the model call cannot have returned yet. An implementation that buffers
+        // events until the call resolves would never reach this line.
+        expect(release.length).toBe(1);
+        release.shift()!();
+      }
+    }
+
+    expect(seen).toEqual([
+      "system",
+      "stream_event",
+      "stream_event",
+      "stream_event",
+      "assistant",
+      "result",
+    ]);
+  });
+
   test("emits stream events for streaming tool calls", async () => {
     const agent = createAgent({
       apiKey: "test-key",
