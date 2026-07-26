@@ -7,6 +7,11 @@ Install it from npm as `agent-lattice`. It works with Anthropic and
 Anthropic-compatible providers such as DeepSeek, without installing the Claude
 Code CLI runtime.
 
+> **Integrating this SDK from an AI agent?** Start at
+> <https://docs.claude-code-sdk.com/llms.txt> for an index of the documentation,
+> where every page is served as clean Markdown. Read
+> <https://docs.claude-code-sdk.com/llms-full.txt> to take it all in one request.
+
 ## Install
 
 ```bash
