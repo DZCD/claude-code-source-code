@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Scoped to packages/ on purpose. src/ is decompiled output with ~39
+      # pre-existing violations that CLAUDE.md says not to chase; linting it
+      # kept CI permanently red, which taught everyone to ignore CI.
+      - name: Lint
+        run: bunx biome lint packages/agent-sdk/src
+
+      # Type errors are the gap tests cannot cover: bun test does not
+      # typecheck, so a bad signature passes every test and fails the build.
+      - name: Typecheck
+        run: bunx tsc -p packages/agent-sdk/tsconfig.json --noEmit
+
+      - name: Test
+        run: bun test
+
+      - name: Build SDK
+        run: bun run --cwd packages/agent-sdk build
+
+      - name: Build docs
+        run: bun run --cwd packages/docs build
