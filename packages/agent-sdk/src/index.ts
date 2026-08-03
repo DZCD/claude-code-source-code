@@ -1005,18 +1005,29 @@ export type AgentToolOptions = {
   targetMailboxId?: string;
 };
 
+/**
+ * An AgentLike is a live session: it keeps its conversation history across
+ * calls. An AgentSpec is a template: each call spawns a fresh session with no
+ * memory of previous calls. Prefer a spec unless the parent explicitly wants
+ * continuity.
+ */
+export type AgentToolTarget = AgentLike<any> | AgentSpec<any>;
+
 export function agentTool(
   name: string,
-  agent: AgentLike<any>,
+  agent: AgentToolTarget,
   options: AgentToolOptions,
 ): ToolDefinition<AgentToolInput> {
   const toolName = sanitizeToolName(name);
   const definition = tool(
     toolName,
-    formatAgentToolDescription(options.description),
+    formatAgentToolDescription(options.description, isAgentSpec(agent)),
     agentToolInputSchema,
     async (input, toolContext) => {
       const task = formatAgentToolTask(input);
+      // Resolve per invocation: a spec spawns a new session every call, so no
+      // history leaks between unrelated tasks.
+      const target = resolveAgentTarget(agent);
       if (input.mode === "observe") {
         throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
       }
@@ -1032,7 +1043,7 @@ export function agentTool(
         const result = await toolContext.agentRuntime.delegate({
           name: toolName,
           description: options.description,
-          agent,
+          agent: target,
           task,
           wait: "accepted",
           targetMailboxId: options.targetMailboxId,
@@ -1045,7 +1056,7 @@ export function agentTool(
         const result = await toolContext.agentRuntime.delegate({
           name: toolName,
           description: options.description,
-          agent,
+          agent: target,
           task,
           wait: "result",
           targetMailboxId: options.targetMailboxId,
@@ -1054,7 +1065,7 @@ export function agentTool(
         return { content: result.content };
       }
 
-      const result = await agent.prompt(task, {
+      const result = await target.prompt(task, {
         signal: toolContext.signal,
         context: toolContext.context,
       });
@@ -1070,7 +1081,7 @@ export function agentTool(
 export function delegateTool(
   name: string,
   description: string,
-  agent: AgentLike<any>,
+  agent: AgentToolTarget,
   options: DelegateToolOptions = {},
 ): ToolDefinition<{ task: string }> {
   const toolName = sanitizeToolName(name);
@@ -1087,7 +1098,7 @@ export function delegateTool(
       const result = await toolContext.agentRuntime.delegate({
         name: toolName,
         description,
-        agent,
+        agent: resolveAgentTarget(agent),
         task: input.task,
         wait: options.wait,
         targetMailboxId: options.targetMailboxId,
@@ -1108,6 +1119,41 @@ export function createBareAgent<TContext = unknown>(options: BareAgentOptions<TC
     ...options,
     [BARE_AGENT_OPTIONS]: { installWorkspace: false },
   } as InternalAgentOptions<TContext>);
+}
+
+/**
+ * A template describing an agent's identity: model, prompt, tools, skills,
+ * and workspace policy. A spec carries no conversation state; `spawn()`
+ * creates an independent session (an Agent) that owns its own history and
+ * workspace. Register a spec wherever a capability should be reused without
+ * leaking memory between tasks; spawn a session when continuity is wanted.
+ */
+export type AgentSpec<TContext = unknown> = {
+  readonly name?: string;
+  readonly options: AgentOptions<TContext>;
+  spawn(overrides?: Partial<AgentOptions<TContext>>): Agent<TContext>;
+};
+
+export function defineAgent<TContext = unknown>(options: AgentOptions<TContext>): AgentSpec<TContext> {
+  if (!options?.model) {
+    throw new Error("AgentOptions.model is required");
+  }
+  const specOptions = Object.freeze({ ...options });
+  return {
+    name: options.name,
+    options: specOptions,
+    spawn(overrides) {
+      return new Agent<TContext>({ ...specOptions, ...overrides });
+    },
+  };
+}
+
+export function isAgentSpec(target: AgentLike<any> | AgentSpec<any>): target is AgentSpec<any> {
+  return typeof (target as AgentSpec<any>).spawn === "function";
+}
+
+function resolveAgentTarget(target: AgentLike<any> | AgentSpec<any>): AgentLike<any> {
+  return isAgentSpec(target) ? target.spawn() : target;
 }
 
 export function createBuiltinTools(options: AgentWorkspaceToolsOptions = {}): Array<ToolDefinition<any, any>> {
@@ -4122,7 +4168,7 @@ function formatTeamMemberDelegateDescription(member: TeamMemberDefinition): stri
   return details.join(" ");
 }
 
-function formatAgentToolDescription(description: string): string {
+function formatAgentToolDescription(description: string, freshSessionPerCall: boolean): string {
   return [
     description,
     "",
@@ -4130,6 +4176,9 @@ function formatAgentToolDescription(description: string): string {
     '- mode="ask": ask the AgentLike and wait for its final answer in this tool call.',
     '- mode="handoff": queue work and receive an acceptance receipt immediately; requires a team/runtime context. The receipt means queued, not completed. After the current tool batch, the team runtime runs the member and resumes you with a completed or failed report. Do not call tools that depend on the delegated result before that report arrives.',
     '- mode="observe": request observable long-running work; currently unsupported and will return a clear error.',
+    freshSessionPerCall
+      ? "Statefulness: every call spawns a fresh session with no memory of previous calls. Make each task self-contained."
+      : "Statefulness: this target is a long-lived session that retains conversation history across calls. Earlier tasks may influence its answers.",
     "Provide a clear task, expected output, and acceptance criteria when useful.",
     "If the target needs to write in a shared workspace, include workspaceGrants with root, access, and reason. The runtime will only grant write access that the caller is already allowed to delegate, and the result will say which grants were accepted or why they were denied. Read-only tools do not require workspace grants.",
     "Choose one workspace strategy explicitly: either ask the target to write deliverables in its own private workspace and report paths, or provide workspaceGrants for every shared/manager-owned root you ask it to write under.",

@@ -82,6 +82,33 @@ console.log(result.result);
 
 > 这里的 **team runtime** 指驱动 mailbox 持久团队的运行时——它维护消息队列、保存任务状态，并负责 `handoff` 之后成员的生命周期。本模式是一次性委派，默认没有 runtime，所以 `handoff` / `observe` 基本用不上；需要它们时请改用 [Mailbox Team 持久团队](/zh/concepts/mailbox-team/)。
 
+## 模板目标还是会话目标
+
+`agentTool()` 的 target 既可以传存活的 `AgentLike` 会话（如上例），也可以传 `defineAgent()` 创建的 `AgentSpec` 模板：
+
+```ts
+import { agentTool, defineAgent } from "agent-lattice";
+
+const explorerSpec = defineAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: "You are an explore subagent. Inspect and report; do not make code changes.",
+});
+
+const supervisor = createAgent({
+  // ...
+  tools: [
+    agentTool("explore", explorerSpec, {
+      description: "Ask a temporary explore subagent to inspect the codebase and report findings.",
+    }),
+  ],
+});
+```
+
+模板目标会在**每次工具调用时 spawn 一个全新会话**——不相关的任务之间不会泄漏历史，并发调用也不会争抢同一段对话。会话目标则跨调用保留历史，先前的任务可能影响后续回答。Supervisor 委派场景优先传模板；只有当专家需要记住之前的任务时，才注册 `spec.spawn()` 产生的会话。生成的工具描述会声明目标是哪种语义，supervisor 模型据此知道任务是否必须自包含。
+
 ## Workspace
 
 每个子智能体都有自己的 workspace。对于报告、日志、生成文件或代码等持久交付物，让子智能体写在自己的 workspace 下，并在最终文本里说明关键路径。

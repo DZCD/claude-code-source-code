@@ -82,6 +82,33 @@ For one-shot supervisor delegation, prefer `mode: "ask"`.
 
 > The **team runtime** here is the runtime that backs a persistent mailbox team — it owns the message queue, holds task state, and drives member lifecycle after a `handoff`. This one-shot pattern has no runtime by default, so `handoff` / `observe` are rarely useful here; when you need them, use a [persistent mailbox team](/concepts/mailbox-team/).
 
+## Spec or session target
+
+`agentTool()` accepts either a live `AgentLike` session (as above) or an `AgentSpec` template created by `defineAgent()`:
+
+```ts
+import { agentTool, defineAgent } from "agent-lattice";
+
+const explorerSpec = defineAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: "You are an explore subagent. Inspect and report; do not make code changes.",
+});
+
+const supervisor = createAgent({
+  // ...
+  tools: [
+    agentTool("explore", explorerSpec, {
+      description: "Ask a temporary explore subagent to inspect the codebase and report findings.",
+    }),
+  ],
+});
+```
+
+A spec target spawns a **fresh session on every tool call** — no history leaks between unrelated tasks, and concurrent calls never collide on a shared conversation. A session target keeps its history across calls, so earlier tasks can influence later answers. Prefer a spec for supervisor delegation; register `spec.spawn()` only when the specialist should remember previous tasks. The generated tool description states which semantics the target has, so the supervisor model knows whether each task must be self-contained.
+
 ## Workspaces
 
 Each child agent has its own workspace. Ask child agents to write durable reports, logs, generated files, or code under their workspace and mention important paths in their final text.

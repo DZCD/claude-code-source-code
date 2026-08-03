@@ -700,6 +700,42 @@ type AgentLike<TContext = unknown> = {
 That means a team can be used anywhere a callable agent is expected. From the
 outside, a team is an agent; inside, it can contain a whole organization.
 
+## Agent Specs (Templates) And Sessions
+
+`createAgent()` returns a live session: one conversation, one history, one
+workspace. `defineAgent()` returns an `AgentSpec` — a template carrying the
+same options but no state. `spawn()` creates an independent session from it:
+
+```ts
+import { agentTool, defineAgent } from "agent-lattice";
+
+const reviewerSpec = defineAgent({
+  name: "reviewer",
+  model: "claude-sonnet-4-5",
+  systemPrompt: "You are a senior code reviewer...",
+});
+
+// Register the spec: every tool call spawns a fresh session with no memory
+// of previous calls. This is the safe default for reuse.
+const lead = createAgent({
+  model: "claude-sonnet-4-5",
+  tools: [
+    agentTool("review", reviewerSpec, {
+      description: "Ask the reviewer to audit a change.",
+    }),
+  ],
+});
+
+// Register a spawned session instead when the target should remember earlier
+// tasks across calls — continuity is an explicit opt-in.
+const reviewSession = reviewerSpec.spawn();
+```
+
+The same union applies to `delegateTool()`. The generated tool description
+states which semantics a target has, so the calling agent knows whether each
+task must be self-contained. Existing code that passes an `AgentLike` keeps
+its current behavior: a long-lived session with history.
+
 ## Team Mailbox Collaboration
 
 Use `createTeam()` when you want to talk to one `AgentLike` while it coordinates

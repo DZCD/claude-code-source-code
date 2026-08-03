@@ -9,10 +9,12 @@ description: Stable exports exposed by the SDK package.
 | --- | --- |
 | `createAgent(options)` | Creates an in-memory `Agent` with a private workspace and default workspace tools. |
 | `createBareAgent(options)` | Creates an in-memory `Agent` without default tools, workspace instructions, or workspace directory creation. |
+| `defineAgent(options)` | Creates an `AgentSpec` template from agent options. The spec is stateless; `spawn()` creates an independent session with its own history and workspace. |
+| `isAgentSpec(target)` | Type guard distinguishing an `AgentSpec` template from a live `AgentLike` session. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
-| `agentTool(name, target, metadata)` | Exposes another `AgentLike` as a model tool with explicit `ask`, `handoff`, or `observe` modes. |
-| `delegateTool(name, description, agent, options)` | Advanced helper that exposes an `AgentLike` as a mailbox-backed delegate tool. |
+| `agentTool(name, target, metadata)` | Exposes another `AgentLike` or `AgentSpec` as a model tool with explicit `ask`, `handoff`, or `observe` modes. A spec target spawns a fresh session per call; a session target keeps its history across calls. |
+| `delegateTool(name, description, agent, options)` | Advanced helper that exposes an `AgentLike` or `AgentSpec` as a mailbox-backed delegate tool. |
 | `skill(options)` | Creates an in-memory skill definition. |
 | `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
 | `createMCPTools(client, options)` | Maps an MCP client into SDK tool definitions. |
@@ -185,6 +187,8 @@ package does not export it as an importable path.
 | `SDKMessage` | Union of all emitted SDK events. |
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
 | `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper. |
+| `AgentSpec` | Agent template created by `defineAgent()`: a stateless identity (name, model, prompt, tools, workspace policy) plus `spawn()` for creating independent sessions. |
+| `AgentToolTarget` | Union accepted by `agentTool()` and `delegateTool()`: a live `AgentLike` session or an `AgentSpec` template. |
 | `AgentOptions` | Agent construction options. |
 | `BareAgentOptions` | Construction options for `createBareAgent()`, equivalent to `AgentOptions` without `workspace`. |
 | `AgentWorkspaceOptions` | String path or workspace configuration object accepted by `AgentOptions.workspace` to override the default workspace. |
