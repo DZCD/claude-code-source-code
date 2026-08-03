@@ -11,6 +11,15 @@
 
 文档是 SDK 接口的一部分。改完代码后运行 `bun run build`（packages/docs）确认文档站构建通过。
 
+## 提交代码必须携带版本变更
+
+每次提交涉及 `packages/agent-sdk` 的代码变更时，必须在同一次提交中携带版本变更，不得把版本号留到发布前再补：
+
+- 按 semver 更新 `packages/agent-sdk/package.json` 的 `version`：新特性升 minor，修复升 patch，破坏性变更升 major。
+- 同步文档站的特性可用性表：`packages/docs/src/content/docs/reference/public-api.mdx` 与 `zh/` 下对应文件，给新特性加上最低版本行。
+- 在特性实际被文档化的页面（README 小节、概念页）加内联版本标记，格式为 `*Requires X.Y.Z or later.*` / `*需要 X.Y.Z 及以上版本。*`——只改 API 参考表不够，直接访问概念页的读者看不到它。
+- 版本号要从 git 历史核实（特性引入的提交 + 该提交时的包版本），不要凭记忆填写。
+
 
 ## 分支开发工作流
 

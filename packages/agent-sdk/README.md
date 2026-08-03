@@ -702,6 +702,8 @@ outside, a team is an agent; inside, it can contain a whole organization.
 
 ## Agent Specs (Templates) And Sessions
 
+*Requires 0.15.0 or later.*
+
 `createAgent()` returns a live session: one conversation, one history, one
 workspace. `defineAgent()` returns an `AgentSpec` — a template carrying the
 same options but no state. `spawn()` creates an independent session from it:
