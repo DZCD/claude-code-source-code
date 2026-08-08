@@ -2159,7 +2159,7 @@ describe("agent-sdk", () => {
 
     const pending = agent.prompt("first prompt");
     await new Promise(resolve => setTimeout(resolve, 20));
-    agent.interrupt();
+    expect(agent.interrupt()).toBe(true);
     const interrupted = await pending;
 
     expect(interrupted).toMatchObject({ subtype: "interrupted", is_error: false, result: "" });
@@ -2184,12 +2184,34 @@ describe("agent-sdk", () => {
       modelClient: clientFromResponses([textAssistant("ok")]),
     });
 
-    expect(() => agent.interrupt()).not.toThrow();
+    expect(agent.interrupt()).toBe(false);
 
     const result = await agent.prompt("go");
 
     expect(result.subtype).toBe("success");
-    expect(() => agent.interrupt()).not.toThrow();
+    expect(agent.interrupt()).toBe(false);
+  });
+
+  test("replaceHistory throws ConcurrentQueryError while a query is running", async () => {
+    const modelClient: ModelClient = {
+      // Stays in flight until the interrupt signal cancels the wait.
+      createMessage: () => new Promise(() => {}),
+    };
+    const agent = createAgent({ apiKey: "test-key", model: "claude-test", modelClient });
+
+    const pending = agent.prompt("first prompt");
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    await expect(agent.replaceHistory([{ role: "user", content: "swap" }])).rejects.toThrow(
+      ConcurrentQueryError,
+    );
+
+    agent.interrupt();
+    await pending;
+
+    // Idle again: the same call now succeeds and the next query sees it.
+    await agent.replaceHistory([{ role: "user", content: "swap" }]);
+    expect(await agent.getHistory()).toEqual([{ role: "user", content: "swap" }]);
   });
 
   test("times out a single model request via requestTimeoutMs", async () => {

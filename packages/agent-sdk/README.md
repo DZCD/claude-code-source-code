@@ -730,13 +730,15 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 type AgentLike<TContext = unknown> = {
   query(prompt, options?): AsyncGenerator<SDKMessage | TeamRunnerMessage>;
   prompt(prompt, options?): Promise<SDKResultMessage>;
-  interrupt(): void;
+  interrupt(): boolean;
 };
 ```
 
 `interrupt()` ends the in-flight model request with an `"interrupted"` result
 (see [Interrupting A Query](#interrupting-a-query)); on a `Team` or
-`TeamRunner` it delegates to the lead/root agent. *Requires 0.16.0 or later.*
+`TeamRunner` it delegates to the lead/root agent. It returns `true` when a
+query was interrupted and `false` when idle. *Requires 0.16.0 or later; the
+`boolean` return requires 0.17.0 or later.*
 
 That means a team can be used anywhere a callable agent is expected. From the
 outside, a team is an agent; inside, it can contain a whole organization.
@@ -1173,6 +1175,23 @@ failing store is swallowed and the conversation continues in memory only,
 mirroring the tracer's failure semantics; set `failOnError: true` on the store
 to propagate store errors out of `query()` instead.
 
+To rewrite the history from the host instead of from compaction, use
+`agent.replaceHistory(messages)`. *Requires 0.17.0 or later.* It is idle-only:
+calling it while a query is running throws `ConcurrentQueryError`, the same
+guard as a concurrent `query()`. When a `historyStore` is configured the store
+is replaced too, so persistence stays in sync, and the replacement also
+suppresses the lazy `load()` — seeding never overwrites what the host just
+installed. The SDK does not validate the content: the host owns it, and the
+history must be well-formed (e.g. no dangling `tool_use` without its matching
+`tool_result`).
+
+```ts
+await agent.replaceHistory([
+  { role: "user", content: "My name is Ada." },
+  { role: "assistant", content: [{ type: "text", text: "Nice to meet you, Ada." }] },
+]);
+```
+
 ## Deadlines
 
 `QueryOptions.signal` bounds a whole query — every model request, tool call, and
@@ -1204,7 +1223,7 @@ loop indefinitely. Losing that race abandons the call rather than cancelling it.
 
 ## Interrupting A Query
 
-*Requires 0.16.0 or later.*
+*Requires 0.16.0 or later; `interrupt()` returns `boolean` from 0.17.0.*
 
 `agent.interrupt()` ends the current query without tearing the conversation
 down. Where `QueryOptions.signal` terminates the query with `"error_abort"`,
@@ -1225,8 +1244,10 @@ await agent.prompt("Actually, skip 0.15.x and cover 0.16.0 only.");
 
 An interrupt that lands while a tool batch is executing takes effect once the
 batch completes: its tool results are written to history first, and the query
-ends `"interrupted"` before the next model call. `interrupt()` is a no-op when
-no query is running.
+ends `"interrupted"` before the next model call. `interrupt()` returns `true`
+when a query was running and is now interrupted, and `false` when idle — a
+`false` tells the host there is nothing to wait for, so it can send its next
+query directly.
 
 ## Token Usage And Truncation
 

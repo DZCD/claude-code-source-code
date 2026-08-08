@@ -80,8 +80,12 @@ export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
 export type AgentLike<TContext = unknown> = {
   query(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): AsyncGenerator<AgentLikeEvent>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): Promise<SDKResultMessage>;
-  /** End the in-flight model request with an "interrupted" result; follow up with a new query(). No-op when idle. */
-  interrupt(): void;
+  /**
+   * End the in-flight model request with an "interrupted" result; follow up
+   * with a new query(). Returns `true` when a query was interrupted, `false`
+   * when idle — a `false` means the host can send its next query directly.
+   */
+  interrupt(): boolean;
 };
 
 export type DelegateWaitMode = "result" | "accepted";
@@ -252,6 +256,13 @@ export type ModelMessage = {
  * Like `ContextTracer`, a failing store is swallowed by default and the
  * conversation continues in memory only; set `failOnError` to propagate store
  * errors out of `query()` instead.
+ *
+ * The objects passed to `append()` and `replace()` are guaranteed to carry at
+ * least `role` and `content`. Runtime objects may carry extra fields (`usage`,
+ * `stopReason`, `providerResponseId`, `model`) that are not part of the
+ * contract and must not be relied on; hosts that need response metadata for
+ * reconciliation or analytics should use the ContextTracer's
+ * `assistant_message` events instead.
  */
 export type HistoryStore = {
   failOnError?: boolean;
@@ -667,8 +678,8 @@ export type Team = {
   drain(options?: TeamDrainOptions): Promise<TeamDrainResult>;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
-  /** Interrupts the lead agent's in-flight model request. */
-  interrupt(): void;
+  /** Interrupts the lead agent's in-flight model request; returns `true` when a query was interrupted, `false` when idle. */
+  interrupt(): boolean;
 };
 
 export type TeamDrainOptions = {
@@ -695,8 +706,8 @@ export type TeamRunner = {
   mailbox: TeamMailbox;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
-  /** Interrupts the root agent's in-flight model request. */
-  interrupt(): void;
+  /** Interrupts the root agent's in-flight model request; returns `true` when a query was interrupted, `false` when idle. */
+  interrupt(): boolean;
 };
 
 type AcceptedDelegateWork = {
@@ -2228,10 +2239,14 @@ export class Agent<TContext = unknown> {
    * "interrupted". Completed turns stay in history; follow up with a new
    * query() to continue the conversation. Unlike `QueryOptions.signal`, which
    * terminates the query as an error, an interrupt is normal control flow.
-   * A no-op when no query is running.
+   * Returns `true` when a query was running and is now interrupted, `false`
+   * when idle — a `false` tells the host it can send its next query directly
+   * instead of waiting for an "interrupted" result.
    */
-  interrupt(): void {
-    this.interruptController?.abort();
+  interrupt(): boolean {
+    if (!this.interruptController) return false;
+    this.interruptController.abort();
+    return true;
   }
 
   /**
@@ -2859,6 +2874,31 @@ export class Agent<TContext = unknown> {
   async getHistory(): Promise<ModelMessage[]> {
     await this.ensureHistoryLoaded();
     return structuredClone(this.messages);
+  }
+
+  /**
+   * Replace the conversation history. Idle only: throws ConcurrentQueryError
+   * while a query is running. When a historyStore is configured the store is
+   * replaced too, so persistence stays in sync.
+   *
+   * The host owns the content: the SDK does not validate the messages, so the
+   * replacement must be a well-formed history — e.g. no dangling `tool_use`
+   * without its matching `tool_result`.
+   */
+  async replaceHistory(messages: ModelMessage[]): Promise<void> {
+    if (this.running) {
+      throw new ConcurrentQueryError(
+        `Agent ${this.options.name ?? this.sessionId} is already running a query. ` +
+          "replaceHistory() is idle-only: wait for the running query to finish, or interrupt() it first.",
+      );
+    }
+    // Mark the history as loaded so the lazy store load on the first query
+    // cannot seed over the replacement.
+    this.historyLoaded = Promise.resolve();
+    this.messages.length = 0;
+    // Clone so the caller cannot mutate the live history through its copy.
+    this.messages.push(...structuredClone(messages));
+    await this.replaceStoredHistory();
   }
 
   addTools(tools: Array<ToolDefinition<any, TContext>>): void {

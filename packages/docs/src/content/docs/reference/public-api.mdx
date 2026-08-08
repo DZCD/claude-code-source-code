@@ -49,12 +49,19 @@ const result = await agent.prompt(prompt);
 // AgentOptions.historyStore. Mutating it cannot corrupt the live history.
 const history = await agent.getHistory();
 
+// Replace the whole conversation history. Idle only (throws
+// ConcurrentQueryError while a query runs); a configured historyStore is
+// replaced too, so persistence stays in sync. The SDK does not validate the
+// content — the host owns it.
+await agent.replaceHistory(messages);
+
 // End the running query with subtype "interrupted", keeping completed turns
-// in history so a follow-up query can continue the conversation.
+// in history so a follow-up query can continue the conversation. Returns
+// true when a query was interrupted, false when idle.
 agent.interrupt();
 ```
 
-`interrupt()` is the cooperative counterpart of `QueryOptions.signal`: the signal terminates the query with `error_abort`, while an interrupt finishes it with `interrupted` (not an error) after dropping only the in-flight turn. It is a no-op when no query is running.
+`interrupt()` is the cooperative counterpart of `QueryOptions.signal`: the signal terminates the query with `error_abort`, while an interrupt finishes it with `interrupted` (not an error) after dropping only the in-flight turn. It returns `false` when no query is running, so the host knows it can send its next query directly.
 
 Use `createAgent()` when the agent should have a private workspace for durable files and test evidence. Use `createBareAgent()` when the host wants a plain model loop and will pass every system prompt and tool explicitly:
 
@@ -190,6 +197,7 @@ than relying on an error.
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()` (also on the `AgentLike` interface — breaking for custom implementers), result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
+| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers) | 0.17.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -200,7 +208,7 @@ package does not export it as an importable path.
 | --- | --- |
 | `SDKMessage` | Union of all emitted SDK events. |
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
-| `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper: `query()`, `prompt()`, and `interrupt()` (the latter requires 0.16.0). |
+| `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper: `query()`, `prompt()`, and `interrupt()` (the latter requires 0.16.0; its `boolean` return requires 0.17.0). |
 | `AgentSpec` | Agent template created by `defineAgent()`: a stateless identity (name, model, prompt, tools, workspace policy) plus `spawn()` for creating independent sessions. |
 | `AgentToolTarget` | Union accepted by `agentTool()` and `delegateTool()`: a live `AgentLike` session or an `AgentSpec` template. |
 | `AgentOptions` | Agent construction options. |

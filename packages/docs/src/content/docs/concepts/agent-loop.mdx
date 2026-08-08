@@ -78,6 +78,8 @@ const transcript = await agent.getHistory();
 
 `load()` runs once per Agent lifetime, before the first query. Resuming a conversation in another process is a new Agent over the same store — the one-Agent-one-conversation rule above is unchanged. After loading, `append(message)` follows every message added to the history, and `replace(messages)` follows compaction, which rewrites the history wholesale, so a store must support full replacement. `createJsonlHistoryStore()` writes one JSON message per line and skips malformed lines on load, so a torn final write does not lose the transcript. By default a failing store is swallowed and the conversation continues in memory only; set `failOnError: true` on the store to propagate store errors out of `query()`.
 
+The host can also rewrite the history directly with `agent.replaceHistory(messages)`. *Requires 0.17.0 or later.* It is idle-only — calling it while a query is running throws `ConcurrentQueryError` — and when a `historyStore` is configured the store is replaced too, so persistence stays in sync. The SDK does not validate the content: the host owns it, and the replacement must be a well-formed history (e.g. no dangling `tool_use` without its matching `tool_result`).
+
 ## Deadlines
 
 *`requestTimeoutMs` requires 0.11.0 or later.*

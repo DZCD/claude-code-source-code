@@ -76,6 +76,8 @@ const transcript = await agent.getHistory();
 
 `load()` 在每个 Agent 生命周期里只跑一次，发生在首次 query 之前。跨进程 resume 就是「新 Agent + 同一个 store」——上面「一个 Agent 只承载一个会话」的语义不变。加载之后，每条进入历史的消息都会触发 `append(message)`；compaction 整体重写历史时触发 `replace(messages)`，所以 store 必须支持整体替换。`createJsonlHistoryStore()` 每行写一个 JSON message，load 时跳过损坏行，写文件时最后一次写入被截断不会丢掉整个 transcript。默认情况下 store 出错会被吞掉，对话降级为仅内存继续；在 store 上设 `failOnError: true` 可以让错误从 `query()` 传播出来。
 
+宿主也可以用 `agent.replaceHistory(messages)` 直接改写历史。*需要 0.17.0 及以上版本。* 它仅限空闲时调用——query 运行中调用会抛 `ConcurrentQueryError`——配置了 `historyStore` 时 store 会同步替换，持久化保持一致。SDK 不校验内容：由宿主负责其合法性，替换进去的历史必须是结构良好的（例如不能有悬空的 `tool_use` 缺少对应的 `tool_result`）。
+
 ## 超时
 
 *`requestTimeoutMs` 需要 0.11.0 及以上版本。*

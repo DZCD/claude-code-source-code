@@ -49,12 +49,17 @@ const result = await agent.prompt(prompt);
 // 修改返回值不会污染运行中的历史。
 const history = await agent.getHistory();
 
+// 整体替换对话历史。仅限空闲时调用（query 运行中会抛
+// ConcurrentQueryError）；配置了 historyStore 时 store 会同步替换，
+// 持久化保持一致。SDK 不校验内容——由宿主负责其合法性。
+await agent.replaceHistory(messages);
+
 // 以 subtype "interrupted" 结束当前 query，已完成轮次保留在历史中，
-// 后续可以用新的 query 继续对话。
+// 后续可以用新的 query 继续对话。有 query 被中断时返回 true，空闲时返回 false。
 agent.interrupt();
 ```
 
-`interrupt()` 是 `QueryOptions.signal` 的协作式对应物：signal 以 `error_abort` 终止 query，而 interrupt 只丢弃在飞的一轮、以 `interrupted` 收尾（不算错误）。没有在飞的 query 时它是空操作。
+`interrupt()` 是 `QueryOptions.signal` 的协作式对应物：signal 以 `error_abort` 终止 query，而 interrupt 只丢弃在飞的一轮、以 `interrupted` 收尾（不算错误）。没有在飞的 query 时返回 `false`，宿主据此知道可以直接发下一个 query。
 
 当 agent 需要私有 workspace 来存放持久文件和测试证据时，使用 `createAgent()`。当宿主只想要纯模型循环，并希望显式传入所有系统提示词和工具时，使用 `createBareAgent()`：
 
@@ -185,6 +190,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`（同时加入 `AgentLike` 接口——对自定义实现方是破坏性变更）、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
+| `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更） | 0.17.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -194,7 +200,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | --- | --- |
 | `SDKMessage` | SDK 输出事件的 union 类型。 |
 | `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
-| `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口：`query()`、`prompt()` 和 `interrupt()`（后者需要 0.16.0）。 |
+| `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口：`query()`、`prompt()` 和 `interrupt()`（后者需要 0.16.0；返回 `boolean` 需要 0.17.0）。 |
 | `AgentSpec` | 由 `defineAgent()` 创建的 agent 模板：无状态的身份定义（名称、模型、提示词、工具、workspace 策略），附 `spawn()` 用于创建独立会话。 |
 | `AgentToolTarget` | `agentTool()` 和 `delegateTool()` 接受的联合类型：存活的 `AgentLike` 会话或 `AgentSpec` 模板。 |
 | `AgentOptions` | Agent 构造参数。 |

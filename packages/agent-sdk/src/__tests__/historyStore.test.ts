@@ -248,6 +248,96 @@ describe("HistoryStore", () => {
     });
     await expect(strict.prompt("hi")).rejects.toThrow("corrupt store");
   });
+
+  test("replaceHistory sends the next query the replacement, not the seeded history", async () => {
+    const seed: ModelMessage[] = [
+      { role: "user", content: "stale question" },
+      textAssistant("stale answer"),
+    ];
+    const { store, calls, stored } = createRecordingStore(seed);
+    const requests: ModelMessage[][] = [];
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      historyStore: store,
+      modelClient: {
+        async createMessage({ messages }) {
+          requests.push(structuredClone(messages));
+          return textAssistant("done");
+        },
+      },
+    });
+
+    // Replaced before the first query: the lazy load must not seed over it.
+    const replacement: ModelMessage[] = [
+      { role: "user", content: "My name is Ada." },
+      textAssistant("Nice to meet you, Ada."),
+    ];
+    await agent.replaceHistory(replacement);
+    await agent.prompt("What is my name?");
+
+    expect(calls.map(call => call.method)).toEqual(["replace", "append", "append"]);
+    expect(calls[0]!.messages).toEqual(replacement);
+    expect(requests[0]).toEqual([
+      ...replacement,
+      { role: "user", content: "What is my name?" },
+    ]);
+    // The store and the agent agree after the query.
+    expect(stored).toEqual(await agent.getHistory());
+  });
+
+  test("replaceHistory mutating its argument afterwards cannot pollute the live history", async () => {
+    const requests: ModelMessage[][] = [];
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage({ messages }) {
+          requests.push(structuredClone(messages));
+          return textAssistant("done");
+        },
+      },
+    });
+
+    const replacement: ModelMessage[] = [{ role: "user", content: "first" }];
+    await agent.replaceHistory(replacement);
+    replacement[0]!.content = "HACKED";
+
+    await agent.prompt("second");
+    expect(JSON.stringify(requests[0])).not.toContain("HACKED");
+    expect(requests[0]).toEqual([
+      { role: "user", content: "first" },
+      { role: "user", content: "second" },
+    ]);
+  });
+
+  test("a failing store replace inside replaceHistory follows the failOnError rule", async () => {
+    const makeStore = (failOnError?: boolean): HistoryStore => ({
+      failOnError,
+      load: () => [],
+      append() {},
+      replace() {
+        throw new Error("disk full");
+      },
+    });
+
+    const tolerant = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      historyStore: makeStore(),
+      modelClient: { async createMessage() { return textAssistant("done"); } },
+    });
+    await tolerant.replaceHistory([{ role: "user", content: "hi" }]);
+    expect(await tolerant.getHistory()).toEqual([{ role: "user", content: "hi" }]);
+
+    const strict = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      historyStore: makeStore(true),
+      modelClient: { async createMessage() { return textAssistant("done"); } },
+    });
+    await expect(strict.replaceHistory([{ role: "user", content: "hi" }])).rejects.toThrow("disk full");
+  });
 });
 
 describe("createJsonlHistoryStore", () => {

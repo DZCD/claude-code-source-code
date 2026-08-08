@@ -508,7 +508,7 @@ describe("team runner", () => {
       async prompt(): Promise<never> {
         throw new AbortError("Team run aborted");
       },
-      interrupt() {},
+      interrupt() { return false; },
     };
     let workerBCalls = 0;
     const workerB = createAgent({
@@ -1087,7 +1087,7 @@ describe("team runner", () => {
 
     let calls = 0;
     const original = root.interrupt.bind(root);
-    root.interrupt = () => { calls++; original(); };
+    root.interrupt = () => { calls++; return original(); };
     runner.interrupt();
 
     expect(calls).toBe(1);
