@@ -823,7 +823,12 @@ export type SDKStreamEventMessage = {
 
 export type SDKResultMessage = {
   type: "result";
-  subtype: "success" | "error" | "error_max_turns" | "error_abort" | "error_timeout";
+  /**
+   * `"interrupted"` is not an error: `Agent.interrupt()` ends the query this
+   * way, keeping completed turns in history so a follow-up query can continue
+   * the conversation. `is_error` stays `false` for it.
+   */
+  subtype: "success" | "interrupted" | "error" | "error_max_turns" | "error_abort" | "error_timeout";
   is_error: boolean;
   result: string;
   session_id: string;
@@ -2070,6 +2075,7 @@ export class Agent<TContext = unknown> {
   private readonly sessionId = randomId();
   private readonly toolConcurrency: Required<ToolConcurrencyOptions>;
   private running = false;
+  private interruptController: AbortController | undefined;
 
   constructor(options: AgentOptions<TContext>) {
     if (!options.model) {
@@ -2108,14 +2114,34 @@ export class Agent<TContext = unknown> {
       );
     }
     this.running = true;
+    const interruptController = new AbortController();
+    this.interruptController = interruptController;
     try {
-      yield* this.runQuery(prompt, options);
+      yield* this.runQuery(prompt, options, interruptController.signal);
     } finally {
       this.running = false;
+      if (this.interruptController === interruptController) {
+        this.interruptController = undefined;
+      }
     }
   }
 
-  private async *runQuery(prompt: string | ContentBlock[], options: QueryOptions<TContext>): AsyncGenerator<SDKMessage> {
+  /**
+   * Abort the in-flight model request and end the current query with subtype
+   * "interrupted". Completed turns stay in history; follow up with a new
+   * query() to continue the conversation. Unlike `QueryOptions.signal`, which
+   * terminates the query as an error, an interrupt is normal control flow.
+   * A no-op when no query is running.
+   */
+  interrupt(): void {
+    this.interruptController?.abort();
+  }
+
+  private async *runQuery(
+    prompt: string | ContentBlock[],
+    options: QueryOptions<TContext>,
+    interruptSignal: AbortSignal,
+  ): AsyncGenerator<SDKMessage> {
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
     const totals: QueryTotals = { usage: emptyUsage() };
@@ -2181,6 +2207,20 @@ export class Agent<TContext = unknown> {
       const abortError = abortErrorIfNeeded(options.signal);
       if (abortError) {
         const result = this.resultMessage("error_abort", "", turns, abortError, totals);
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
+        return;
+      }
+
+      // interrupt() during a tool batch lands here: the batch's results are
+      // already in history, so the query ends cleanly before the next turn.
+      if (interruptSignal.aborted) {
+        const result = this.resultMessage("interrupted", "", turns, undefined, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -2284,8 +2324,9 @@ export class Agent<TContext = unknown> {
       });
       // The model call runs alongside the drain loop below so stream events reach
       // the consumer while the model is still responding. It is raced against the
-      // signal and the request deadline so that a model client which ignores
-      // either cannot stall the loop forever.
+      // caller's signal, the interrupt signal, and the request deadline so that
+      // a model client which ignores them cannot stall the loop forever.
+      const modelSignal = combineAbortSignals(options.signal, interruptSignal);
       const modelCall = settle(
         withDeadline(
           this.modelClient.createMessage({
@@ -2304,9 +2345,9 @@ export class Agent<TContext = unknown> {
                 streamEvents.push(event);
               }
             },
-            signal: options.signal,
+            signal: modelSignal,
           }),
-          { signal: options.signal, timeoutMs: requestTimeoutMs },
+          { signal: modelSignal, timeoutMs: requestTimeoutMs },
         ),
         () => streamEvents.finish(),
       );
@@ -2321,6 +2362,22 @@ export class Agent<TContext = unknown> {
 
       const outcome = await modelCall;
       if (!outcome.ok) {
+        // interrupt() fired while the model call was in flight. As with an
+        // abort, the partial assistant message is dropped; unlike an abort,
+        // this is normal control flow and the query ends "interrupted" so the
+        // host can continue the conversation with a new query. A caller abort
+        // still wins when both fired.
+        if (interruptSignal.aborted && !abortErrorIfNeeded(options.signal)) {
+          const result = this.resultMessage("interrupted", "", turns, undefined, totals);
+          await emitTraceEvent(tracer, {
+            ...traceBase,
+            type: "result",
+            data: traceResultData(result),
+          });
+          await flushTracer(tracer);
+          yield result;
+          return;
+        }
         // An input that already exceeds the window is rejected before
         // generation, so it arrives here rather than as a stop reason.
         if (autoCompact && !overflowRecovered && isContextOverflowError(outcome.error)) {
@@ -2407,48 +2464,7 @@ export class Agent<TContext = unknown> {
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
       let batchRejection: ToolBatchPolicyRejection | undefined;
-      if (this.options.toolBatchPolicy) {
-        const toolCalls: ToolBatchCall[] = toolUseBlocks.map(block => ({
-          id: block.id,
-          name: block.name,
-          input: block.input,
-          kind: this.options.tools?.find(tool => tool.name === block.name)?.kind ?? "tool",
-        }));
-        try {
-          const decision = await this.options.toolBatchPolicy.validate({
-            source: options.agentRuntime?.source,
-            toolCalls,
-            context: options.context,
-            signal: options.signal,
-          });
-          if (!decision.allowed) batchRejection = decision;
-        } catch (error) {
-          const abortError = error instanceof AbortError
-            ? error
-            : abortErrorIfNeeded(options.signal);
-          if (abortError) {
-            const result = this.resultMessage("error_abort", "", turns, abortError, totals);
-            await emitTraceEvent(tracer, {
-              ...traceBase,
-              type: "result",
-              data: traceResultData(result),
-            });
-            await flushTracer(tracer);
-            yield result;
-            return;
-          }
-          batchRejection = {
-            allowed: false,
-            code: "tool_batch_policy_error",
-            message: "Tool batch validation failed before execution.",
-            suggestedNextStep: "Retry with the tool calls split into separate steps.",
-          };
-        }
-      }
 
-      const batchError = batchRejection
-        ? new ToolBatchRejectedError(batchRejection)
-        : undefined;
       // Emitted per call at its own start rather than for the whole batch up
       // front, so a trace shows when each tool really began and which calls
       // overlapped.
@@ -2520,6 +2536,74 @@ export class Agent<TContext = unknown> {
           error,
         });
       };
+
+      if (this.options.toolBatchPolicy) {
+        const toolCalls: ToolBatchCall[] = toolUseBlocks.map(block => ({
+          id: block.id,
+          name: block.name,
+          input: block.input,
+          kind: this.options.tools?.find(tool => tool.name === block.name)?.kind ?? "tool",
+        }));
+        try {
+          const decision = await this.options.toolBatchPolicy.validate({
+            source: options.agentRuntime?.source,
+            toolCalls,
+            context: options.context,
+            signal: options.signal,
+          });
+          if (!decision.allowed) batchRejection = decision;
+        } catch (error) {
+          const abortError = error instanceof AbortError
+            ? error
+            : abortErrorIfNeeded(options.signal);
+          if (abortError) {
+            // The assistant message carrying these tool_use blocks is already
+            // in the history, so pair every call with an aborted tool_result
+            // before leaving: a dangling tool_use would make the history sent
+            // by the next query invalid.
+            const abortedResults: ToolResultBlock[] = [];
+            for (const block of toolUseBlocks) {
+              abortedResults.push((await cancelTool(block)).block);
+            }
+            const abortedMessage: ModelMessage = {
+              role: "user",
+              content: abortedResults,
+            };
+            this.messages.push(abortedMessage);
+            await emitTraceEvent(tracer, {
+              ...traceBase,
+              type: "user_message",
+              data: { message: abortedMessage },
+            });
+            yield {
+              type: "user",
+              message: abortedMessage,
+              session_id: this.sessionId,
+              tool_use_result: abortedResults.length === 1 ? abortedResults[0]?.content : abortedResults,
+              error: abortError,
+            };
+            const result = this.resultMessage("error_abort", "", turns, abortError, totals);
+            await emitTraceEvent(tracer, {
+              ...traceBase,
+              type: "result",
+              data: traceResultData(result),
+            });
+            await flushTracer(tracer);
+            yield result;
+            return;
+          }
+          batchRejection = {
+            allowed: false,
+            code: "tool_batch_policy_error",
+            message: "Tool batch validation failed before execution.",
+            suggestedNextStep: "Retry with the tool calls split into separate steps.",
+          };
+        }
+      }
+
+      const batchError = batchRejection
+        ? new ToolBatchRejectedError(batchRejection)
+        : undefined;
 
       let executionResults: ToolExecutionOutcome[];
       if (batchRejection && batchError) {
@@ -2646,7 +2730,8 @@ export class Agent<TContext = unknown> {
     return {
       type: "result",
       subtype,
-      is_error: subtype !== "success",
+      // "interrupted" is normal control flow, not a failure.
+      is_error: subtype !== "success" && subtype !== "interrupted",
       result,
       session_id: this.sessionId,
       num_turns: numTurns,

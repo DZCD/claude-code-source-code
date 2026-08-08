@@ -86,6 +86,24 @@ Exceeding it produces `subtype: "error_timeout"` with a `TimeoutError`, distinct
 
 Both limits are enforced by the SDK itself rather than delegated. `ModelRequest` carries `signal` and `timeoutMs` so a client can cancel its own work, but the agent loop also races the call: a `ModelClient` that ignores both cannot stall the loop indefinitely. Losing that race abandons the call rather than cancelling it, so a non-cooperative client may keep working in the background while the loop moves on.
 
+## Interrupting a query
+
+*Requires 0.16.0 or later.*
+
+`QueryOptions.signal` terminates the query: it ends with `subtype: "error_abort"` and is meant for cancellation. When the host instead wants to take the conversation back — the user typed a correction, a higher-priority instruction arrived — `agent.interrupt()` ends the current query with `subtype: "interrupted"`, which is normal control flow rather than an error (`is_error` stays `false`):
+
+```ts
+const pending = agent.prompt("Draft the release notes.");
+agent.interrupt();
+const result = await pending;
+// result.subtype === "interrupted"
+
+// Same Agent, same history: inject the new message and continue.
+await agent.prompt("Actually, skip 0.15.x and cover 0.16.0 only.");
+```
+
+Only the in-flight turn is lost: the partial assistant message is dropped exactly as on abort, while every completed turn stays in the history, so the follow-up query sends the model the full prior conversation. An interrupt that lands while a tool batch is executing takes effect once the batch completes — its tool results are written to history first, and the query ends `"interrupted"` before the next model call. `interrupt()` is a no-op when no query is running.
+
 ## Token usage and truncation
 
 *Requires 0.10.0 or later.*

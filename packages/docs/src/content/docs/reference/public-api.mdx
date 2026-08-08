@@ -43,7 +43,13 @@ for await (const message of agent.query(prompt)) {
 }
 
 const result = await agent.prompt(prompt);
+
+// End the running query with subtype "interrupted", keeping completed turns
+// in history so a follow-up query can continue the conversation.
+agent.interrupt();
 ```
+
+`interrupt()` is the cooperative counterpart of `QueryOptions.signal`: the signal terminates the query with `error_abort`, while an interrupt finishes it with `interrupted` (not an error) after dropping only the in-flight turn. It is a no-op when no query is running.
 
 Use `createAgent()` when the agent should have a private workspace for durable files and test evidence. Use `createBareAgent()` when the host wants a plain model loop and will pass every system prompt and tool explicitly:
 
@@ -100,7 +106,7 @@ const agent = createBareAgent({
 | `thinkingConfig` | `ThinkingConfig` | Overrides the agent's reasoning configuration for this query. A fixed budget is capped at `maxTokens - 1`. |
 | `reasoningEffort` | `ReasoningEffort` | Overrides the agent's provider reasoning effort for this query. |
 | `requestTimeoutMs` | `number` | Overrides the agent's per-request deadline for this query. |
-| `signal` | `AbortSignal` | Cancels the running query. |
+| `signal` | `AbortSignal` | Cancels the running query, ending it with subtype `error_abort`. Compare `Agent.interrupt()`, which ends it with `interrupted` and keeps the conversation. |
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
 
@@ -177,7 +183,7 @@ than relying on an error.
 | `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()`, result subtype `interrupted` | 0.16.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

@@ -829,6 +829,65 @@ describe("agent-sdk", () => {
     expect(result.result).toBe("Recovered after policy rejection");
   });
 
+  test("abort during tool batch validation pairs every tool_use with a tool_result", async () => {
+    const controller = new AbortController();
+    const trace: ContextTraceEvent[] = [];
+    let toolCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [
+        tool("sideEffect", "A tool with a visible side effect.", z.object({}), async () => {
+          toolCalls++;
+          return { content: "executed" };
+        }),
+      ],
+      toolBatchPolicy: {
+        validate() {
+          controller.abort();
+          throw new Error("Policy implementation failed");
+        },
+      },
+      tracer: { onEvent(event) { trace.push(event); } },
+      modelClient: {
+        async createMessage() {
+          return toolUseBatchAssistant([
+            { id: "toolu_1", name: "sideEffect" },
+            { id: "toolu_2", name: "sideEffect" },
+          ]);
+        },
+      },
+    });
+
+    const result = await agent.prompt("Run the side effect.", { signal: controller.signal });
+
+    expect(result.subtype).toBe("error_abort");
+    expect(toolCalls).toBe(0);
+    // The assistant message carrying the tool_use blocks is already in
+    // history, so the abort must pair each call with an error tool_result;
+    // otherwise the next query would send a dangling tool_use to the API.
+    const toolResultMessage = trace
+      .filter(event => event.type === "user_message")
+      .map(event => (event.data as { message: ModelMessage }).message)
+      .find(message =>
+        Array.isArray(message.content) &&
+        message.content.some(block => block.type === "tool_result"));
+    expect(toolResultMessage).toMatchObject({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "toolu_1", is_error: true },
+        { type: "tool_result", tool_use_id: "toolu_2", is_error: true },
+      ],
+    });
+    const blocks = toolResultMessage?.content;
+    if (Array.isArray(blocks)) {
+      for (const block of blocks) {
+        expect(String("content" in block ? block.content : ""))
+          .toContain("was not started because the operation was aborted");
+      }
+    }
+  });
+
   test("passes host business context to custom tools without AgentRuntime shape", async () => {
     type QcContext = {
       patientRecordId: string;
@@ -2080,6 +2139,57 @@ describe("agent-sdk", () => {
 
     expect(result.subtype).toBe("error_abort");
     expect(result.error).toBeInstanceOf(AbortError);
+  });
+
+  test("interrupt ends the in-flight query and keeps completed history", async () => {
+    const seenMessages: ModelMessage[][] = [];
+    let calls = 0;
+    const modelClient: ModelClient = {
+      createMessage(request) {
+        calls++;
+        seenMessages.push(request.messages);
+        if (calls === 1) {
+          // Stays in flight until the interrupt signal cancels the wait.
+          return new Promise(() => {});
+        }
+        return Promise.resolve(textAssistant("follow-up answer"));
+      },
+    };
+    const agent = createAgent({ apiKey: "test-key", model: "claude-test", modelClient });
+
+    const pending = agent.prompt("first prompt");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    agent.interrupt();
+    const interrupted = await pending;
+
+    expect(interrupted).toMatchObject({ subtype: "interrupted", is_error: false, result: "" });
+    expect(interrupted.error).toBeUndefined();
+
+    const followUp = await agent.prompt("second prompt");
+
+    expect(followUp).toMatchObject({ subtype: "success", result: "follow-up answer" });
+    // The interrupted turn left no partial assistant message behind: the
+    // follow-up request carries the first prompt and the new one, nothing in
+    // between.
+    expect(seenMessages[1]).toEqual([
+      { role: "user", content: "first prompt" },
+      { role: "user", content: "second prompt" },
+    ]);
+  });
+
+  test("interrupt without a running query is a no-op", async () => {
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("ok")]),
+    });
+
+    expect(() => agent.interrupt()).not.toThrow();
+
+    const result = await agent.prompt("go");
+
+    expect(result.subtype).toBe("success");
+    expect(() => agent.interrupt()).not.toThrow();
   });
 
   test("times out a single model request via requestTimeoutMs", async () => {

@@ -1136,6 +1136,32 @@ Both limits are enforced by the SDK rather than delegated. `ModelRequest` carrie
 also races the call, so a `ModelClient` that honours neither cannot stall the
 loop indefinitely. Losing that race abandons the call rather than cancelling it.
 
+## Interrupting A Query
+
+*Requires 0.16.0 or later.*
+
+`agent.interrupt()` ends the current query without tearing the conversation
+down. Where `QueryOptions.signal` terminates the query with `"error_abort"`,
+`interrupt()` aborts only the in-flight model request and finishes with
+`subtype: "interrupted"` — normal control flow, so `is_error` stays `false`.
+As on abort, the partial assistant message is dropped, but every completed
+turn stays in the history, so the host can continue the same Agent with a new
+`query()` that injects its own message:
+
+```ts
+const pending = agent.prompt("Draft the release notes.");
+agent.interrupt(); // e.g. the user typed a correction
+const result = await pending;
+// result.subtype === "interrupted"
+
+await agent.prompt("Actually, skip 0.15.x and cover 0.16.0 only.");
+```
+
+An interrupt that lands while a tool batch is executing takes effect once the
+batch completes: its tool results are written to history first, and the query
+ends `"interrupted"` before the next model call. `interrupt()` is a no-op when
+no query is running.
+
 ## Token Usage And Truncation
 
 Every `result` message reports `usage`, summed over the model requests in that

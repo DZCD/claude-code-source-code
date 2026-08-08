@@ -84,6 +84,24 @@ await agent.prompt("快速回答。", { requestTimeoutMs: 15_000 });
 
 **两种限制都由 SDK 自己兜底，不外包给 model client。** `ModelRequest` 会带上 `signal` 和 `timeoutMs` 供客户端取消自己的工作，但 agent 循环同时也会和它赛跑：一个两者都不理会的 `ModelClient` 无法让循环无限挂起。赛跑失败意味着**放弃等待而不是取消**——不守规矩的客户端可能仍在后台跑，只是循环不再等它。
 
+## 中断 query
+
+*需要 0.16.0 及以上版本。*
+
+`QueryOptions.signal` 是**终止**：query 以 `subtype: "error_abort"` 结束，适用于取消场景。当宿主想的是接管对话——用户改口了、来了更高优先级的指令——用 `agent.interrupt()`：当前 query 以 `subtype: "interrupted"` 结束，这属于正常控制流而不是错误（`is_error` 仍为 `false`）：
+
+```ts
+const pending = agent.prompt("起草发布说明。");
+agent.interrupt();
+const result = await pending;
+// result.subtype === "interrupted"
+
+// 同一个 Agent、同一份历史：注入新消息继续聊。
+await agent.prompt("改一下：跳过 0.15.x，只写 0.16.0。");
+```
+
+损失的只有在飞的一轮：部分 assistant 消息与 abort 一样被丢弃，而每个已完成的轮次都留在历史里，后续 query 会把完整的前序对话发给模型。如果 interrupt 落在工具批次执行期间，则在该批次完成后生效——批次的 tool_result 先写入历史，query 在下一次模型调用之前以 `"interrupted"` 收尾。没有在飞的 query 时，`interrupt()` 是空操作。
+
 ## Token 用量与截断
 
 *需要 0.10.0 及以上版本。*
