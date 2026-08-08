@@ -222,25 +222,26 @@ teams or nested teams.
 ## Custom sinks
 
 `ContextTracer` is intentionally small so hosts can write to their own storage or
-observability pipeline. The functions below are application code you provide,
-not SDK exports:
+observability pipeline. The port object exposes methods only — `failOnError` is
+bound when the factory creates the tracer. Implement a custom sink with
+`defineContextTracer()`. *Requires 0.17.0 or later.*
 
 ```ts
-import type { ContextTracer } from "agent-lattice";
+import { defineContextTracer } from "agent-lattice";
 
-const tracer: ContextTracer = {
+const tracer = defineContextTracer({
   async onEvent(event) {
     // TODO: Replace with your own database insert.
   },
   async flush() {
     // TODO: Replace with your own buffered-write flush.
   },
-};
+});
 ```
 
-Use `failOnError: true` only when trace durability is part of your product
-contract. By default, tracing should be observational and should not make agent
-runs fail.
+Pass `failOnError: true` to the factory only when trace durability is part of
+your product contract. By default, tracing should be observational and should
+not make agent runs fail.
 
 ## Redaction
 

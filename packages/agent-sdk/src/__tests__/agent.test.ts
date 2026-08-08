@@ -17,6 +17,7 @@ import {
   createJsonlContextTracer,
   createLangSmithContextTracer,
   createTeam,
+  defineContextTracer,
   teamMember,
   tool,
   type ContextTraceEvent,
@@ -1092,6 +1093,52 @@ describe("agent-sdk", () => {
       "first:close",
       "second:close",
     ]);
+  });
+
+  test("defineContextTracer requires an onEvent method", () => {
+    expect(() => defineContextTracer({} as never)).toThrow("onEvent");
+  });
+
+  test("defineContextTracer binds failOnError for the composite tracer", async () => {
+    const event: ContextTraceEvent = {
+      version: 1,
+      timestamp: "2026-06-29T00:00:00.000Z",
+      session_id: "session_1",
+      run_id: "11111111-1111-4111-8111-111111111111",
+      seq: 1,
+      source: { kind: "agent", name: "agent" },
+      type: "run_start",
+      data: { model: "claude-test", tools: [] },
+    };
+
+    // Default: a failing sink is swallowed.
+    const tolerant = createCompositeContextTracer([
+      defineContextTracer({
+        onEvent() {
+          throw new Error("sink down");
+        },
+      }),
+    ]);
+    await tolerant.onEvent(event);
+
+    // failOnError: the failure propagates out of the composite.
+    const strict = createCompositeContextTracer([
+      defineContextTracer({
+        failOnError: true,
+        onEvent() {
+          throw new Error("sink down");
+        },
+      }),
+    ]);
+    await expect(strict.onEvent(event)).rejects.toThrow("sink down");
+  });
+
+  test("defineContextTracer exposes methods only, not the failOnError flag", () => {
+    const tracer = defineContextTracer({
+      failOnError: true,
+      onEvent() {},
+    });
+    expect("failOnError" in tracer).toBe(false);
   });
 
   test("maps agent context trace events to LangSmith chain and llm runs", async () => {

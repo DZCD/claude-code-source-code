@@ -23,8 +23,10 @@ description: Stable exports exposed by the SDK package.
 | `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
+| `defineContextTracer(impl)` | Creates a custom trace sink from an implementation object, validating `onEvent` and binding `failOnError` at creation time. |
 | `createCompositeAgentHooks(hooks)` | Chains hooks in array order; each receives the previous one's output. |
 | `createJsonlHistoryStore(options)` | Creates a JSONL history store that persists an Agent's conversation as one message per line. |
+| `defineHistoryStore(impl)` | Creates a custom history store from an implementation object, validating `load`/`append`/`replace` and binding `failOnError` at creation time. |
 | `DEFAULT_COMPACTION_PROMPT` | The built-in summarization instruction used by `autoCompact`. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. After the lead queues a handoff batch, members run before the lead model is called again. Set `runner.maxConcurrentWorkItems` for bounded cross-member concurrency; the default is `1`. |
@@ -35,6 +37,11 @@ description: Stable exports exposed by the SDK package.
 | `createAgentWorkspaceTools(options)` | Creates opt-in file and shell workspace tools for agents. |
 
 ## Agent
+
+`Agent` is a type-only export (breaking in 0.17.0: the constructor is no longer
+exported). Create instances with `createAgent()`, `createBareAgent()`, or
+`AgentSpec.spawn()` — the factories also generate the session id and install
+the workspace.
 
 ```ts
 const agent = createAgent(options);
@@ -197,7 +204,7 @@ than relying on an error.
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()` (also on the `AgentLike` interface — breaking for custom implementers), result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
-| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers) | 0.17.0 |
+| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available) | 0.17.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -224,12 +231,12 @@ package does not export it as an importable path.
 | `StopReason` | Why the model stopped. `"max_tokens"` means the output was truncated; `"model_context_window_exceeded"` means the context window ran out and is what `autoCompact` recovers from. |
 | `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
 | `TeamRunnerConfig` | Team runtime limits: `maxDelegateDepth` and `maxConcurrentWorkItems`. Concurrency defaults to `1`, and the same target mailbox remains serial. |
-| `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. |
+| `ContextTracer` | Trace sink interface with `onEvent`, optional `flush`, and optional `close`. Methods only — `failOnError` is bound by the creating factory (`createXxxContextTracer` options or `defineContextTracer()`). |
 | `ContextTraceEvent` | Structured trace event envelope emitted by agents. |
 | `ContextTraceEventType` | Union of trace event type strings. |
 | `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
 | `LangSmithContextTracerOptions` | Options for the LangSmith tracer adapter. |
-| `HistoryStore` | Persistence adapter interface for an Agent's conversation history: `load()`, `append(message)`, `replace(messages)`, optional `failOnError`. Compaction calls `replace()`, so stores must support full replacement. |
+| `HistoryStore` | Persistence adapter interface for an Agent's conversation history: `load()`, `append(message)`, `replace(messages)`. Compaction calls `replace()`, so stores must support full replacement. Methods only — `failOnError` is bound by the creating factory (`createJsonlHistoryStore` options or `defineHistoryStore()`). |
 | `JsonlHistoryStoreOptions` | Options for the built-in JSONL history store: `path` and optional `failOnError`. |
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |

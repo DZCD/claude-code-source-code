@@ -23,8 +23,10 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createJsonlContextTracer(options)` | 创建用于 agent 运行上下文事件的 JSONL trace sink。 |
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
+| `defineContextTracer(impl)` | 从实现对象创建自定义 trace sink，校验 `onEvent` 并在创建时绑定 `failOnError`。 |
 | `createCompositeAgentHooks(hooks)` | 按数组顺序串联 hook，后一个收到前一个的输出。 |
 | `createJsonlHistoryStore(options)` | 创建 JSONL history store，把 Agent 的对话历史按每行一条 message 持久化。 |
+| `defineHistoryStore(impl)` | 从实现对象创建自定义 history store，校验 `load`/`append`/`replace` 并在创建时绑定 `failOnError`。 |
 | `DEFAULT_COMPACTION_PROMPT` | `autoCompact` 使用的内置摘要指令。 |
 | `teamMember(options)` | 创建一个团队成员，带 name、role、focus 和 agent。 |
 | `createTeam(options)` | 创建一个围绕 Lead 的可调用 Team，包含成员、mailbox 和内置 runtime。Lead 提交一批 handoff 后，SDK 会先执行成员，再继续调用 Lead 模型。通过 `runner.maxConcurrentWorkItems` 设置跨成员并发上限，默认值为 `1`。 |
@@ -35,6 +37,10 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createAgentWorkspaceTools(options)` | 创建可选的 agent 文件与 Shell workspace 工具。 |
 
 ## Agent
+
+`Agent` 是 type-only 导出（0.17.0 起为破坏性变更：构造器不再导出）。请用
+`createAgent()`、`createBareAgent()` 或 `AgentSpec.spawn()` 创建实例——工厂
+还会生成 session id 并安装 workspace。
 
 ```ts
 const agent = createAgent(options);
@@ -190,7 +196,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`（同时加入 `AgentLike` 接口——对自定义实现方是破坏性变更）、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
-| `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更） | 0.17.0 |
+| `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更）、`defineContextTracer()`、`defineHistoryStore()`（破坏性变更：`failOnError` 字段从 `ContextTracer`/`HistoryStore` 端口类型移除——自定义实现方必须改用 `defineXxx` 工厂）、`Agent` 改为 type-only 导出（破坏性变更：`new Agent()` 不再可用） | 0.17.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -216,12 +222,12 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `StopReason` | 模型停止的原因。`"max_tokens"` 表示输出被截断；`"model_context_window_exceeded"` 表示上下文窗口耗尽，这才是 `autoCompact` 兜底恢复的对象。 |
 | `AgentRuntimeFailure` | 写入失败事件和上游报告 metadata 的归一化成员错误。 |
 | `TeamRunnerConfig` | Team runtime 限制，包括 `maxDelegateDepth` 和 `maxConcurrentWorkItems`。并发默认值为 `1`，同一目标 mailbox 始终串行。 |
-| `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。 |
+| `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。只暴露方法——`failOnError` 由创建它的工厂绑定（`createXxxContextTracer` 的 options 或 `defineContextTracer()`）。 |
 | `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
 | `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `LangSmithContextTracerOptions` | LangSmith tracer adapter 的配置。 |
-| `HistoryStore` | Agent 对话历史的持久化 adapter 接口：`load()`、`append(message)`、`replace(messages)`，可选 `failOnError`。compaction 会调用 `replace()`，所以 store 必须支持整体替换。 |
+| `HistoryStore` | Agent 对话历史的持久化 adapter 接口：`load()`、`append(message)`、`replace(messages)`。compaction 会调用 `replace()`，所以 store 必须支持整体替换。只暴露方法——`failOnError` 由创建它的工厂绑定（`createJsonlHistoryStore` 的 options 或 `defineHistoryStore()`）。 |
 | `JsonlHistoryStoreOptions` | 内置 JSONL history store 的配置：`path` 和可选 `failOnError`。 |
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |

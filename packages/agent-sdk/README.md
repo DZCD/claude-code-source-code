@@ -55,6 +55,11 @@ const agent = createBareAgent({
 });
 ```
 
+`Agent` is a type-only export — instances come from these factories (or
+`AgentSpec.spawn()`), never from `new Agent()`, because the factories also
+generate the session id and install the workspace. (Breaking in 0.17.0: the
+`Agent` class constructor is no longer exported.)
+
 `agent.query()` yields `stream_event` messages while the model is still
 responding, so a host can render output incrementally:
 
@@ -299,15 +304,21 @@ recorded as `agent_session_id` metadata, so tracing does not change Agent state
 or returned SDK messages.
 
 Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
-storage, or host-specific observability. The functions below are application
-code you provide, not SDK exports:
+storage, or host-specific observability. A `ContextTracer` port object exposes
+methods only — `failOnError` is bound when the factory creates the tracer, not
+set as a field afterwards. Implement a custom sink with `defineContextTracer()`.
+*Requires 0.17.0 or later.* (Breaking in 0.17.0: the public `failOnError` field
+was removed from `ContextTracer`; custom tracers created before 0.17.0 must go
+through `defineContextTracer()`.)
 
 ```ts
-const tracer = {
+import { defineContextTracer } from "agent-lattice";
+
+const tracer = defineContextTracer({
   async onEvent(event) {
     // TODO: Replace with your own storage/logging code.
   },
-};
+});
 ```
 
 ## DeepSeek Anthropic-compatible API
@@ -1172,8 +1183,25 @@ The store contract is three methods — `load()`, `append(message)`, and
 The JSONL store's `load()` skips malformed lines rather than failing, so a
 torn final write does not lose the rest of the transcript. By default a
 failing store is swallowed and the conversation continues in memory only,
-mirroring the tracer's failure semantics; set `failOnError: true` on the store
-to propagate store errors out of `query()` instead.
+mirroring the tracer's failure semantics; bind `failOnError: true` when the
+store is created (via `createJsonlHistoryStore()` options or
+`defineHistoryStore()`) to propagate store errors out of `query()` instead.
+
+Implement a custom store with `defineHistoryStore()`, which validates the
+three methods and binds `failOnError`; the returned port object exposes
+methods only. *Requires 0.17.0 or later.* (Breaking in 0.17.0: the public
+`failOnError` field was removed from `HistoryStore`; custom stores created
+before 0.17.0 must go through `defineHistoryStore()`.)
+
+```ts
+import { defineHistoryStore } from "agent-lattice";
+
+const historyStore = defineHistoryStore({
+  load: () => loadMessagesFromYourDatabase(),
+  append: message => appendMessageToYourDatabase(message),
+  replace: messages => replaceMessagesInYourDatabase(messages),
+});
+```
 
 To rewrite the history from the host instead of from compaction, use
 `agent.replaceHistory(messages)`. *Requires 0.17.0 or later.* It is idle-only:

@@ -201,8 +201,26 @@ export type ContextTraceEvent = {
   data: Record<string, unknown>;
 };
 
+/**
+ * Ports (ContextTracer, HistoryStore) expose methods only. The `failOnError`
+ * flag is bound by the factory that creates the port and carried as internal
+ * metadata, so a port object handed to the SDK never mixes configuration with
+ * its callable surface.
+ */
+const kFailOnError = Symbol("agent-lattice.failOnError");
+
+function bindFailOnError<TPort extends object>(port: TPort, failOnError: boolean | undefined): TPort {
+  if (failOnError) {
+    Object.assign(port, { [kFailOnError]: true });
+  }
+  return port;
+}
+
+function shouldPropagatePortError(port: object): boolean {
+  return (port as Record<symbol, unknown>)[kFailOnError] === true;
+}
+
 export type ContextTracer = {
-  failOnError?: boolean;
   onEvent(event: ContextTraceEvent): Promise<void> | void;
   flush?(): Promise<void>;
   close?(): Promise<void>;
@@ -254,8 +272,9 @@ export type ModelMessage = {
  * whole history — a store must support full replacement. Methods may be
  * synchronous or return a promise; the Agent awaits them to preserve order.
  * Like `ContextTracer`, a failing store is swallowed by default and the
- * conversation continues in memory only; set `failOnError` to propagate store
- * errors out of `query()` instead.
+ * conversation continues in memory only; pass `failOnError` to the factory
+ * that creates the store (`createJsonlHistoryStore`, `defineHistoryStore`)
+ * to propagate store errors out of `query()` instead.
  *
  * The objects passed to `append()` and `replace()` are guaranteed to carry at
  * least `role` and `content`. Runtime objects may carry extra fields (`usage`,
@@ -265,7 +284,6 @@ export type ModelMessage = {
  * `assistant_message` events instead.
  */
 export type HistoryStore = {
-  failOnError?: boolean;
   load(): ModelMessage[] | Promise<ModelMessage[]>;
   append(message: ModelMessage): void | Promise<void>;
   replace(messages: ModelMessage[]): void | Promise<void>;
@@ -1339,6 +1357,20 @@ function mergeToolsByName<TContext>(...groups: Array<Array<ToolDefinition<any, T
   return merged;
 }
 
+/**
+ * Entry point for implementing a custom trace sink. Validates that the
+ * required `onEvent` method exists and binds `failOnError` at creation time —
+ * a `ContextTracer` exposes methods only; the flag travels with the returned
+ * object as internal metadata the runtime reads when a call throws.
+ */
+export function defineContextTracer(impl: ContextTracer & { failOnError?: boolean }): ContextTracer {
+  if (typeof impl?.onEvent !== "function") {
+    throw new Error("defineContextTracer requires an onEvent(event) method");
+  }
+  const { failOnError, ...methods } = impl;
+  return bindFailOnError({ ...methods }, failOnError);
+}
+
 export function createJsonlContextTracer(options: JsonlContextTracerOptions): ContextTracer {
   if (!options.path && !options.dir) {
     throw new Error("createJsonlContextTracer requires either path or dir");
@@ -1346,7 +1378,6 @@ export function createJsonlContextTracer(options: JsonlContextTracerOptions): Co
 
   let queue = Promise.resolve();
   const tracer: ContextTracer = {
-    failOnError: options.failOnError,
     onEvent(event) {
       const entry = options.redact ? options.redact(event) : event;
       if (!entry) return;
@@ -1364,7 +1395,7 @@ export function createJsonlContextTracer(options: JsonlContextTracerOptions): Co
       await queue;
     },
   };
-  return tracer;
+  return bindFailOnError(tracer, options.failOnError);
 }
 
 /**
@@ -1399,14 +1430,13 @@ export function createCompositeAgentHooks<TContext = unknown>(
 
 export function createCompositeContextTracer(tracers: Array<ContextTracer | undefined | null>): ContextTracer {
   const active = tracers.filter((tracer): tracer is ContextTracer => Boolean(tracer));
-  return {
-    failOnError: active.some(tracer => tracer.failOnError),
+  return bindFailOnError({
     async onEvent(event) {
       for (const tracer of active) {
         try {
           await tracer.onEvent(event);
         } catch (error) {
-          if (tracer.failOnError) throw error;
+          if (shouldPropagatePortError(tracer)) throw error;
         }
       }
     },
@@ -1416,7 +1446,7 @@ export function createCompositeContextTracer(tracers: Array<ContextTracer | unde
         try {
           await tracer.flush();
         } catch (error) {
-          if (tracer.failOnError) throw error;
+          if (shouldPropagatePortError(tracer)) throw error;
         }
       }
     },
@@ -1426,11 +1456,11 @@ export function createCompositeContextTracer(tracers: Array<ContextTracer | unde
         try {
           await tracer.close();
         } catch (error) {
-          if (tracer.failOnError) throw error;
+          if (shouldPropagatePortError(tracer)) throw error;
         }
       }
     },
-  };
+  }, active.some(shouldPropagatePortError));
 }
 
 type LangSmithTraceRunState = {
@@ -1493,8 +1523,7 @@ export function createLangSmithContextTracer(options: LangSmithContextTracerOpti
     recordLangSmithRunEvent(state.root, event);
   }
 
-  return {
-    failOnError: options.failOnError,
+  return bindFailOnError({
     onEvent(event) {
       queue = queue.then(
         () => handleEvent(event),
@@ -1510,7 +1539,7 @@ export function createLangSmithContextTracer(options: LangSmithContextTracerOpti
       await queue;
       await flushLangSmithClients(options, runs);
     },
-  };
+  }, options.failOnError);
 }
 
 export function skill(input: SkillInput): SkillDefinition {
@@ -1641,10 +1670,26 @@ export async function connectMCPStreamableHTTPServer(
  * Writes are serialized through an internal queue, so callers may fire them
  * without waiting for ordering.
  */
+/**
+ * Entry point for implementing a custom history store. Validates that the
+ * required `load`/`append`/`replace` methods exist and binds `failOnError` at
+ * creation time — a `HistoryStore` exposes methods only; the flag travels
+ * with the returned object as internal metadata the runtime reads when a call
+ * throws.
+ */
+export function defineHistoryStore(impl: HistoryStore & { failOnError?: boolean }): HistoryStore {
+  for (const method of ["load", "append", "replace"] as const) {
+    if (typeof impl?.[method] !== "function") {
+      throw new Error(`defineHistoryStore requires a ${method}() method`);
+    }
+  }
+  const { failOnError, ...methods } = impl;
+  return bindFailOnError({ ...methods }, failOnError);
+}
+
 export function createJsonlHistoryStore(options: JsonlHistoryStoreOptions): HistoryStore {
   let queue = Promise.resolve();
   const store: HistoryStore = {
-    failOnError: options.failOnError,
     async load() {
       let raw: string;
       try {
@@ -1682,7 +1727,7 @@ export function createJsonlHistoryStore(options: JsonlHistoryStoreOptions): Hist
       return queue;
     },
   };
-  return store;
+  return bindFailOnError(store, options.failOnError);
 }
 
 export function teamMember(input: TeamMemberInput): TeamMemberDefinition {
@@ -2175,7 +2220,13 @@ export async function* query<TContext = unknown>(
   });
 }
 
-export class Agent<TContext = unknown> {
+/**
+ * An Agent owns one conversation: history, workspace, and session identity.
+ * Create instances with `createAgent()` or `createBareAgent()` (or spawn from
+ * an `AgentSpec`) — the constructor is intentionally not exported, because the
+ * factories also generate the session id and install workspace tools.
+ */
+class Agent<TContext = unknown> {
   private readonly options: Required<Pick<AgentOptions<TContext>, "maxTokens" | "maxTurns">> & AgentOptions<TContext>;
   private readonly modelClient: ModelClient;
   private readonly messages: ModelMessage[] = [];
@@ -2252,8 +2303,9 @@ export class Agent<TContext = unknown> {
   /**
    * The store is read once per Agent lifetime, lazily on the first query or
    * getHistory() call — the constructor cannot be async. A failed load follows
-   * the same rule as a failed write: swallowed unless `failOnError` is set, in
-   * which case the error propagates and the Agent starts empty.
+   * the same rule as a failed write: swallowed unless `failOnError` was bound
+   * by the store's factory, in which case the error propagates and the Agent
+   * starts empty.
    */
   private ensureHistoryLoaded(): Promise<void> {
     this.historyLoaded ??= this.loadHistory();
@@ -2268,7 +2320,7 @@ export class Agent<TContext = unknown> {
       // Clone so the store cannot mutate the live history through its copy.
       this.messages.push(...structuredClone(seeded));
     } catch (error) {
-      if (store.failOnError) throw error;
+      if (shouldPropagatePortError(store)) throw error;
     }
   }
 
@@ -2278,7 +2330,7 @@ export class Agent<TContext = unknown> {
     try {
       await store.append(message);
     } catch (error) {
-      if (store.failOnError) throw error;
+      if (shouldPropagatePortError(store)) throw error;
     }
   }
 
@@ -2288,7 +2340,7 @@ export class Agent<TContext = unknown> {
     try {
       await store.replace([...this.messages]);
     } catch (error) {
-      if (store.failOnError) throw error;
+      if (shouldPropagatePortError(store)) throw error;
     }
   }
 
@@ -3187,6 +3239,10 @@ export class Agent<TContext = unknown> {
     }
   }
 }
+
+// The Agent class is a type-only export: instances come from createAgent(),
+// createBareAgent(), or AgentSpec.spawn(), never from a public constructor.
+export type { Agent };
 
 function normalizeToolConcurrencyOptions(
   options: ToolConcurrencyOptions | undefined,
@@ -5528,7 +5584,7 @@ async function emitTraceEvent(
   try {
     await tracer.onEvent(event);
   } catch (error) {
-    if (tracer.failOnError) throw error;
+    if (shouldPropagatePortError(tracer)) throw error;
   }
 }
 
@@ -5537,7 +5593,7 @@ async function flushTracer(tracer: ContextTracer | undefined): Promise<void> {
   try {
     await tracer.flush();
   } catch (error) {
-    if (tracer.failOnError) throw error;
+    if (shouldPropagatePortError(tracer)) throw error;
   }
 }
 

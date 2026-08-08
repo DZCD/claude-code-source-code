@@ -214,23 +214,24 @@ for await (const event of team.query("请 engineering 检查 tracing 设计。",
 
 ## 自定义 sink
 
-`ContextTracer` 很小，宿主可以写入自己的数据库或可观测性系统。下面这些函数
-是宿主应用自己实现的代码，不是 SDK 导出的 API：
+`ContextTracer` 很小，宿主可以写入自己的数据库或可观测性系统。端口对象只暴露
+方法——`failOnError` 在工厂创建 tracer 时绑定。自定义 sink 通过
+`defineContextTracer()` 实现。*需要 0.17.0 及以上版本。*
 
 ```ts
-import type { ContextTracer } from "agent-lattice";
+import { defineContextTracer } from "agent-lattice";
 
-const tracer: ContextTracer = {
+const tracer = defineContextTracer({
   async onEvent(event) {
     // TODO: 替换成你自己的数据库写入逻辑。
   },
   async flush() {
     // TODO: 替换成你自己的缓冲区 flush 逻辑。
   },
-};
+});
 ```
 
-只有当 trace 持久性是产品契约的一部分时，才建议使用 `failOnError: true`。
+只有当 trace 持久性是产品契约的一部分时，才建议在工厂里传 `failOnError: true`。
 默认情况下，tracing 应该是旁路观察，不应该让 agent run 失败。
 
 ## 脱敏

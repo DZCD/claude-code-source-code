@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import {
   createAgent,
   createJsonlHistoryStore,
+  defineHistoryStore,
   tool,
   type HistoryStore,
   type ModelClient,
@@ -200,14 +201,14 @@ describe("HistoryStore", () => {
   });
 
   test("failOnError propagates store write failures out of query()", async () => {
-    const store: HistoryStore = {
+    const store = defineHistoryStore({
       failOnError: true,
       load: () => [],
       append() {
         throw new Error("disk full");
       },
       replace() {},
-    };
+    });
     const agent = createAgent({
       apiKey: "test-key",
       model: "claude-test",
@@ -219,7 +220,7 @@ describe("HistoryStore", () => {
   });
 
   test("a failed load follows the same failOnError rule", async () => {
-    const makeStore = (failOnError?: boolean): HistoryStore => ({
+    const makeStore = (failOnError?: boolean): HistoryStore => defineHistoryStore({
       failOnError,
       load() {
         throw new Error("corrupt store");
@@ -312,7 +313,7 @@ describe("HistoryStore", () => {
   });
 
   test("a failing store replace inside replaceHistory follows the failOnError rule", async () => {
-    const makeStore = (failOnError?: boolean): HistoryStore => ({
+    const makeStore = (failOnError?: boolean): HistoryStore => defineHistoryStore({
       failOnError,
       load: () => [],
       append() {},
@@ -337,6 +338,24 @@ describe("HistoryStore", () => {
       modelClient: { async createMessage() { return textAssistant("done"); } },
     });
     await expect(strict.replaceHistory([{ role: "user", content: "hi" }])).rejects.toThrow("disk full");
+  });
+});
+
+describe("defineHistoryStore", () => {
+  test("requires load, append, and replace methods", () => {
+    expect(() => defineHistoryStore({} as never)).toThrow("load");
+    expect(() => defineHistoryStore({ load: () => [] } as never)).toThrow("append");
+    expect(() => defineHistoryStore({ load: () => [], append() {} } as never)).toThrow("replace");
+  });
+
+  test("exposes methods only, not the failOnError flag", () => {
+    const store = defineHistoryStore({
+      failOnError: true,
+      load: () => [],
+      append() {},
+      replace() {},
+    });
+    expect("failOnError" in store).toBe(false);
   });
 });
 
