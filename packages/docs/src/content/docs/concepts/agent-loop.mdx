@@ -101,6 +101,10 @@ if (result.stop_reason === "max_tokens") {
 
 Usage is reported by the model client. The built-in Anthropic client fills it in; a custom `ModelClient` that omits `usage` yields zeroed counts rather than an error.
 
+Assistant messages also carry provider response metadata: `providerResponseId` (the provider-assigned response id) and `model` (the model that actually served the response, which may differ from the requested one). The built-in Anthropic client fills both in on streaming and non-streaming requests; a custom `ModelClient` may set them on the `AssistantModelMessage` it returns. Both are absent when the client does not report them.
+
+*Requires 0.16.0 or later.*
+
 ## Automatic context compaction
 
 *Requires 0.13.0 or later; recovery after an overflow requires 0.14.0.*

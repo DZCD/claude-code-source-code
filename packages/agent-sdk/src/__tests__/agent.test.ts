@@ -2605,4 +2605,117 @@ describe("agent-sdk", () => {
       server.stop(true);
     }
   });
+
+  test("custom ModelClient metadata reaches the event stream and the tracer", async () => {
+    const trace: ContextTraceEvent[] = [];
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return {
+            ...textAssistant("done"),
+            providerResponseId: "msg_custom_1",
+            model: "claude-actual-model",
+          };
+        },
+      },
+    });
+
+    const messages = await collect(agent.query("go", {
+      stream: false,
+      tracer: { onEvent(event) { trace.push(event); } },
+    }));
+
+    const assistant = messages.find(message => message.type === "assistant");
+    expect(assistant).toMatchObject({
+      type: "assistant",
+      message: {
+        providerResponseId: "msg_custom_1",
+        model: "claude-actual-model",
+      },
+    });
+
+    const traced = trace.find(event => event.type === "assistant_message");
+    expect(traced?.data.message).toMatchObject({
+      providerResponseId: "msg_custom_1",
+      model: "claude-actual-model",
+    });
+  });
+
+  test("Anthropic client reports providerResponseId and model from non-streaming responses", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        return Response.json({
+          id: "msg_nonstream",
+          type: "message",
+          role: "assistant",
+          model: "claude-served-model",
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 2 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+      });
+
+      const messages = await collect(agent.query("Say hello", { stream: false }));
+
+      expect(messages.find(message => message.type === "assistant")).toMatchObject({
+        type: "assistant",
+        message: {
+          providerResponseId: "msg_nonstream",
+          model: "claude-served-model",
+        },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Anthropic client reports providerResponseId and model from streaming responses", async () => {
+    const sse = [
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream","type":"message","role":"assistant","model":"claude-served-stream","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done."}}\n\n',
+      'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ].join("");
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+      });
+
+      const messages = await collect(agent.query("Say hello", { stream: true }));
+
+      expect(messages.find(message => message.type === "assistant")).toMatchObject({
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Done." }],
+          providerResponseId: "msg_stream",
+          model: "claude-served-stream",
+        },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
 });

@@ -177,6 +177,7 @@ than relying on an error.
 | `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
+| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model` | 0.16.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -199,6 +200,7 @@ package does not export it as an importable path.
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
 | `TokenUsage` | Token counts reported on `SDKResultMessage.usage` and `AssistantModelMessage.usage`. |
+| `AssistantModelMessage` | One assistant turn returned by a `ModelClient`: `content`, optional `usage` and `stopReason`, plus optional provider metadata `providerResponseId` (the provider-assigned response id) and `model` (the model that actually served the response, which may differ from the requested one). |
 | `StopReason` | Why the model stopped. `"max_tokens"` means the output was truncated; `"model_context_window_exceeded"` means the context window ran out and is what `autoCompact` recovers from. |
 | `AgentRuntimeFailure` | Normalized member failure stored in failure events and upstream report metadata. |
 | `TeamRunnerConfig` | Team runtime limits: `maxDelegateDepth` and `maxConcurrentWorkItems`. Concurrency defaults to `1`, and the same target mailbox remains serial. |

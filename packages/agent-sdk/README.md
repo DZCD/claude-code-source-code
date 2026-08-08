@@ -1135,3 +1135,13 @@ to distinguish a complete answer from a truncated one.
 Usage comes from the model client. The built-in Anthropic client fills it in from
 the response, including the streaming path; a custom `ModelClient` that omits
 `usage` produces zeroed counts rather than an error.
+
+Assistant messages also carry provider response metadata: `providerResponseId`
+is the provider-assigned response id and `model` is the model that actually
+served the response, which may differ from the requested `AgentOptions.model`.
+The built-in Anthropic client fills both in on streaming and non-streaming
+requests; a custom `ModelClient` may set them on the `AssistantModelMessage` it
+returns. Both fields are optional and absent when the client does not report
+them.
+
+*Requires 0.16.0 or later.*

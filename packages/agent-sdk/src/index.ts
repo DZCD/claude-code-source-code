@@ -269,6 +269,13 @@ export type AssistantModelMessage = {
   /** Absent when a custom ModelClient does not report it. */
   usage?: TokenUsage;
   stopReason?: StopReason;
+  /** The provider-assigned response id. Absent when a custom ModelClient does not report it. */
+  providerResponseId?: string;
+  /**
+   * The model that actually served this response, which may differ from
+   * `ModelRequest.model`. Absent when a custom ModelClient does not report it.
+   */
+  model?: string;
 };
 
 export type ModelToolDefinition = {
@@ -3078,6 +3085,8 @@ class AnthropicModelClient implements ModelClient {
           content: response.content.map(fromAnthropicBlock).filter(isContentBlock),
           ...(usage ? { usage } : {}),
           ...(typeof response.stop_reason === "string" ? { stopReason: response.stop_reason } : {}),
+          ...(typeof response.id === "string" ? { providerResponseId: response.id } : {}),
+          ...(typeof response.model === "string" ? { model: response.model } : {}),
         };
       }
       throw new APIError("Unexpected streaming response from Anthropic client");
@@ -3109,6 +3118,8 @@ class AnthropicModelClient implements ModelClient {
 
 type AnthropicMessageResponse = {
   type?: unknown;
+  id?: unknown;
+  model?: unknown;
   content: unknown[];
   usage?: unknown;
   stop_reason?: unknown;
@@ -3263,6 +3274,8 @@ class AnthropicStreamAssembler {
   private jsonDeltas = new Map<number, string>();
   private usage: TokenUsage | undefined;
   private stopReason: StopReason | undefined;
+  private providerResponseId: string | undefined;
+  private model: string | undefined;
 
   add(event: Record<string, unknown>): void {
     // Usage arrives split across the stream: input counts up front, output
@@ -3270,6 +3283,8 @@ class AnthropicStreamAssembler {
     if (event.type === "message_start") {
       const message = event.message as Record<string, unknown> | undefined;
       this.usage = mergeUsage(this.usage, message?.usage);
+      if (typeof message?.id === "string") this.providerResponseId = message.id;
+      if (typeof message?.model === "string") this.model = message.model;
       return;
     }
 
@@ -3346,6 +3361,8 @@ class AnthropicStreamAssembler {
       content: this.content.filter(isContentBlock),
       ...(this.usage ? { usage: this.usage } : {}),
       ...(this.stopReason ? { stopReason: this.stopReason } : {}),
+      ...(this.providerResponseId ? { providerResponseId: this.providerResponseId } : {}),
+      ...(this.model ? { model: this.model } : {}),
     };
   }
 }

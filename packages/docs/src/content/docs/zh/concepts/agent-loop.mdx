@@ -99,6 +99,10 @@ if (result.stop_reason === "max_tokens") {
 
 用量由 model client 上报。内置的 Anthropic 客户端会填好；自定义 `ModelClient` 若不提供 `usage`，得到的是全零计数而不是报错。
 
+assistant 消息还会携带 provider 响应元数据：`providerResponseId`（provider 分配的响应 id）和 `model`（实际服务该响应的模型，可能与请求的模型不同）。内置 Anthropic 客户端在流式和非流式请求中都会填好这两个字段；自定义 `ModelClient` 也可以在返回的 `AssistantModelMessage` 上设置它们。客户端不上报时两个字段都缺省。
+
+*需要 0.16.0 及以上版本。*
+
 ## 上下文自动压缩
 
 *需要 0.13.0 及以上版本；溢出后的兜底恢复需要 0.14.0。*
