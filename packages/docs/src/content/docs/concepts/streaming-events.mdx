@@ -42,3 +42,12 @@ for await (const message of agent.query("What is 2+2?")) {
 `stream_event` messages arrive while the model is still responding rather than in a burst after the turn ends, so they can drive incremental UI directly. `assistant` arrives once the model response for that turn is assembled, and `user` arrives after the whole tool batch has finished.
 
 The SDK produces the next event only after the consumer takes the current one. Slow work inside the `for await` body delays later events without dropping or reordering them, so keep expensive handling off the loop itself.
+
+## Per-event guarantees
+
+The event stream is built for live UI. These guarantees are part of the public contract:
+
+- **The prompt is not echoed.** `agent.query("...")` never yields a `user` event containing your prompt; the prompt goes into the internal history only. If you need the full transcript — the prompt, tool results, and messages injected by a team runtime — subscribe a [ContextTracer](/concepts/context-tracing/) instead. Its `user_message` / `assistant_message` events record everything; the event stream does not.
+- **`assistant`** fires once per model turn, after that turn's response is fully assembled. `message` is an `AssistantModelMessage`: `content` holds text and `tool_use` blocks, `stopReason` says why the model stopped, and `providerResponseId` / `model` carry provider metadata when the model client reports them.
+- **`user`** appears only after a whole tool batch has finished executing — one event per batch, never one per tool. `message.content` is always `ToolResultBlock[]`. `tool_use_result` is a convenience view over the same results: with a single tool it is that result's `content` (`string | ContentBlock[]`); with several tools it is the array of result blocks. The first tool error, if any, is also surfaced on `error`, and an aborted batch still yields a `user` event with `error` set.
+- **`result`** is the terminal event, emitted exactly once per query. `subtype` is `"success"` for a normal end, `"interrupted"` when `Agent.interrupt()` ends the query cleanly (completed turns stay in history and `is_error` remains `false`), or one of `"error"`, `"error_max_turns"`, `"error_abort"`, `"error_timeout"`. Even on success, check `stop_reason` for `"max_tokens"` — the text may be a truncated fragment.

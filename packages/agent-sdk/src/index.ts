@@ -835,6 +835,14 @@ export type SDKAssistantMessage = {
   session_id: string;
 };
 
+/**
+ * Emitted only after a whole tool batch finishes — one event per batch, never
+ * one per tool, and never for the prompt (the prompt is not echoed; subscribe
+ * a `ContextTracer` for a full transcript). `message.content` is always
+ * `ToolResultBlock[]`; the declared `ModelMessage` type is wider than this
+ * guarantee. `tool_use_result` is a convenience view: a single tool's result
+ * `content`, or the array of result blocks when the batch had several tools.
+ */
 export type SDKUserMessage = {
   type: "user";
   message: ModelMessage;

@@ -73,6 +73,19 @@ The SDK produces the next event only after the loop takes the current one.
 Slow work in the loop body delays later events without dropping or reordering
 them, so keep expensive handling off the loop itself.
 
+`query()` yields these SDK messages:
+
+| Type | When | What it carries |
+| --- | --- | --- |
+| `system` | Query start | Session init metadata (model, tools, `session_id`). |
+| `stream_event` | While the model is responding | Raw provider stream event for incremental rendering. |
+| `assistant` | After each model turn is assembled | The `AssistantModelMessage` with text / `tool_use` blocks and provider metadata. |
+| `user` | After a whole tool batch finishes | Tool results as `ToolResultBlock[]`; the prompt is never echoed. |
+| `result` | Once, at the end of the query | Final text, `subtype` (`"success"`, `"interrupted"`, or an error variant), and token usage. |
+
+For the exact per-event guarantees see
+[Streaming Events](https://docs.claude-code-sdk.com/concepts/streaming-events/).
+
 Pass `{ stream: false }` to disable model streaming for a query:
 
 ```ts

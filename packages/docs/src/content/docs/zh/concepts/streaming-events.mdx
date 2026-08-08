@@ -27,6 +27,15 @@ SDK 会等消费者取走当前事件后再继续推送下一个。如果 `for a
 | `user` | SDK 回填给模型的工具结果消息。 |
 | `result` | 本轮 query 的最终结果，成功或错误都会输出。 |
 
+## 各事件的具体保证
+
+事件流是给实时 UI 用的，下面这些保证属于公开契约：
+
+- **prompt 不会回显。** `agent.query("...")` 永远不会把你的 prompt 作为 `user` 事件吐出来，它只进内部对话历史。如果需要完整 transcript——包括 prompt、工具结果、以及 team runtime 注入的消息——请挂一个 [ContextTracer](/zh/concepts/context-tracing/)：它的 `user_message` / `assistant_message` 事件会记录全部内容，事件流则不会。
+- **`assistant` 事件**在每轮模型响应组装完成后发出，一轮一个。`message` 是 `AssistantModelMessage`：`content` 里是文本和 `tool_use` 块，`stopReason` 说明模型为什么停下，`providerResponseId` / `model` 在模型客户端有上报时携带供应商元数据。
+- **`user` 事件**只在整批工具全部执行完后出现，一批一个，不会每个工具各发一个。`message.content` 恒为 `ToolResultBlock[]`。`tool_use_result` 是同一批结果的便捷视图：只有一个工具时，它是该结果的 `content`（`string | ContentBlock[]`）；有多个工具时，它是结果块的数组。第一个工具抛出的错误会额外挂在 `error` 字段上；被中止的批次同样会产出带 `error` 的 `user` 事件。
+- **`result` 事件**是终点事件，每次 query 恰好发出一次。`subtype` 正常结束为 `"success"`；`Agent.interrupt()` 干净地结束 query 时为 `"interrupted"`（已完成的轮次保留在历史里，`is_error` 仍为 `false`）；其余为 `"error"`、`"error_max_turns"`、`"error_abort"`、`"error_timeout"`。即使成功，也要检查 `stop_reason` 是否为 `"max_tokens"`——此时文本是被截断的片段。
+
 ## 非流式请求
 
 如果不需要底层流式事件，可以关闭：
