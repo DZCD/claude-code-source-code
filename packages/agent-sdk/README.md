@@ -226,9 +226,9 @@ for await (const event of team.query("Ask engineering to investigate.", {
 
 ## LangSmith Context Tracing
 
-Pass LangSmith's `RunTree` constructor to the SDK tracer. The SDK depends on
-`langsmith` directly and uses its official `RunTree` / `RunTreeConfig` types for
-this adapter.
+The SDK depends on `langsmith` directly and uses its official `RunTree` /
+`RunTreeConfig` types for this adapter, so the tracer works out of the box —
+no constructor wiring needed.
 
 Configure LangSmith with its standard environment variables:
 
@@ -242,7 +242,6 @@ LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 ```
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import {
   createAgent,
   createCompositeContextTracer,
@@ -253,7 +252,6 @@ import {
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
-    RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
     workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
     tags: ["local-debug"],
@@ -282,11 +280,9 @@ tracer. `workspaceId` is optional and only selects a LangSmith workspace; it is
 not the tracing project name.
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import { createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
-  RunTree,
   apiKey: process.env.LANGSMITH_API_KEY,
   apiUrl: process.env.LANGSMITH_ENDPOINT,
   projectName: process.env.LANGSMITH_PROJECT,
@@ -294,6 +290,9 @@ const tracer = createLangSmithContextTracer({
   workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
 });
 ```
+
+`RunTree` defaults to the bundled langsmith constructor since 0.17.0; pass
+`RunTree` or `runTree` only to inject a custom runtime or a test fake.
 
 LangSmith receives one root `chain` run per SDK query. For an `Agent` query,
 model turns and SDK tool calls appear as child `llm` and `tool` runs. For a

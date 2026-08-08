@@ -1141,6 +1141,10 @@ describe("agent-sdk", () => {
     expect("failOnError" in tracer).toBe(false);
   });
 
+  test("createLangSmithContextTracer defaults to the bundled RunTree", () => {
+    expect(() => createLangSmithContextTracer({ projectName: "agent-sdk-tests" })).not.toThrow();
+  });
+
   test("maps agent context trace events to LangSmith chain and llm runs", async () => {
     FakeRunTree.reset();
     const tracer = createLangSmithContextTracer({

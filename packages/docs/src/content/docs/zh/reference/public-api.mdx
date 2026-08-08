@@ -136,12 +136,10 @@ import {
   createJsonlContextTracer,
   createLangSmithContextTracer,
 } from "agent-lattice";
-import { RunTree } from "langsmith/run_trees";
 
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
-    RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
     workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),
@@ -165,8 +163,9 @@ try {
 按 `session_id` 写文件。它还支持 `redact(event)` 在持久化前做本地过滤，以及
 `failOnError` 让 trace 写入失败时终止 agent run。
 
-`createLangSmithContextTracer()` 接收 LangSmith 兼容的 `RunTree` 构造器或
-`runTree(config)` 工厂函数。SDK 现在直接依赖 `langsmith`，并复用
+`createLangSmithContextTracer()` 默认使用内置的 langsmith `RunTree`（0.17.0 起）；
+只有注入自定义 runtime 或测试 fake 时才需要传 LangSmith 兼容的 `RunTree` 构造器或
+`runTree(config)` 工厂函数。SDK 直接依赖 `langsmith`，并复用
 `langsmith/run_trees` 的官方 `RunTree` / `RunTreeConfig` 类型。按 LangSmith
 官方方式配置 `LANGSMITH_TRACING`、`LANGSMITH_ENDPOINT`、`LANGSMITH_API_KEY`
 和 `LANGSMITH_PROJECT`。只有组织级或多 workspace API key 才需要
@@ -196,7 +195,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`（同时加入 `AgentLike` 接口——对自定义实现方是破坏性变更）、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
-| `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更）、`defineContextTracer()`、`defineHistoryStore()`（破坏性变更：`failOnError` 字段从 `ContextTracer`/`HistoryStore` 端口类型移除——自定义实现方必须改用 `defineXxx` 工厂）、`Agent` 改为 type-only 导出（破坏性变更：`new Agent()` 不再可用） | 0.17.0 |
+| `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更）、`defineContextTracer()`、`defineHistoryStore()`（破坏性变更：`failOnError` 字段从 `ContextTracer`/`HistoryStore` 端口类型移除——自定义实现方必须改用 `defineXxx` 工厂）、`Agent` 改为 type-only 导出（破坏性变更：`new Agent()` 不再可用）、`createLangSmithContextTracer()` 默认使用内置 `RunTree` | 0.17.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

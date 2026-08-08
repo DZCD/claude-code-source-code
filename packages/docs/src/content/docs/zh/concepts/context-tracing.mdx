@@ -64,8 +64,9 @@ const tracer = createJsonlContextTracer({
 ## LangSmith tracer
 
 需要把 SDK 运行显示成 LangSmith trace 时，可以使用
-`createLangSmithContextTracer()`。SDK 现在直接依赖 `langsmith`，并复用它的
-官方 `RunTree` 类型；把 `RunTree` 构造器传给 tracer 即可。
+`createLangSmithContextTracer()`。SDK 直接依赖 `langsmith`，并复用它的
+官方 `RunTree` 类型，开箱即用。*从 0.17.0 起默认使用内置的 `RunTree`；
+只有在注入自定义 runtime 或测试 fake 时才需要传 `RunTree` 或 `runTree`。*
 
 按 LangSmith 官方方式配置环境变量：
 
@@ -79,11 +80,9 @@ LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 ```
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import { createAgent, createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
-  RunTree,
   projectName: process.env.LANGSMITH_PROJECT,
   workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   tags: ["local-debug"],
@@ -110,11 +109,9 @@ LangSmith 内部 trace batch 队列，包括把根 run 标记为已结束的最�
 只用于选择 LangSmith workspace；它不是 trace project 名。
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import { createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
-  RunTree,
   apiKey: process.env.LANGSMITH_API_KEY,
   apiUrl: process.env.LANGSMITH_ENDPOINT,
   projectName: process.env.LANGSMITH_PROJECT,
@@ -146,7 +143,6 @@ sink：
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
-    RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
     workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),

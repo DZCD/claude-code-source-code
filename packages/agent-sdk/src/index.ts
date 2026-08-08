@@ -15,6 +15,7 @@ import {
   StreamableHTTPClientTransport,
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { RunTree as BundledRunTree } from "langsmith/run_trees";
 import type {
   RunEvent,
   RunTree,
@@ -242,7 +243,9 @@ export type LangSmithRunTreeConstructor = new (config: LangSmithRunTreeConfig) =
 export type LangSmithWriteReplicaConfig = NonNullable<LangSmithRunTreeConfig["replicas"]>[number];
 
 export type LangSmithContextTracerOptions = {
+  /** Defaults to the bundled langsmith RunTree; inject a constructor for custom runtimes. */
   RunTree?: LangSmithRunTreeConstructor;
+  /** Factory form of RunTree, mainly for tests. Takes precedence over RunTree. */
   runTree?: (config: LangSmithRunTreeConfig) => LangSmithRunTreeLike;
   projectName?: string;
   name?: string;
@@ -1477,12 +1480,9 @@ type LangSmithFlushableClient = {
   awaitPendingTraceBatches?: () => Promise<void>;
 };
 
-export function createLangSmithContextTracer(options: LangSmithContextTracerOptions): ContextTracer {
-  if (!options.RunTree && !options.runTree) {
-    throw new Error("createLangSmithContextTracer requires either RunTree or runTree");
-  }
-
-  const makeRunTree = options.runTree ?? ((config: LangSmithRunTreeConfig) => new options.RunTree!(config));
+export function createLangSmithContextTracer(options: LangSmithContextTracerOptions = {}): ContextTracer {
+  const RunTreeCtor = options.RunTree ?? BundledRunTree;
+  const makeRunTree = options.runTree ?? ((config: LangSmithRunTreeConfig) => new RunTreeCtor(config));
   const runs = new Map<string, LangSmithTraceRunState>();
   let queue = Promise.resolve();
 

@@ -139,12 +139,10 @@ import {
   createJsonlContextTracer,
   createLangSmithContextTracer,
 } from "agent-lattice";
-import { RunTree } from "langsmith/run_trees";
 
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
-    RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
     workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),
@@ -169,10 +167,11 @@ for one file per `session_id`. It also accepts `redact(event)` for local
 filtering before persistence and `failOnError` for hosts that want trace write
 failures to fail the agent run.
 
-`createLangSmithContextTracer()` accepts a LangSmith-compatible `RunTree`
-constructor or `runTree(config)` factory. The SDK depends on `langsmith`
-directly and uses the official `RunTree` / `RunTreeConfig` types from
-`langsmith/run_trees`. Configure LangSmith with its standard environment
+`createLangSmithContextTracer()` uses the bundled langsmith `RunTree` by
+default (since 0.17.0); pass a LangSmith-compatible `RunTree` constructor or
+`runTree(config)` factory only to inject a custom runtime or a test fake. The
+SDK depends on `langsmith` directly and uses the official `RunTree` /
+`RunTreeConfig` types from `langsmith/run_trees`. Configure LangSmith with its standard environment
 variables: `LANGSMITH_TRACING`, `LANGSMITH_ENDPOINT`, `LANGSMITH_API_KEY`, and
 `LANGSMITH_PROJECT`. `LANGSMITH_WORKSPACE_ID` is required only for org-scoped or
 multi-workspace API keys. You can pass `apiKey`, `apiUrl`, and `workspaceId`
@@ -204,7 +203,7 @@ than relying on an error.
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()` (also on the `AgentLike` interface — breaking for custom implementers), result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
-| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available) | 0.17.0 |
+| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available), `createLangSmithContextTracer()` defaults to the bundled `RunTree` | 0.17.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

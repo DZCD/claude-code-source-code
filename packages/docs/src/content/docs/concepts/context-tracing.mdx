@@ -66,7 +66,9 @@ const tracer = createJsonlContextTracer({
 
 Use `createLangSmithContextTracer()` when you want SDK runs to appear as
 LangSmith traces. The SDK depends on `langsmith` directly and reuses its
-official `RunTree` types; pass the `RunTree` constructor into the tracer.
+official `RunTree` types, so the tracer works out of the box. *Since 0.17.0
+the bundled `RunTree` is the default; pass `RunTree` or `runTree` only to
+inject a custom runtime or a test fake.*
 
 Configure LangSmith with its standard environment variables:
 
@@ -80,11 +82,9 @@ LANGSMITH_WORKSPACE_ID=<your-langsmith-workspace-id>
 ```
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import { createAgent, createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
-  RunTree,
   projectName: process.env.LANGSMITH_PROJECT,
   workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   tags: ["local-debug"],
@@ -113,11 +113,9 @@ tracer. `workspaceId` is optional and only selects a LangSmith workspace; it is
 not the tracing project name.
 
 ```ts
-import { RunTree } from "langsmith/run_trees";
 import { createLangSmithContextTracer } from "agent-lattice";
 
 const tracer = createLangSmithContextTracer({
-  RunTree,
   apiKey: process.env.LANGSMITH_API_KEY,
   apiUrl: process.env.LANGSMITH_ENDPOINT,
   projectName: process.env.LANGSMITH_PROJECT,
@@ -151,7 +149,6 @@ sinks:
 const tracer = createCompositeContextTracer([
   createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
   createLangSmithContextTracer({
-    RunTree,
     projectName: process.env.LANGSMITH_PROJECT,
     workspaceId: process.env.LANGSMITH_WORKSPACE_ID,
   }),
