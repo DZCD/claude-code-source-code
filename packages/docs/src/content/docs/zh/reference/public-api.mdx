@@ -24,6 +24,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
 | `createCompositeAgentHooks(hooks)` | 按数组顺序串联 hook，后一个收到前一个的输出。 |
+| `createJsonlHistoryStore(options)` | 创建 JSONL history store，把 Agent 的对话历史按每行一条 message 持久化。 |
 | `DEFAULT_COMPACTION_PROMPT` | `autoCompact` 使用的内置摘要指令。 |
 | `teamMember(options)` | 创建一个团队成员，带 name、role、focus 和 agent。 |
 | `createTeam(options)` | 创建一个围绕 Lead 的可调用 Team，包含成员、mailbox 和内置 runtime。Lead 提交一批 handoff 后，SDK 会先执行成员，再继续调用 Lead 模型。通过 `runner.maxConcurrentWorkItems` 设置跨成员并发上限，默认值为 `1`。 |
@@ -43,6 +44,10 @@ for await (const message of agent.query(prompt)) {
 }
 
 const result = await agent.prompt(prompt);
+
+// 对话历史的深拷贝，包括从 AgentOptions.historyStore seed 的消息。
+// 修改返回值不会污染运行中的历史。
+const history = await agent.getHistory();
 
 // 以 subtype "interrupted" 结束当前 query，已完成轮次保留在历史中，
 // 后续可以用新的 query 继续对话。
@@ -92,6 +97,7 @@ const agent = createBareAgent({
 | `permission` | `function` | 可允许或拒绝工具执行的权限回调。 |
 | `modelClient` | `ModelClient` | 用于测试或替换 provider 的自定义模型客户端。 |
 | `tracer` | `ContextTracer` | 可选的 agent 上下文事件 trace sink。 |
+| `historyStore` | `HistoryStore` | 可选的对话历史持久化 adapter。首次 query 前加载一次；之后每次历史写入触发 `append()`，compaction 触发 `replace()`。 |
 
 ### BareAgentOptions
 
@@ -178,7 +184,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `autoCompact`、`DEFAULT_COMPACTION_PROMPT`、`SDKSystemCompactionMessage` | 0.13.0 |
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`、result subtype `interrupted` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -209,6 +215,8 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
 | `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `LangSmithContextTracerOptions` | LangSmith tracer adapter 的配置。 |
+| `HistoryStore` | Agent 对话历史的持久化 adapter 接口：`load()`、`append(message)`、`replace(messages)`，可选 `failOnError`。compaction 会调用 `replace()`，所以 store 必须支持整体替换。 |
+| `JsonlHistoryStoreOptions` | 内置 JSONL history store 的配置：`path` 和可选 `failOnError`。 |
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |

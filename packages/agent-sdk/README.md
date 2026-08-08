@@ -1097,8 +1097,8 @@ console.log(result.result);
 ```
 
 The SDK stores conversation state in memory for the lifetime of the `Agent`
-instance. Persistent transcripts and resume support are intentionally out of
-scope for the first release.
+instance. To persist it or resume a conversation in another process, attach a
+`HistoryStore` — see [Persistent History And Resume](#persistent-history-and-resume).
 
 An `Agent` is a conversation, not a reusable client. Because the history is
 instance state, starting a query while another is still running would interleave
@@ -1106,6 +1106,54 @@ both conversations; the SDK rejects the second one with `ConcurrentQueryError`.
 Create one Agent per concurrent conversation — in a server, per request or per
 user session rather than a shared module-level instance. Sequential reuse, as
 above, is the intended pattern.
+
+## Persistent History And Resume
+
+*Requires 0.16.0 or later.*
+
+Pass a `HistoryStore` to seed an Agent's history from durable storage and have
+every later write mirrored back. `createJsonlHistoryStore()` persists one JSON
+message per line:
+
+```ts
+import { createAgent, createJsonlHistoryStore } from "agent-lattice";
+
+const historyStore = createJsonlHistoryStore({
+  path: ".agent-sessions/ada.jsonl",
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  historyStore,
+});
+
+// The first query lazily loads any history the store already holds, then the
+// new prompt continues from it. Every user, assistant, and tool_result message
+// is appended to the file as it lands.
+const result = await agent.prompt("What is my name?");
+
+// A copy of the live history, safe to inspect or mutate.
+const transcript = await agent.getHistory();
+```
+
+The store contract is three methods — `load()`, `append(message)`, and
+`replace(messages)` — each synchronous or returning a promise:
+
+- `load()` runs once per Agent lifetime, lazily before the first query (the
+  constructor cannot be async). Resuming across processes is simply a new
+  Agent over the same store; the "one Agent, one conversation" rule is
+  unchanged.
+- `append(message)` follows every message added to the history.
+- `replace(messages)` follows compaction, which rewrites the whole history —
+  a store must support full replacement, not just appends.
+
+The JSONL store's `load()` skips malformed lines rather than failing, so a
+torn final write does not lose the rest of the transcript. By default a
+failing store is swallowed and the conversation continues in memory only,
+mirroring the tracer's failure semantics; set `failOnError: true` on the store
+to propagate store errors out of `query()` instead.
 
 ## Deadlines
 

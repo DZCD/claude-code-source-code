@@ -29,7 +29,7 @@ await agent.prompt("我的名字是 Ada。");
 const result = await agent.prompt("我叫什么？");
 ```
 
-这个状态只在当前进程和当前实例里存在。持久化 transcript、resume、跨进程 session 不属于第一版核心能力，可以由宿主应用自己实现。
+这个状态默认只存在于当前进程和当前实例里。需要持久化 transcript 或在其他进程 resume 时，给 Agent 挂一个 `HistoryStore` —— 见下文「持久化历史与 resume」。
 
 ## 一个 Agent 只承载一个会话
 
@@ -52,6 +52,29 @@ app.post("/ask", async req => {
 ```
 
 顺序复用没有问题，多轮对话正是这样工作的——等上一次 query 结束再发起下一次，就像上面那个记名字的例子。query 结束时守卫会释放，出错和中断也一样。
+
+## 持久化历史与 resume
+
+*需要 0.16.0 及以上版本。*
+
+历史默认只保存在内存里。挂一个 `HistoryStore` 可以从持久存储里 seed 历史，并把之后的每次写入同步回去：
+
+```ts
+import { createAgent, createJsonlHistoryStore } from "agent-lattice";
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  historyStore: createJsonlHistoryStore({ path: ".agent-sessions/ada.jsonl" }),
+});
+
+// 首次 query 会惰性加载 store 里已有的历史，并在此基础上继续。
+await agent.prompt("我叫什么？");
+
+// 当前历史的深拷贝，可以随意修改。
+const transcript = await agent.getHistory();
+```
+
+`load()` 在每个 Agent 生命周期里只跑一次，发生在首次 query 之前。跨进程 resume 就是「新 Agent + 同一个 store」——上面「一个 Agent 只承载一个会话」的语义不变。加载之后，每条进入历史的消息都会触发 `append(message)`；compaction 整体重写历史时触发 `replace(messages)`，所以 store 必须支持整体替换。`createJsonlHistoryStore()` 每行写一个 JSON message，load 时跳过损坏行，写文件时最后一次写入被截断不会丢掉整个 transcript。默认情况下 store 出错会被吞掉，对话降级为仅内存继续；在 store 上设 `failOnError: true` 可以让错误从 `query()` 传播出来。
 
 ## 超时
 

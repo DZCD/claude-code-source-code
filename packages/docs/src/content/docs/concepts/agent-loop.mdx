@@ -55,6 +55,29 @@ app.post("/ask", async req => {
 
 Sequential reuse is fine and is how multi-turn conversations work: await one query before starting the next, as in the example above. The guard releases when a query finishes, including on error or abort.
 
+## Persistent history and resume
+
+*Requires 0.16.0 or later.*
+
+By default the history lives only in memory. Attach a `HistoryStore` to seed it from durable storage and mirror every write back:
+
+```ts
+import { createAgent, createJsonlHistoryStore } from "agent-lattice";
+
+const agent = createAgent({
+  model: "claude-sonnet-4-6",
+  historyStore: createJsonlHistoryStore({ path: ".agent-sessions/ada.jsonl" }),
+});
+
+// The first query lazily loads whatever the store holds and continues from it.
+await agent.prompt("What is my name?");
+
+// A deep copy of the live history; mutating it is safe.
+const transcript = await agent.getHistory();
+```
+
+`load()` runs once per Agent lifetime, before the first query. Resuming a conversation in another process is a new Agent over the same store — the one-Agent-one-conversation rule above is unchanged. After loading, `append(message)` follows every message added to the history, and `replace(messages)` follows compaction, which rewrites the history wholesale, so a store must support full replacement. `createJsonlHistoryStore()` writes one JSON message per line and skips malformed lines on load, so a torn final write does not lose the transcript. By default a failing store is swallowed and the conversation continues in memory only; set `failOnError: true` on the store to propagate store errors out of `query()`.
+
 ## Deadlines
 
 *`requestTimeoutMs` requires 0.11.0 or later.*

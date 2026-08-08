@@ -241,6 +241,28 @@ export type ModelMessage = {
   content: string | ContentBlock[];
 };
 
+/**
+ * Persistence adapter for an Agent's conversation history. `load()` runs once
+ * per Agent lifetime, before the first query; `append()` follows every message
+ * added to the history; `replace()` follows compaction, which rewrites the
+ * whole history — a store must support full replacement. Methods may be
+ * synchronous or return a promise; the Agent awaits them to preserve order.
+ * Like `ContextTracer`, a failing store is swallowed by default and the
+ * conversation continues in memory only; set `failOnError` to propagate store
+ * errors out of `query()` instead.
+ */
+export type HistoryStore = {
+  failOnError?: boolean;
+  load(): ModelMessage[] | Promise<ModelMessage[]>;
+  append(message: ModelMessage): void | Promise<void>;
+  replace(messages: ModelMessage[]): void | Promise<void>;
+};
+
+export type JsonlHistoryStoreOptions = {
+  path: string;
+  failOnError?: boolean;
+};
+
 export type TokenUsage = {
   input_tokens: number;
   output_tokens: number;
@@ -727,6 +749,12 @@ export type AgentOptions<TContext = unknown> = {
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
   modelClient?: ModelClient;
   tracer?: ContextTracer;
+  /**
+   * Persistence adapter for the conversation history. Seeded via `load()` once
+   * before the first query, then notified on every history write. Compaction
+   * calls `replace()`, so the store must support full replacement.
+   */
+  historyStore?: HistoryStore;
 };
 
 export type BareAgentOptions<TContext = unknown> = Omit<AgentOptions<TContext>, "workspace">;
@@ -1580,6 +1608,58 @@ export async function connectMCPStreamableHTTPServer(
   };
 }
 
+/**
+ * Persists an Agent's history as one JSON message per line. `append()` adds a
+ * line; `replace()` rewrites the whole file, which is how compaction is
+ * persisted. `load()` reads every line and skips malformed ones — a truncated
+ * final line from a torn write must not lose the rest of the transcript.
+ * Writes are serialized through an internal queue, so callers may fire them
+ * without waiting for ordering.
+ */
+export function createJsonlHistoryStore(options: JsonlHistoryStoreOptions): HistoryStore {
+  let queue = Promise.resolve();
+  const store: HistoryStore = {
+    failOnError: options.failOnError,
+    async load() {
+      let raw: string;
+      try {
+        raw = await readFile(options.path, "utf8");
+      } catch (error) {
+        if ((error as { code?: string }).code === "ENOENT") return [];
+        throw error;
+      }
+      const messages: ModelMessage[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as ModelMessage;
+          if (parsed?.role === "user" || parsed?.role === "assistant") {
+            messages.push(parsed);
+          }
+        } catch {
+          // Malformed line: skip it, keep the rest of the transcript.
+        }
+      }
+      return messages;
+    },
+    append(message) {
+      queue = queue.then(
+        () => appendJsonlHistoryMessage(options.path, message),
+        () => appendJsonlHistoryMessage(options.path, message),
+      );
+      return queue;
+    },
+    replace(messages) {
+      queue = queue.then(
+        () => writeJsonlHistory(options.path, messages),
+        () => writeJsonlHistory(options.path, messages),
+      );
+      return queue;
+    },
+  };
+  return store;
+}
+
 export function teamMember(input: TeamMemberInput): TeamMemberDefinition {
   if (!input.name.trim()) {
     throw new Error("Team member name is required");
@@ -2076,6 +2156,7 @@ export class Agent<TContext = unknown> {
   private readonly toolConcurrency: Required<ToolConcurrencyOptions>;
   private running = false;
   private interruptController: AbortController | undefined;
+  private historyLoaded: Promise<void> | undefined;
 
   constructor(options: AgentOptions<TContext>) {
     if (!options.model) {
@@ -2137,6 +2218,49 @@ export class Agent<TContext = unknown> {
     this.interruptController?.abort();
   }
 
+  /**
+   * The store is read once per Agent lifetime, lazily on the first query or
+   * getHistory() call — the constructor cannot be async. A failed load follows
+   * the same rule as a failed write: swallowed unless `failOnError` is set, in
+   * which case the error propagates and the Agent starts empty.
+   */
+  private ensureHistoryLoaded(): Promise<void> {
+    this.historyLoaded ??= this.loadHistory();
+    return this.historyLoaded;
+  }
+
+  private async loadHistory(): Promise<void> {
+    const store = this.options.historyStore;
+    if (!store) return;
+    try {
+      const seeded = await store.load();
+      // Clone so the store cannot mutate the live history through its copy.
+      this.messages.push(...structuredClone(seeded));
+    } catch (error) {
+      if (store.failOnError) throw error;
+    }
+  }
+
+  private async appendStoredHistory(message: ModelMessage): Promise<void> {
+    const store = this.options.historyStore;
+    if (!store) return;
+    try {
+      await store.append(message);
+    } catch (error) {
+      if (store.failOnError) throw error;
+    }
+  }
+
+  private async replaceStoredHistory(): Promise<void> {
+    const store = this.options.historyStore;
+    if (!store) return;
+    try {
+      await store.replace([...this.messages]);
+    } catch (error) {
+      if (store.failOnError) throw error;
+    }
+  }
+
   private async *runQuery(
     prompt: string | ContentBlock[],
     options: QueryOptions<TContext>,
@@ -2195,7 +2319,9 @@ export class Agent<TContext = unknown> {
       role: "user",
       content: prompt,
     };
+    await this.ensureHistoryLoaded();
     this.messages.push(inputMessage);
+    await this.appendStoredHistory(inputMessage);
     await emitTraceEvent(tracer, {
       ...traceBase,
       type: "user_message",
@@ -2437,6 +2563,7 @@ export class Agent<TContext = unknown> {
       }
 
       this.messages.push(assistant);
+      await this.appendStoredHistory(assistant);
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "assistant_message",
@@ -2570,6 +2697,7 @@ export class Agent<TContext = unknown> {
               content: abortedResults,
             };
             this.messages.push(abortedMessage);
+            await this.appendStoredHistory(abortedMessage);
             await emitTraceEvent(tracer, {
               ...traceBase,
               type: "user_message",
@@ -2639,6 +2767,7 @@ export class Agent<TContext = unknown> {
         content: toolResults,
       };
       this.messages.push(userMessage);
+      await this.appendStoredHistory(userMessage);
       await emitTraceEvent(tracer, {
         ...traceBase,
         type: "user_message",
@@ -2704,6 +2833,16 @@ export class Agent<TContext = unknown> {
       throw new Error("Agent query completed without a result message");
     }
     return finalResult;
+  }
+
+  /**
+   * The conversation history as currently held by this Agent, including any
+   * messages seeded from `AgentOptions.historyStore`. Returns a deep copy, so
+   * mutating the result cannot corrupt the live conversation.
+   */
+  async getHistory(): Promise<ModelMessage[]> {
+    await this.ensureHistoryLoaded();
+    return structuredClone(this.messages);
   }
 
   addTools(tools: Array<ToolDefinition<any, TContext>>): void {
@@ -2780,6 +2919,9 @@ export class Agent<TContext = unknown> {
 
     this.messages.length = 0;
     this.messages.push(compactionHandoffMessage(summary), ...tail);
+    // Compaction rewrites the whole history, so the store needs the full
+    // replacement, not a diff.
+    await this.replaceStoredHistory();
     return {
       summary,
       compacted: head.length,
@@ -5346,6 +5488,17 @@ async function flushTracer(tracer: ContextTracer | undefined): Promise<void> {
 async function appendJsonlEntry(filePath: string, entry: ContextTraceEvent): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   await appendFile(filePath, `${stringifyTraceEntry(entry)}\n`, "utf8");
+}
+
+async function appendJsonlHistoryMessage(filePath: string, message: ModelMessage): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await appendFile(filePath, `${JSON.stringify(message)}\n`, "utf8");
+}
+
+async function writeJsonlHistory(filePath: string, messages: ModelMessage[]): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const body = messages.map(message => JSON.stringify(message)).join("\n");
+  await writeFile(filePath, body ? `${body}\n` : "", "utf8");
 }
 
 function stringifyTraceEntry(entry: ContextTraceEvent): string {

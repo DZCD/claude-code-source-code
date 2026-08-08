@@ -24,6 +24,7 @@ description: Stable exports exposed by the SDK package.
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `createCompositeAgentHooks(hooks)` | Chains hooks in array order; each receives the previous one's output. |
+| `createJsonlHistoryStore(options)` | Creates a JSONL history store that persists an Agent's conversation as one message per line. |
 | `DEFAULT_COMPACTION_PROMPT` | The built-in summarization instruction used by `autoCompact`. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. After the lead queues a handoff batch, members run before the lead model is called again. Set `runner.maxConcurrentWorkItems` for bounded cross-member concurrency; the default is `1`. |
@@ -43,6 +44,10 @@ for await (const message of agent.query(prompt)) {
 }
 
 const result = await agent.prompt(prompt);
+
+// A deep copy of the conversation history, including messages seeded from
+// AgentOptions.historyStore. Mutating it cannot corrupt the live history.
+const history = await agent.getHistory();
 
 // End the running query with subtype "interrupted", keeping completed turns
 // in history so a follow-up query can continue the conversation.
@@ -92,6 +97,7 @@ const agent = createBareAgent({
 | `permission` | `function` | Callback that can allow or deny tool execution. |
 | `modelClient` | `ModelClient` | Custom model client for tests or alternate providers. |
 | `tracer` | `ContextTracer` | Optional trace sink for agent context events. |
+| `historyStore` | `HistoryStore` | Optional persistence adapter for the conversation history. Loaded once before the first query; `append()` follows every history write and `replace()` follows compaction. |
 
 ### BareAgentOptions
 
@@ -183,7 +189,7 @@ than relying on an error.
 | `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()`, result subtype `interrupted` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()`, result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -215,6 +221,8 @@ package does not export it as an importable path.
 | `ContextTraceEventType` | Union of trace event type strings. |
 | `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
 | `LangSmithContextTracerOptions` | Options for the LangSmith tracer adapter. |
+| `HistoryStore` | Persistence adapter interface for an Agent's conversation history: `load()`, `append(message)`, `replace(messages)`, optional `failOnError`. Compaction calls `replace()`, so stores must support full replacement. |
+| `JsonlHistoryStoreOptions` | Options for the built-in JSONL history store: `path` and optional `failOnError`. |
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
 | `ToolDefinition` | Tool shape passed to an agent. |
