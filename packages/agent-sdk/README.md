@@ -730,8 +730,13 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 type AgentLike<TContext = unknown> = {
   query(prompt, options?): AsyncGenerator<SDKMessage | TeamRunnerMessage>;
   prompt(prompt, options?): Promise<SDKResultMessage>;
+  interrupt(): void;
 };
 ```
+
+`interrupt()` ends the in-flight model request with an `"interrupted"` result
+(see [Interrupting A Query](#interrupting-a-query)); on a `Team` or
+`TeamRunner` it delegates to the lead/root agent. *Requires 0.16.0 or later.*
 
 That means a team can be used anywhere a callable agent is expected. From the
 outside, a team is an agent; inside, it can contain a whole organization.

@@ -184,7 +184,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `autoCompact`、`DEFAULT_COMPACTION_PROMPT`、`SDKSystemCompactionMessage` | 0.13.0 |
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`（同时加入 `AgentLike` 接口——对自定义实现方是破坏性变更）、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -194,7 +194,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | --- | --- |
 | `SDKMessage` | SDK 输出事件的 union 类型。 |
 | `AgentLikeEvent` | `AgentLike.query()` 输出的 union，包含普通 SDK 消息和团队 runtime 事件。 |
-| `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口。 |
+| `AgentLike` | `Agent` 和可调用 `Team` wrapper 都实现的最小接口：`query()`、`prompt()` 和 `interrupt()`（后者需要 0.16.0）。 |
 | `AgentSpec` | 由 `defineAgent()` 创建的 agent 模板：无状态的身份定义（名称、模型、提示词、工具、workspace 策略），附 `spawn()` 用于创建独立会话。 |
 | `AgentToolTarget` | `agentTool()` 和 `delegateTool()` 接受的联合类型：存活的 `AgentLike` 会话或 `AgentSpec` 模板。 |
 | `AgentOptions` | Agent 构造参数。 |

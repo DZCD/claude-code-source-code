@@ -661,4 +661,20 @@ describe("team", () => {
       workItemRole: "upstream_report",
     });
   });
+
+  test("team.interrupt delegates to the lead agent", () => {
+    const lead = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: { async createMessage() { return textAssistant("idle"); } },
+    });
+    const team = createTeam({ name: "engineering", lead, members: [] });
+
+    let calls = 0;
+    const original = lead.interrupt.bind(lead);
+    lead.interrupt = () => { calls++; original(); };
+    team.interrupt();
+
+    expect(calls).toBe(1);
+  });
 });

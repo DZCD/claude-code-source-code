@@ -189,7 +189,7 @@ than relying on an error.
 | `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()`, result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()` (also on the `AgentLike` interface — breaking for custom implementers), result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -200,7 +200,7 @@ package does not export it as an importable path.
 | --- | --- |
 | `SDKMessage` | Union of all emitted SDK events. |
 | `AgentLikeEvent` | Union emitted by `AgentLike.query()`, including plain SDK messages and team runtime events. |
-| `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper. |
+| `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper: `query()`, `prompt()`, and `interrupt()` (the latter requires 0.16.0). |
 | `AgentSpec` | Agent template created by `defineAgent()`: a stateless identity (name, model, prompt, tools, workspace policy) plus `spawn()` for creating independent sessions. |
 | `AgentToolTarget` | Union accepted by `agentTool()` and `delegateTool()`: a live `AgentLike` session or an `AgentSpec` template. |
 | `AgentOptions` | Agent construction options. |

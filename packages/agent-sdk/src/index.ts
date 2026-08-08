@@ -80,6 +80,8 @@ export type AgentLikeEvent = SDKMessage | TeamRunnerMessage;
 export type AgentLike<TContext = unknown> = {
   query(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): AsyncGenerator<AgentLikeEvent>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions<TContext>): Promise<SDKResultMessage>;
+  /** End the in-flight model request with an "interrupted" result; follow up with a new query(). No-op when idle. */
+  interrupt(): void;
 };
 
 export type DelegateWaitMode = "result" | "accepted";
@@ -665,6 +667,8 @@ export type Team = {
   drain(options?: TeamDrainOptions): Promise<TeamDrainResult>;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+  /** Interrupts the lead agent's in-flight model request. */
+  interrupt(): void;
 };
 
 export type TeamDrainOptions = {
@@ -691,6 +695,8 @@ export type TeamRunner = {
   mailbox: TeamMailbox;
   query(prompt: string | ContentBlock[], options?: QueryOptions): AsyncGenerator<TeamRunnerMessage>;
   prompt(prompt: string | ContentBlock[], options?: QueryOptions): Promise<SDKResultMessage>;
+  /** Interrupts the root agent's in-flight model request. */
+  interrupt(): void;
 };
 
 type AcceptedDelegateWork = {
@@ -1917,6 +1923,7 @@ export function createTeam(options: TeamOptions): Team {
       source: { kind: "root", name, team: name, mailbox: "manager" },
       ...options.runner,
     }).prompt(prompt, queryOptions),
+    interrupt: () => options.lead.interrupt(),
   };
 }
 
@@ -1942,6 +1949,7 @@ export function createTeamRunner(options: TeamRunnerOptions): TeamRunner {
   return {
     root,
     mailbox,
+    interrupt: () => root.interrupt(),
     async *query(prompt: string | ContentBlock[], queryOptions: QueryOptions = {}): AsyncGenerator<TeamRunnerMessage> {
       const queue = new AsyncMessageQueue<TeamRunnerMessage>();
       let runError: unknown;

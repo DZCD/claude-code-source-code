@@ -508,6 +508,7 @@ describe("team runner", () => {
       async prompt(): Promise<never> {
         throw new AbortError("Team run aborted");
       },
+      interrupt() {},
     };
     let workerBCalls = 0;
     const workerB = createAgent({
@@ -1074,5 +1075,21 @@ describe("team runner", () => {
       type: "result",
       result: "CEO final",
     });
+  });
+
+  test("runner.interrupt delegates to the root agent", () => {
+    const root = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: { async createMessage() { return textAssistant("idle"); } },
+    });
+    const runner = createTeamRunner({ root });
+
+    let calls = 0;
+    const original = root.interrupt.bind(root);
+    root.interrupt = () => { calls++; original(); };
+    runner.interrupt();
+
+    expect(calls).toBe(1);
   });
 });
