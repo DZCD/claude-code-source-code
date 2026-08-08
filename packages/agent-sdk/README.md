@@ -334,6 +334,29 @@ const result = await agent.prompt("What is 2+2?");
 console.log(result.result);
 ```
 
+## End The Run From A Tool
+
+*Requires 0.16.0 or later.*
+
+A tool that has the final answer can end the run itself by returning
+`endTurn: true`. The SDK finishes with `subtype: "success"` and uses that
+tool's text content as the result, without calling the model again:
+
+```ts
+const finish = tool(
+  "finish",
+  "Submit the final answer and end the run",
+  z.object({ answer: z.string() }),
+  async ({ answer }) => ({ content: answer, endTurn: true }),
+);
+```
+
+`endTurn` does not cancel the other tools of the same batch — they already
+started concurrently, their `tool_result` blocks still enter the history, and
+`onToolResult` hooks and trace events run for them as usual. Only the next
+model call is skipped. When several tools in a batch set `endTurn`, the first
+one's content becomes the result text.
+
 ## Concurrent Tool Calls
 
 The model requests concurrency by returning multiple `tool_use` blocks in one

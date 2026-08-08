@@ -29,6 +29,10 @@ const result = await agent.prompt("What kind of project is this?");
 
 `maxTurns` defaults to `50` and protects the host application from infinite tool loops. It counts model requests. Tool executions, permission callbacks, and stream events do not increment it. When the limit is reached, the SDK emits a result with `subtype: "error_max_turns"`.
 
+A tool can also end the loop itself: when any tool in a batch returns `endTurn: true`, the SDK still records every `tool_result` of that batch and then finishes with `subtype: "success"` — step 6 stops without another model request, and the tool's content becomes the result text.
+
+*Requires 0.16.0 or later.*
+
 ## One Agent holds one conversation
 
 *Requires 0.10.0 or later.*

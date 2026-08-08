@@ -37,10 +37,29 @@ The SDK converts Zod schemas to JSON Schema for the model and parses tool input 
 ```ts
 type ToolResult = {
   content: string | ContentBlock[];
+  /** End the run after this tool batch: finish with subtype "success" instead of calling the model again. */
+  endTurn?: boolean;
 };
 ```
 
 If a tool handler throws, the SDK returns an error `tool_result` to the model instead of crashing the entire loop.
+
+## End the run from a tool
+
+*Requires 0.16.0 or later.*
+
+A tool that has the final answer can end the run itself by returning `endTurn: true`. The SDK finishes with `subtype: "success"` and uses that tool's text content as the result, without calling the model again:
+
+```ts
+const finish = tool(
+  "finish",
+  "Submit the final answer and end the run",
+  z.object({ answer: z.string() }),
+  async ({ answer }) => ({ content: answer, endTurn: true }),
+);
+```
+
+`endTurn` does not cancel the other tools of the same batch — they already started concurrently, their `tool_result` blocks still enter the history, and `onToolResult` hooks and trace events run for them as usual. Only the next model call is skipped. When several tools in a batch set `endTurn`, the first one's content becomes the result text.
 
 ## Run independent tools concurrently
 

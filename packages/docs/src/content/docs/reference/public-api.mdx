@@ -177,7 +177,7 @@ than relying on an error.
 | `autoCompact`, `DEFAULT_COMPACTION_PROMPT`, `SDKSystemCompactionMessage` | 0.13.0 |
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn` | 0.16.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -212,6 +212,7 @@ package does not export it as an importable path.
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
 | `ToolDefinition` | Tool shape passed to an agent. |
+| `ToolResult` | Tool handler return value: `content` plus optional `endTurn`, which ends the run with `subtype: "success"` after the batch instead of calling the model again. |
 | `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check. |
 | `ToolConcurrencyMode` | Tool scheduling mode: `"safe"`, `"all"`, or `"sequential"`. |
 | `ToolConcurrencyOptions` | Agent tool scheduling mode and positive `maxConcurrency` limit. |

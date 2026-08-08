@@ -48,6 +48,23 @@ return { content: "done" };
 
 `content` 可以是字符串，也可以是内容块数组。工具抛错时，SDK 会把错误转成 `is_error: true` 的 `tool_result`，让模型有机会解释或选择其它路径。
 
+## 从工具里结束整个运行
+
+*需要 0.16.0 及以上版本。*
+
+拿到最终答案的工具可以返回 `endTurn: true` 直接结束运行：SDK 以 `subtype: "success"` 收尾，把该工具的文本内容作为结果，不再发起下一轮模型调用：
+
+```ts
+const finish = tool(
+  "finish",
+  "Submit the final answer and end the run",
+  z.object({ answer: z.string() }),
+  async ({ answer }) => ({ content: answer, endTurn: true }),
+);
+```
+
+`endTurn` 不会取消同批次的其他工具——它们已经并发启动，其 `tool_result` 照常进入历史，`onToolResult` hook 和 trace 事件也照常执行，只是跳过了下一轮模型调用。同一批次多个工具都设置 `endTurn` 时，取第一个工具的内容作为结果文本。
+
 ## 并发执行互不依赖的工具
 
 *需要 0.9.25 及以上版本。*

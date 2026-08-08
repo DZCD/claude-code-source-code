@@ -55,6 +55,7 @@ export type ToolResultBlock = {
 type ToolExecutionOutcome = {
   block: ToolResultBlock;
   error?: Error;
+  endTurn?: boolean;
 };
 export type ThinkingBlock = {
   type: "thinking";
@@ -306,6 +307,8 @@ export interface ModelClient {
 
 export type ToolResult = {
   content: string | ContentBlock[];
+  /** End the run after this tool batch: finish with subtype "success" instead of calling the model again. */
+  endTurn?: boolean;
 };
 
 export type ToolKind = "tool" | "agent_tool";
@@ -2582,6 +2585,27 @@ export class Agent<TContext = unknown> {
         yield result;
         return;
       }
+
+      // A tool asked to end the run: every result of the batch is already in
+      // history and reported above; only the next model call is skipped.
+      const endTurnOutcome = executionResults.find(result => result.endTurn);
+      if (endTurnOutcome) {
+        const result = this.resultMessage(
+          "success",
+          toolResultText(endTurnOutcome.block.content),
+          turns,
+          undefined,
+          totals,
+        );
+        await emitTraceEvent(tracer, {
+          ...traceBase,
+          type: "result",
+          data: traceResultData(result),
+        });
+        await flushTracer(tracer);
+        yield result;
+        return;
+      }
     }
   }
 
@@ -2805,6 +2829,7 @@ export class Agent<TContext = unknown> {
           tool_use_id: block.id,
           content: output.content,
         },
+        ...(output.endTurn ? { endTurn: true } : {}),
       };
     } catch (error) {
       if (error instanceof ToolPermissionDeniedError) {
@@ -4765,6 +4790,14 @@ function isContentBlock(block: ContentBlock | undefined): block is ContentBlock 
 
 function extractText(message: AssistantModelMessage): string {
   return message.content
+    .filter((block): block is TextBlock => block.type === "text")
+    .map(block => block.text)
+    .join("");
+}
+
+function toolResultText(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content;
+  return content
     .filter((block): block is TextBlock => block.type === "text")
     .map(block => block.text)
     .join("");

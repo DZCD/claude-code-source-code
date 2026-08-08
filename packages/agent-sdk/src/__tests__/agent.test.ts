@@ -1884,6 +1884,98 @@ describe("agent-sdk", () => {
     );
   });
 
+  test("endTurn finishes the run with the tool's content as the result", async () => {
+    let calls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("finish", "Ends the run", z.object({}), async () => ({ content: "all done here", endTurn: true }))],
+      modelClient: {
+        async createMessage() {
+          calls++;
+          return {
+            ...toolUseAssistant("toolu_1", "finish", {}),
+            usage: { input_tokens: 100, output_tokens: 10 },
+          };
+        },
+      },
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(calls).toBe(1);
+    expect(result.subtype).toBe("success");
+    expect(result.result).toBe("all done here");
+    expect(result.num_turns).toBe(1);
+    expect(result.usage.input_tokens).toBe(100);
+    expect(result.usage.output_tokens).toBe(10);
+  });
+
+  test("endTurn keeps the whole batch in history before ending", async () => {
+    const trace: ContextTraceEvent[] = [];
+    let calls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [
+        tool("lookup", "Looks something up", z.object({}), async () => ({ content: "42" })),
+        tool("finish", "Ends the run", z.object({}), async () => ({ content: "answer is 42", endTurn: true })),
+      ],
+      modelClient: {
+        async createMessage() {
+          calls++;
+          return toolUseBatchAssistant([
+            { id: "toolu_1", name: "lookup" },
+            { id: "toolu_2", name: "finish" },
+          ]);
+        },
+      },
+    });
+
+    const result = await agent.prompt("go", { tracer: { onEvent(event) { trace.push(event); } } });
+
+    expect(calls).toBe(1);
+    expect(result.subtype).toBe("success");
+    expect(result.result).toBe("answer is 42");
+    // Both tool results were recorded in history and traced like any batch.
+    const userMessage = trace.findLast(event => event.type === "user_message");
+    const serialized = JSON.stringify(userMessage?.data);
+    expect(serialized).toContain("toolu_1");
+    expect(serialized).toContain("toolu_2");
+    expect(serialized).toContain("42");
+    expect(serialized).toContain("answer is 42");
+    expect(trace.filter(event => event.type === "tool_result")).toHaveLength(2);
+  });
+
+  test("onToolResult still runs for an endTurn tool", async () => {
+    const seen: string[] = [];
+    let calls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      tools: [tool("finish", "Ends the run", z.object({}), async () => ({ content: "raw answer", endTurn: true }))],
+      hooks: {
+        onToolResult({ toolName, result }) {
+          seen.push(toolName);
+          return { ...result, content: "polished answer" };
+        },
+      },
+      modelClient: {
+        async createMessage() {
+          calls++;
+          return toolUseAssistant("toolu_1", "finish", {});
+        },
+      },
+    });
+
+    const result = await agent.prompt("go");
+
+    expect(calls).toBe(1);
+    expect(seen).toEqual(["finish"]);
+    // The result text reflects the hook's rewrite, since it runs before the run ends.
+    expect(result.result).toBe("polished answer");
+  });
+
   test("onModelRequest shapes the request without editing stored history", async () => {
     const sentCounts: number[] = [];
     let turn = 0;

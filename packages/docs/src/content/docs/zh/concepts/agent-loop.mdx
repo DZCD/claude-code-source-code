@@ -16,6 +16,10 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 5. SDK 把工具结果作为 `tool_result` 回填给模型。
 6. 模型继续推理，直到没有新的工具调用，或达到 `maxTurns`。
 
+工具也可以主动结束循环：批次中任一工具返回 `endTurn: true` 时，SDK 仍会把该批次的全部 `tool_result` 写入历史，然后直接以 `subtype: "success"` 收尾——第 6 步不再发起模型请求，该工具的内容成为结果文本。
+
+*需要 0.16.0 及以上版本。*
+
 ## 内存态会话
 
 同一个 `Agent` 实例会在内存里保存 conversation messages：

@@ -172,7 +172,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `autoCompact`、`DEFAULT_COMPACTION_PROMPT`、`SDKSystemCompactionMessage` | 0.13.0 |
 | 溢出后的压缩兜底恢复、`model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
-| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model` | 0.16.0 |
+| `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn` | 0.16.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -206,6 +206,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
+| `ToolResult` | 工具 handler 的返回值：`content` 加可选的 `endTurn`——设置后该批次结束后以 `subtype: "success"` 收尾，不再调用模型。 |
 | `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`。 |
 | `ToolConcurrencyMode` | 工具调度模式：`"safe"`、`"all"` 或 `"sequential"`。 |
 | `ToolConcurrencyOptions` | Agent 的工具调度模式和正整数 `maxConcurrency` 上限。 |
