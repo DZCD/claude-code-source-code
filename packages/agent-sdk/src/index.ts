@@ -2679,6 +2679,7 @@ class Agent<TContext = unknown> {
       // front, so a trace shows when each tool really began and which calls
       // overlapped.
       const startToolExecution = async (block: ToolUseBlock): Promise<void> => {
+        const description = this.options.tools?.find(tool => tool.name === block.name)?.description;
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "tool_use",
@@ -2686,6 +2687,7 @@ class Agent<TContext = unknown> {
             id: block.id,
             name: block.name,
             input: block.input,
+            ...(description ? { description } : {}),
           },
         });
       };
@@ -5315,6 +5317,9 @@ async function startLangSmithToolRun(
       sdk_event_type: "tool_use",
       tool_use_id: toolUseId,
       tool_name: toolName,
+      ...(typeof event.data.description === "string"
+        ? { tool_description: event.data.description }
+        : {}),
     }),
     tags: langSmithTags(event, options, ["run:tool", `tool:${toolName}`]),
   });

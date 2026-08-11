@@ -137,7 +137,8 @@ LangSmith 会收到这样的投影：
 
 每个 run 的耗时对应真实的执行时间。`tool` run 从该工具的 handler 真正开始时计时，
 所以串行调用在时间轴上依次排开，并发调用才会重叠。`llm` run 在模型请求结束时收尾，
-不包含宿主消费流式事件所花的时间。
+不包含宿主消费流式事件所花的时间。`tool` run 还会把工具的 `description` 放进
+`tool_description` metadata，trace 里能看到工具被声明成做什么，而不只是输入输出。
 
 可以用 `createCompositeContextTracer()` 把同一份 trace stream 同时发送到多个
 sink：
@@ -164,7 +165,7 @@ composite tracer；它会把 `close()` 转发给每个子 tracer。
 | `user_message` | 加入模型上下文的用户消息或工具结果消息。 |
 | `model_request` | 模型请求上下文，包括选中的 messages、tools 和 stream 模式。 |
 | `assistant_message` | 模型客户端返回的 assistant message。 |
-| `tool_use` | Assistant 请求的工具调用。 |
+| `tool_use` | Assistant 请求的工具调用，包含工具的 `description`（0.17.0 起）。 |
 | `tool_result` | SDK 产生并回填给模型的工具结果。 |
 | `result` | 本次 query 的最终结果，包括成功和错误 subtype。 |
 
