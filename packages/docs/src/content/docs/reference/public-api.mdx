@@ -203,7 +203,7 @@ than relying on an error.
 | Compaction recovery after an overflow, `model_context_window_exceeded` | 0.14.0 |
 | `defineAgent()`, `AgentSpec`, `AgentToolTarget`, `isAgentSpec()`, `AgentSpec` targets for `agentTool()`/`delegateTool()` | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`, `AssistantModelMessage.model`, `ToolResult.endTurn`, `Agent.interrupt()` (also on the `AgentLike` interface — breaking for custom implementers), result subtype `interrupted`, `AgentOptions.historyStore`, `HistoryStore`, `createJsonlHistoryStore`, `Agent.getHistory()` | 0.16.0 |
-| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available), `createLangSmithContextTracer()` defaults to the bundled `RunTree` | 0.17.0 |
+| `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available), `createLangSmithContextTracer()` defaults to the bundled `RunTree`, `tool_use` trace events carry the tool `description` | 0.17.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

@@ -140,7 +140,9 @@ LangSmith receives:
 Each run's duration reflects the work itself. A `tool` run starts when that
 handler starts, so sequential calls appear one after another and concurrent
 calls overlap. An `llm` run ends when the model request settles, not when the
-host finishes consuming the events yielded from it.
+host finishes consuming the events yielded from it. Tool runs carry the tool's
+`description` as `tool_description` metadata, so a trace shows what the tool
+was advertised to do, not only its input and output.
 
 Use `createCompositeContextTracer()` to send the same trace stream to multiple
 sinks:
@@ -166,7 +168,7 @@ same `finally` block; it forwards `close()` to every child tracer.
 | `user_message` | User prompt or tool-result message added to the model context. |
 | `model_request` | Model request context, including selected messages, tools, and stream mode. |
 | `assistant_message` | Assistant message returned by the model client. |
-| `tool_use` | Tool call requested by the assistant. |
+| `tool_use` | Tool call requested by the assistant, including the tool's `description` (since 0.17.0). |
 | `tool_result` | Tool result produced by the SDK and sent back to the model. |
 | `result` | Final query result, including success and error subtypes. |
 

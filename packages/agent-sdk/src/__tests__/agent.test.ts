@@ -1388,6 +1388,7 @@ describe("agent-sdk", () => {
       metadata: {
         tool_use_id: "toolu_1",
         tool_name: "calculator",
+        tool_description: "Calculate",
       },
     });
     expect(root?.outputs).toMatchObject({
