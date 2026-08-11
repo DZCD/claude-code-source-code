@@ -140,9 +140,15 @@ const result = await agent.prompt("Solve this carefully.", {
 
 Use `{ type: "adaptive" }` for models that support adaptive thinking. Use
 `{ type: "enabled", budgetTokens }` for models that require a fixed budget, or
-`{ type: "disabled" }` to omit thinking from the provider request. A fixed
+`{ type: "disabled" }` to turn thinking off. A fixed
 budget is capped at `maxTokens - 1` to satisfy the Anthropic API constraint.
 When omitted, the SDK does not send a thinking configuration.
+
+`{ type: "disabled" }` is sent to the provider explicitly as
+`thinking: { "type": "disabled" }` rather than omitted, because some
+Anthropic-compatible providers (for example DeepSeek's
+`https://api.deepseek.com/anthropic` endpoint) default thinking to on —
+omitting the field would leave it enabled.
 
 For Kimi K3 through an Anthropic-compatible endpoint or gateway, use
 `reasoningEffort` to send the provider's top-level `reasoning_effort` parameter:

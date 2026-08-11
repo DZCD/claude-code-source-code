@@ -2846,6 +2846,43 @@ describe("agent-sdk", () => {
     }
   });
 
+  test("Anthropic client sends explicit disabled thinking config", async () => {
+    let requestBody: any;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestBody = await request.json();
+        return Response.json({
+          id: "msg_no_thinking",
+          type: "message",
+          role: "assistant",
+          model: "claude-test",
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      },
+    });
+
+    try {
+      const agent = createAgent({
+        apiKey: "test-key",
+        baseURL: `http://127.0.0.1:${server.port}`,
+        model: "claude-test",
+        thinkingConfig: { type: "disabled" },
+      });
+
+      await agent.prompt("No thinking.", { stream: false });
+
+      // Providers like DeepSeek default thinking to on, so "disabled" must be
+      // sent explicitly rather than omitted from the request.
+      expect(requestBody.thinking).toEqual({ type: "disabled" });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("Anthropic-compatible client serializes Kimi reasoning effort", async () => {
     let requestBody: any;
     const server = Bun.serve({

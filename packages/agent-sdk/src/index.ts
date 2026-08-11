@@ -3420,7 +3420,7 @@ class AnthropicModelClient implements ModelClient {
           input_schema: tool.input_schema,
         })) as never,
         ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
-        ...(request.thinkingConfig && request.thinkingConfig.type !== "disabled"
+        ...(request.thinkingConfig
           ? { thinking: toAnthropicThinkingConfig(request.thinkingConfig, request.maxTokens) }
           : {}),
         ...(request.reasoningEffort
@@ -3622,9 +3622,14 @@ function toAnthropicOutputFormat(outputFormat: OutputFormat): BetaJSONOutputForm
 }
 
 function toAnthropicThinkingConfig(
-  thinkingConfig: Exclude<ThinkingConfig, { type: "disabled" }>,
+  thinkingConfig: ThinkingConfig,
   maxTokens: number,
 ): Record<string, unknown> {
+  if (thinkingConfig.type === "disabled") {
+    // Sent explicitly rather than omitted: some Anthropic-compatible
+    // providers (e.g. DeepSeek) default thinking to on.
+    return { type: "disabled" };
+  }
   if (thinkingConfig.type === "adaptive") {
     return { type: "adaptive" };
   }
