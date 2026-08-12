@@ -21,6 +21,18 @@ import type {
   RunTree,
   RunTreeConfig,
 } from "langsmith/run_trees";
+import {
+  LangfuseOtelSpanAttributes,
+  startObservation as bundledLangfuseStartObservation,
+} from "@langfuse/tracing";
+import type {
+  LangfuseChain,
+  LangfuseGeneration,
+  LangfuseGenerationAttributes,
+  LangfuseObservation,
+  LangfuseSpanAttributes,
+  LangfuseTool,
+} from "@langfuse/tracing";
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
@@ -255,6 +267,31 @@ export type LangSmithContextTracerOptions = {
   client?: LangSmithRunTreeConfig["client"];
   tags?: string[];
   metadata?: LangSmithKVMap;
+  redact?: (event: ContextTraceEvent) => ContextTraceEvent | undefined;
+  failOnError?: boolean;
+};
+
+export type LangfuseKVMap = Record<string, unknown>;
+
+export type LangfuseObservationLike = LangfuseObservation;
+export type LangfuseChainLike = LangfuseChain;
+export type LangfuseGenerationLike = LangfuseGeneration;
+export type LangfuseToolLike = LangfuseTool;
+export type LangfuseStartObservation = typeof bundledLangfuseStartObservation;
+
+/** Drained by the Langfuse tracer's flush()/close(); a LangfuseSpanProcessor satisfies this. */
+export type LangfuseFlushableSpanProcessor = {
+  forceFlush(): Promise<void>;
+};
+
+export type LangfuseContextTracerOptions = {
+  /** Defaults to the bundled @langfuse/tracing startObservation; inject a compatible function for custom runtimes or tests. */
+  startObservation?: LangfuseStartObservation;
+  /** Span processor drained on flush()/close() — pass the LangfuseSpanProcessor registered with your OpenTelemetry setup. */
+  spanProcessor?: LangfuseFlushableSpanProcessor;
+  name?: string;
+  tags?: string[];
+  metadata?: LangfuseKVMap;
   redact?: (event: ContextTraceEvent) => ContextTraceEvent | undefined;
   failOnError?: boolean;
 };
@@ -1538,6 +1575,76 @@ export function createLangSmithContextTracer(options: LangSmithContextTracerOpti
     async close() {
       await queue;
       await flushLangSmithClients(options, runs);
+    },
+  }, options.failOnError);
+}
+
+/**
+ * Langfuse trace sink built on the current @langfuse/tracing (v5) SDK. The SDK
+ * is OpenTelemetry-based: the host registers a LangfuseSpanProcessor (from
+ * @langfuse/otel) with a tracer provider, and this adapter maps context trace
+ * events onto observations — a chain per agent run, a generation per model
+ * turn, a tool observation per tool call, and event observations for
+ * everything else. Pass the registered span processor so flush()/close() can
+ * drain pending spans before a short-lived process exits.
+ */
+export function createLangfuseContextTracer(options: LangfuseContextTracerOptions = {}): ContextTracer {
+  const startObservation = options.startObservation ?? bundledLangfuseStartObservation;
+  const runs = new Map<string, LangfuseTraceRunState>();
+  let queue = Promise.resolve();
+
+  function handleEvent(rawEvent: ContextTraceEvent): void {
+    const event = options.redact ? options.redact(rawEvent) : rawEvent;
+    if (!event) return;
+
+    if (event.type === "run_start") {
+      startLangfuseRootRun(event, options, startObservation, runs);
+      return;
+    }
+
+    const state = ensureLangfuseRootRun(event, options, startObservation, runs);
+    if (event.type === "user_message") {
+      recordLangfuseUserMessage(state, event);
+      return;
+    }
+    if (event.type === "model_request") {
+      startLangfuseModelRun(state, event, options);
+      return;
+    }
+    if (event.type === "assistant_message") {
+      finishLangfuseModelRun(state, event);
+      return;
+    }
+    if (event.type === "tool_use") {
+      startLangfuseToolRun(state, event, options);
+      return;
+    }
+    if (event.type === "tool_result") {
+      finishLangfuseToolRun(state, event);
+      return;
+    }
+    if (event.type === "result") {
+      finishLangfuseRootRun(state, event);
+      return;
+    }
+    recordLangfuseRunEvent(state.root, event);
+  }
+
+  return bindFailOnError({
+    onEvent(event) {
+      queue = queue.then(
+        () => { handleEvent(event); },
+        () => { handleEvent(event); },
+      );
+      return queue;
+    },
+    async flush() {
+      await queue;
+      await options.spanProcessor?.forceFlush();
+    },
+    async close() {
+      await queue;
+      await options.spanProcessor?.forceFlush();
     },
   }, options.failOnError);
 }
@@ -5217,21 +5324,21 @@ async function startLangSmithRootRun(
 
   const parent = event.parent_run_id ? runs.get(event.parent_run_id)?.root : undefined;
   const config: LangSmithRunTreeConfig = {
-    name: options.name ?? langSmithSourceName(event.source),
+    name: options.name ?? traceSourceName(event.source),
     run_type: "chain",
     ...(isUuidLike(event.run_id) ? { id: event.run_id } : {}),
     ...(options.projectName ? { project_name: options.projectName } : {}),
     ...(parent ? { parent_run: parent } : {}),
     start_time: event.timestamp,
     inputs: {},
-    metadata: langSmithMetadata(event, options, {
+    metadata: traceMetadata(event, options, {
       model: event.data.model,
       tools: event.data.tools,
       agent_session_id: event.data.agent_session_id,
       runtime: event.data.runtime,
       team: event.data.team,
     }),
-    tags: langSmithTags(event, options),
+    tags: traceTags(event, options),
     ...langSmithConnectionConfig(options),
   };
   const root = parent ? parent.createChild(config) : makeRunTree(config);
@@ -5289,14 +5396,14 @@ async function startLangSmithModelRun(
     name: `${model} turn ${state.modelRequests}`,
     run_type: "llm",
     start_time: event.timestamp,
-    inputs: langSmithModelInputs(event.data),
-    metadata: langSmithMetadata(event, options, {
+    inputs: traceModelInputs(event.data),
+    metadata: traceMetadata(event, options, {
       sdk_event_type: "model_request",
       model: event.data.model,
       max_tokens: event.data.max_tokens,
       stream: event.data.stream,
     }),
-    tags: langSmithTags(event, options, ["run:llm"]),
+    tags: traceTags(event, options, ["run:llm"]),
   });
   state.pendingModel = run;
   await run.postRun?.(true);
@@ -5343,7 +5450,7 @@ async function startLangSmithToolRun(
     inputs: {
       input: jsonSafeValue(event.data.input),
     },
-    metadata: langSmithMetadata(event, options, {
+    metadata: traceMetadata(event, options, {
       sdk_event_type: "tool_use",
       tool_use_id: toolUseId,
       tool_name: toolName,
@@ -5351,7 +5458,7 @@ async function startLangSmithToolRun(
         ? { tool_description: event.data.description }
         : {}),
     }),
-    tags: langSmithTags(event, options, ["run:tool", `tool:${toolName}`]),
+    tags: traceTags(event, options, ["run:tool", `tool:${toolName}`]),
   });
   state.pendingTools.set(toolUseId, run);
   await run.postRun?.(true);
@@ -5474,7 +5581,7 @@ function addLangSmithClient(
   }
 }
 
-function langSmithSourceName(source: AgentRuntimeSource): string {
+function traceSourceName(source: AgentRuntimeSource): string {
   return source.name ?? source.member ?? source.team ?? source.kind;
 }
 
@@ -5497,9 +5604,9 @@ function langSmithWriteReplica(options: LangSmithContextTracerOptions): LangSmit
   };
 }
 
-function langSmithMetadata(
+function traceMetadata(
   event: ContextTraceEvent,
-  options: LangSmithContextTracerOptions,
+  options: { metadata?: LangSmithKVMap },
   extra: LangSmithKVMap = {},
 ): LangSmithKVMap {
   return {
@@ -5518,9 +5625,9 @@ function langSmithMetadata(
   };
 }
 
-function langSmithTags(
+function traceTags(
   event: ContextTraceEvent,
-  options: LangSmithContextTracerOptions,
+  options: { tags?: string[] },
   extra: string[] = [],
 ): string[] {
   const tags = new Set([
@@ -5544,7 +5651,7 @@ function jsonSafeRecord(value: unknown): LangSmithKVMap {
   return { value: safe };
 }
 
-function langSmithModelInputs(data: Record<string, unknown>): LangSmithKVMap {
+function traceModelInputs(data: Record<string, unknown>): LangSmithKVMap {
   const inputs = jsonSafeRecord(data);
   const systemPrompt = typeof inputs.systemPrompt === "string" && inputs.systemPrompt.trim()
     ? inputs.systemPrompt
@@ -5596,6 +5703,267 @@ function langSmithErrorMessage(data: Record<string, unknown>): string {
 
 function isUuidLike(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+type LangfuseTraceRunState = {
+  root: LangfuseChainLike;
+  initialInputRecorded: boolean;
+  modelRequests: number;
+  toolUses: number;
+  pendingModel?: { run: LangfuseGenerationLike; metadata: LangfuseKVMap };
+  pendingTools: Map<string, { run: LangfuseToolLike; metadata: LangfuseKVMap }>;
+};
+
+function startLangfuseRootRun(
+  event: ContextTraceEvent,
+  options: LangfuseContextTracerOptions,
+  startObservation: LangfuseStartObservation,
+  runs: Map<string, LangfuseTraceRunState>,
+): LangfuseTraceRunState {
+  const existing = runs.get(event.run_id);
+  if (existing) return existing;
+
+  const parent = event.parent_run_id ? runs.get(event.parent_run_id)?.root : undefined;
+  const name = options.name ?? traceSourceName(event.source);
+  const attributes: LangfuseSpanAttributes = {
+    input: {},
+    metadata: traceMetadata(event, options, {
+      model: event.data.model,
+      tools: event.data.tools,
+      agent_session_id: event.data.agent_session_id,
+      runtime: event.data.runtime,
+      team: event.data.team,
+    }),
+  };
+  const observationOptions = { asType: "chain" as const, startTime: new Date(event.timestamp) };
+  const root = parent
+    ? parent.startObservation(name, attributes, observationOptions)
+    : startObservation(name, attributes, observationOptions);
+  if (!parent) {
+    setLangfuseTraceAttributes(root, event, options, name);
+  }
+  const state: LangfuseTraceRunState = {
+    root,
+    initialInputRecorded: false,
+    modelRequests: 0,
+    toolUses: 0,
+    pendingTools: new Map(),
+  };
+  runs.set(event.run_id, state);
+  return state;
+}
+
+function ensureLangfuseRootRun(
+  event: ContextTraceEvent,
+  options: LangfuseContextTracerOptions,
+  startObservation: LangfuseStartObservation,
+  runs: Map<string, LangfuseTraceRunState>,
+): LangfuseTraceRunState {
+  return runs.get(event.run_id) ?? startLangfuseRootRun(
+    {
+      ...event,
+      type: "run_start",
+      data: {},
+    },
+    options,
+    startObservation,
+    runs,
+  );
+}
+
+/**
+ * Mirrors what `propagateAttributes` writes onto the active span, applied to
+ * the trace-root observation directly: this adapter receives events one at a
+ * time, outside any active OpenTelemetry context, so the callback-based
+ * propagation API cannot be used.
+ */
+function setLangfuseTraceAttributes(
+  root: LangfuseChainLike,
+  event: ContextTraceEvent,
+  options: LangfuseContextTracerOptions,
+  name: string,
+): void {
+  const span = root.otelSpan as {
+    setAttribute?: (key: string, value: unknown) => void;
+  } | undefined;
+  if (typeof span?.setAttribute !== "function") return;
+  span.setAttribute(LangfuseOtelSpanAttributes.TRACE_NAME, name);
+  span.setAttribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, event.session_id);
+  const tags = traceTags(event, options);
+  if (tags.length > 0) {
+    span.setAttribute(LangfuseOtelSpanAttributes.TRACE_TAGS, tags);
+  }
+}
+
+function recordLangfuseUserMessage(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+): void {
+  const message = event.data.message;
+  if (!state.initialInputRecorded) {
+    state.root.update({ input: { message: jsonSafeValue(message) } });
+    state.initialInputRecorded = true;
+    return;
+  }
+  recordLangfuseRunEvent(state.root, event);
+}
+
+function startLangfuseModelRun(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+  options: LangfuseContextTracerOptions,
+): void {
+  state.modelRequests++;
+  const model = typeof event.data.model === "string" ? event.data.model : undefined;
+  const metadata = traceMetadata(event, options, {
+    sdk_event_type: "model_request",
+    model: event.data.model,
+    max_tokens: event.data.max_tokens,
+    stream: event.data.stream,
+  });
+  const attributes: LangfuseGenerationAttributes = {
+    ...(model ? { model } : {}),
+    input: traceModelInputs(event.data),
+    metadata,
+  };
+  const observationOptions = { asType: "generation" as const, startTime: new Date(event.timestamp) };
+  const run = state.root.startObservation(
+    `${model ?? "model"} turn ${state.modelRequests}`,
+    attributes,
+    observationOptions,
+  );
+  state.pendingModel = { run, metadata };
+}
+
+function finishLangfuseModelRun(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+): void {
+  const pending = state.pendingModel;
+  if (!pending) {
+    recordLangfuseRunEvent(state.root, event);
+    return;
+  }
+  state.pendingModel = undefined;
+  pending.run.update({
+    output: { message: jsonSafeValue(event.data.message) },
+    metadata: {
+      ...pending.metadata,
+      sdk_end_event_type: "assistant_message",
+      sdk_end_seq: event.seq,
+    },
+  });
+  pending.run.end(new Date(event.timestamp));
+}
+
+function startLangfuseToolRun(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+  options: LangfuseContextTracerOptions,
+): void {
+  state.toolUses++;
+  const toolUseId = typeof event.data.id === "string"
+    ? event.data.id
+    : `tool_${state.toolUses}`;
+  const toolName = typeof event.data.name === "string"
+    ? event.data.name
+    : "tool";
+  const metadata = traceMetadata(event, options, {
+    sdk_event_type: "tool_use",
+    tool_use_id: toolUseId,
+    tool_name: toolName,
+    ...(typeof event.data.description === "string"
+      ? { tool_description: event.data.description }
+      : {}),
+  });
+  const observationOptions = { asType: "tool" as const, startTime: new Date(event.timestamp) };
+  const run = state.root.startObservation(
+    toolName,
+    {
+      input: { input: jsonSafeValue(event.data.input) },
+      metadata,
+    },
+    observationOptions,
+  );
+  state.pendingTools.set(toolUseId, { run, metadata });
+}
+
+function finishLangfuseToolRun(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+): void {
+  const toolUseId = typeof event.data.tool_use_id === "string"
+    ? event.data.tool_use_id
+    : undefined;
+  const pending = toolUseId ? state.pendingTools.get(toolUseId) : undefined;
+  if (!pending) {
+    recordLangfuseRunEvent(state.root, event);
+    return;
+  }
+  state.pendingTools.delete(toolUseId!);
+  const isError = event.data.is_error === true;
+  pending.run.update({
+    output: {
+      content: jsonSafeValue(event.data.content),
+      is_error: isError,
+    },
+    ...(isError
+      ? { level: "ERROR" as const, statusMessage: langfuseErrorMessage(event.data) }
+      : {}),
+    metadata: {
+      ...pending.metadata,
+      sdk_end_event_type: "tool_result",
+      sdk_end_seq: event.seq,
+    },
+  });
+  pending.run.end(new Date(event.timestamp));
+}
+
+function finishLangfuseRootRun(
+  state: LangfuseTraceRunState,
+  event: ContextTraceEvent,
+): void {
+  const isError = event.data.is_error === true;
+  state.root.update({
+    output: jsonSafeRecord(event.data),
+    ...(isError
+      ? { level: "ERROR" as const, statusMessage: langfuseErrorMessage(event.data) }
+      : {}),
+  });
+  state.root.end(new Date(event.timestamp));
+}
+
+function recordLangfuseRunEvent(
+  root: LangfuseChainLike,
+  event: ContextTraceEvent,
+): void {
+  const observationOptions = { asType: "event" as const, startTime: new Date(event.timestamp) };
+  root.startObservation(
+    event.type,
+    {
+      metadata: {
+        sdk_trace_version: event.version,
+        sdk_trace_seq: event.seq,
+        sdk_session_id: event.session_id,
+        sdk_run_id: event.run_id,
+        sdk_parent_run_id: event.parent_run_id,
+        source: jsonSafeValue(event.source),
+        data: jsonSafeValue(event.data),
+      },
+    },
+    observationOptions,
+  );
+}
+
+function langfuseErrorMessage(data: Record<string, unknown>): string {
+  const error = data.error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+  if (typeof data.result === "string" && data.result) return data.result;
+  if (typeof data.content === "string" && data.content) return data.content;
+  return "Langfuse traced SDK event marked as error";
 }
 
 const traceSequences = new WeakMap<ContextTracer, number>();

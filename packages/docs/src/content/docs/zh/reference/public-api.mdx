@@ -22,6 +22,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `connectMCPStreamableHTTPServer(url, options)` | 连接远程 Streamable HTTP MCP server，支持可选 OAuth。 |
 | `createJsonlContextTracer(options)` | 创建用于 agent 运行上下文事件的 JSONL trace sink。 |
 | `createLangSmithContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 LangSmith trace sink。 |
+| `createLangfuseContextTracer(options)` | 基于同一套 provider-agnostic 上下文事件创建 Langfuse trace sink（构建在 `@langfuse/tracing` v5 之上）。 |
 | `createCompositeContextTracer(tracers)` | 把上下文 trace 事件广播到多个 trace sink。 |
 | `defineContextTracer(impl)` | 从实现对象创建自定义 trace sink，校验 `onEvent` 并在创建时绑定 `failOnError`。 |
 | `createCompositeAgentHooks(hooks)` | 按数组顺序串联 hook，后一个收到前一个的输出。 |
@@ -176,6 +177,16 @@ LangSmith workspace，不是 project 名。如果需要完整自定义 LangSmith
 短生命周期的测试或脚本退出前，请在 `finally` 中 close 或 flush tracer，确保
 LangSmith 收到根 run 的最终 patch。
 
+`createLangfuseContextTracer()`（需要 0.19.0）通过当前的 `@langfuse/tracing`
+（v5）SDK 把同一套事件映射为 Langfuse observation：每次 agent run 一个 `chain`
+observation，每次模型调用一个 `generation`，每次工具调用一个 `tool`，辅助事件
+则是自动结束的 `event` observation。Langfuse SDK 基于 OpenTelemetry——在进程启动
+时用 tracer provider 注册 `LangfuseSpanProcessor`（来自 `@langfuse/otel`），并配置
+标准的 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` 环境变量。
+把注册好的 processor 作为 `spanProcessor` 传入，`flush()`/`close()` 就会排空
+未发送的 span，保证短生命周期进程退出前数据送达。`startObservation` 默认使用内置的
+`@langfuse/tracing` 函数；只有注入自定义 runtime 或测试替身时才需要显式传入。
+
 把 tracer 传给 `team.query()` 或 `team.prompt()` 时，一次 Team 调用只创建一个
 顶层 chain。Lead 执行、Member 执行以及 Lead 收到报告后的后续执行共享同一个
 trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 会保留在
@@ -198,6 +209,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更）、`defineContextTracer()`、`defineHistoryStore()`（破坏性变更：`failOnError` 字段从 `ContextTracer`/`HistoryStore` 端口类型移除——自定义实现方必须改用 `defineXxx` 工厂）、`Agent` 改为 type-only 导出（破坏性变更：`new Agent()` 不再可用）、`createLangSmithContextTracer()` 默认使用内置 `RunTree`、`tool_use` trace 事件携带工具 `description` | 0.17.0 |
 | `thinkingConfig: { type: "disabled" }` 显式发送 `thinking: { "type": "disabled" }` 而不再省略该字段（修复 DeepSeek 等默认开启思考的 provider） | 0.17.1 |
 | 在 `max_tokens` 处截断的响应中的工具调用不再执行；每个调用收到一条错误 `tool_result`，要求模型缩短输出后重新发起 | 0.18.0 |
+| `createLangfuseContextTracer()`、`LangfuseContextTracerOptions`、`LangfuseObservationLike`、`LangfuseChainLike`、`LangfuseGenerationLike`、`LangfuseToolLike`、`LangfuseStartObservation`、`LangfuseFlushableSpanProcessor`、`LangfuseKVMap` | 0.19.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -228,6 +240,10 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
 | `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `LangSmithContextTracerOptions` | LangSmith tracer adapter 的配置。 |
+| `LangfuseContextTracerOptions` | Langfuse tracer adapter 的配置（需要 0.19.0）。 |
+| `LangfuseObservationLike` | `@langfuse/tracing` 的 `LangfuseObservation` 联合类型别名；`LangfuseChainLike`、`LangfuseGenerationLike`、`LangfuseToolLike` 分别是具体 observation 类的别名（需要 0.19.0）。 |
+| `LangfuseStartObservation` | `@langfuse/tracing` 的 `startObservation` 函数类型别名，用于 `LangfuseContextTracerOptions.startObservation`（需要 0.19.0）。 |
+| `LangfuseFlushableSpanProcessor` | `LangfuseSpanProcessor` 所满足的最小 `forceFlush()` 形状，用于 `LangfuseContextTracerOptions.spanProcessor`（需要 0.19.0）。 |
 | `HistoryStore` | Agent 对话历史的持久化 adapter 接口：`load()`、`append(message)`、`replace(messages)`。compaction 会调用 `replace()`，所以 store 必须支持整体替换。只暴露方法——`failOnError` 由创建它的工厂绑定（`createJsonlHistoryStore` 的 options 或 `defineHistoryStore()`）。 |
 | `JsonlHistoryStoreOptions` | 内置 JSONL history store 的配置：`path` 和可选 `failOnError`。 |
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |

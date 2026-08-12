@@ -5,7 +5,7 @@ description: 记录 agent 运行、工具调用和团队委托上下文。
 
 上下文追踪让宿主应用在不改变 agent loop 的情况下观察运行过程。SDK 会通过
 很小的 `ContextTracer` 接口输出结构化事件。内置 tracer 可以把事件写成本地
-JSONL，也可以把事件投影到 LangSmith。
+JSONL，也可以把事件投影到 LangSmith 或 Langfuse。
 
 追踪是 append-only 的可观测性能力，不等于 resume。当前 `Agent` 的对话状态仍然
 只在实例生命周期内保存在内存中。
@@ -152,6 +152,82 @@ const tracer = createCompositeContextTracer([
 
 如果 composite tracer 里包含 LangSmith，也在同一个 `finally` 里 close 这个
 composite tracer；它会把 `close()` 转发给每个子 tracer。
+
+## Langfuse tracer
+
+*需要 0.19.0 及以上版本。*
+
+想让 SDK 运行以 Langfuse trace 的形式呈现时，使用
+`createLangfuseContextTracer()`。适配器面向当前的 Langfuse JS SDK
+（`@langfuse/tracing` v5），它基于 OpenTelemetry：在进程启动时注册一次
+`LangfuseSpanProcessor`，之后 tracer 开箱即用。
+
+用 Langfuse 的标准环境变量完成配置：
+
+```bash
+LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
+LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com # 或你的自建地址
+```
+
+```bash
+npm install @langfuse/otel @opentelemetry/sdk-trace-node
+```
+
+```ts
+// instrumentation：在 agent 运行前注册 span processor。
+import { LangfuseSpanProcessor } from "@langfuse/otel";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+
+export const langfuseSpanProcessor = new LangfuseSpanProcessor();
+
+const tracerProvider = new NodeTracerProvider({
+  spanProcessors: [langfuseSpanProcessor],
+});
+tracerProvider.register();
+```
+
+```ts
+import { createAgent, createLangfuseContextTracer } from "agent-lattice";
+import { langfuseSpanProcessor } from "./instrumentation";
+
+const tracer = createLangfuseContextTracer({
+  // tracer.flush()/close() 会排空它，保证短生命周期进程退出前
+  // span 已送达 Langfuse。
+  spanProcessor: langfuseSpanProcessor,
+  tags: ["local-debug"],
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
+```
+
+`startObservation` 默认使用内置的 `@langfuse/tracing` 函数；只有在注入自定义
+运行时或测试替身时才需要显式传入。
+
+Langfuse 每次 SDK 查询收到一条 trace：
+
+| SDK 事件序列 | Langfuse 投影 |
+| --- | --- |
+| `run_start` 到 `result` | `chain` observation；没有 `parent_run_id` 时是 trace 根节点，否则嵌套在另一个 chain 下。 |
+| `model_request` 到 `assistant_message` | 子级 `generation` observation，带 `model` 属性。 |
+| `tool_use` 到 `tool_result` | 子级 `tool` observation。 |
+| `team_message` 等其他辅助事件 | 挂在当前 chain 上的自动结束 `event` observation。 |
+
+trace 根 observation 携带 trace 名称、`session.id` 和 `langfuse.trace.tags`
+属性——与 `propagateAttributes` 写到活跃 span 上的属性一致——因此在 Langfuse
+UI 里 trace 仍然可以按会话和标签聚合、筛选。出错的 result 和工具错误会把
+observation 的 `level` 置为 `ERROR` 并附上 `statusMessage`。
 
 ## 事件类型
 
