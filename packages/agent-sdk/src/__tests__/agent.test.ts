@@ -16,6 +16,7 @@ import {
   createCompositeContextTracer,
   createJsonlContextTracer,
   createLangSmithContextTracer,
+  createLangfuseContextTracer,
   createTeam,
   defineContextTracer,
   teamMember,
@@ -196,6 +197,101 @@ class FakeRunTree {
     FakeRunTree.runs = [];
     FakeRunTree.operations = [];
   }
+}
+
+type FakeLangfuseObservationAttributes = Record<string, unknown> & {
+  metadata?: Record<string, unknown>;
+};
+
+class FakeLangfuseObservation {
+  static observations: FakeLangfuseObservation[] = [];
+
+  name: string;
+  type: string;
+  attributes: FakeLangfuseObservationAttributes;
+  parent?: FakeLangfuseObservation;
+  children: FakeLangfuseObservation[] = [];
+  startTime?: Date;
+  ended: boolean;
+  endTime?: Date;
+  otelSpan: {
+    attributes: Record<string, unknown>;
+    setAttribute(key: string, value: unknown): void;
+  };
+
+  constructor(
+    name: string,
+    type: string,
+    attributes: FakeLangfuseObservationAttributes = {},
+    startTime?: Date,
+    parent?: FakeLangfuseObservation,
+  ) {
+    this.name = name;
+    this.type = type;
+    this.attributes = attributes;
+    this.startTime = startTime;
+    this.parent = parent;
+    // LangfuseEvent observations are auto-ended by the real SDK.
+    this.ended = type === "event";
+    this.otelSpan = {
+      attributes: {},
+      setAttribute: (key, value) => {
+        this.otelSpan.attributes[key] = value;
+      },
+    };
+    FakeLangfuseObservation.observations.push(this);
+  }
+
+  startObservation(
+    name: string,
+    attributes: FakeLangfuseObservationAttributes = {},
+    options: { asType?: string; startTime?: Date } = {},
+  ): FakeLangfuseObservation {
+    const child = new FakeLangfuseObservation(
+      name,
+      options.asType ?? "span",
+      attributes,
+      options.startTime,
+      this,
+    );
+    this.children.push(child);
+    return child;
+  }
+
+  update(attributes: FakeLangfuseObservationAttributes): FakeLangfuseObservation {
+    // The real SDK flattens metadata per key, so a later update merges into
+    // the metadata written at creation rather than replacing it wholesale.
+    this.attributes = {
+      ...this.attributes,
+      ...attributes,
+      metadata: attributes.metadata
+        ? { ...(this.attributes.metadata ?? {}), ...attributes.metadata }
+        : this.attributes.metadata,
+    };
+    return this;
+  }
+
+  end(endTime?: Date): void {
+    this.ended = true;
+    this.endTime = endTime;
+  }
+
+  static reset(): void {
+    FakeLangfuseObservation.observations = [];
+  }
+}
+
+function fakeLangfuseStartObservation(
+  name: string,
+  attributes?: FakeLangfuseObservationAttributes,
+  options: { asType?: string; startTime?: Date } = {},
+): FakeLangfuseObservation {
+  return new FakeLangfuseObservation(
+    name,
+    options.asType ?? "span",
+    attributes,
+    options.startTime,
+  );
 }
 
 describe("agent-sdk", () => {
@@ -1424,6 +1520,252 @@ describe("agent-sdk", () => {
         workspaceId: "workspace-123",
       },
     ]);
+  });
+
+  test("createLangfuseContextTracer constructs without a registered span processor", () => {
+    expect(() => createLangfuseContextTracer()).not.toThrow();
+  });
+
+  test("maps agent context trace events to Langfuse chain and generation observations", async () => {
+    FakeLangfuseObservation.reset();
+    const tracer = createLangfuseContextTracer({
+      startObservation: fakeLangfuseStartObservation as never,
+      tags: ["test-suite"],
+      metadata: { environment: "test" },
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "researcher",
+      model: "claude-test",
+      systemPrompt: "You are the research lead. Keep answers concise.",
+      modelClient: clientFromResponses([textAssistant("hello")]),
+    });
+
+    await collect(agent.query("Say hello", { stream: false, tracer }));
+    await tracer.flush?.();
+
+    const root = FakeLangfuseObservation.observations.find(observation => observation.type === "chain");
+    const generation = FakeLangfuseObservation.observations.find(observation => observation.type === "generation");
+    expect(root).toMatchObject({
+      name: "researcher",
+      type: "chain",
+      ended: true,
+      attributes: {
+        input: {
+          message: {
+            role: "user",
+            content: "Say hello",
+          },
+        },
+        output: {
+          subtype: "success",
+          result: "hello",
+        },
+        metadata: {
+          environment: "test",
+          sdk_session_id: expect.any(String),
+          sdk_run_id: expect.any(String),
+          sdk_source_kind: "agent",
+          sdk_source_name: "researcher",
+          model: "claude-test",
+        },
+      },
+    });
+    expect(root?.otelSpan.attributes).toMatchObject({
+      "langfuse.trace.name": "researcher",
+      "session.id": expect.any(String),
+    });
+    expect(root?.otelSpan.attributes["langfuse.trace.tags"]).toEqual(expect.arrayContaining([
+      "agent-lattice",
+      "test-suite",
+      "source:agent",
+    ]));
+    expect(generation).toMatchObject({
+      type: "generation",
+      parent: root,
+      ended: true,
+      attributes: {
+        model: "claude-test",
+        input: {
+          model: "claude-test",
+          systemPrompt: expect.stringContaining("You are the research lead. Keep answers concise."),
+          messages: [
+            {
+              role: "system",
+              content: expect.stringContaining("You are the research lead. Keep answers concise."),
+            },
+            {
+              role: "user",
+              content: "Say hello",
+            },
+          ],
+          stream: false,
+        },
+        output: {
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "hello" }],
+          },
+        },
+        metadata: {
+          sdk_event_type: "model_request",
+          sdk_end_event_type: "assistant_message",
+        },
+      },
+    });
+  });
+
+  test("maps one team handoff invocation to one Langfuse trace root chain", async () => {
+    FakeLangfuseObservation.reset();
+    const tracer = createLangfuseContextTracer({
+      startObservation: fakeLangfuseStartObservation as never,
+    });
+    const member = createAgent({
+      apiKey: "test-key",
+      name: "worker",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("Worker completed")]),
+    });
+    let leadCalls = 0;
+    const lead = createAgent({
+      apiKey: "test-key",
+      name: "lead",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          leadCalls++;
+          return leadCalls === 1
+            ? toolUseAssistant("toolu_worker", "worker", {
+              mode: "handoff",
+              task: "Complete the delegated work",
+            })
+            : textAssistant("Team completed");
+        },
+      },
+    });
+    const team = createTeam({
+      name: "trace-team",
+      lead,
+      members: [
+        teamMember({ name: "worker", role: "executor", agent: member }),
+      ],
+    });
+
+    for await (const _message of team.query("Run the team.", {
+      stream: false,
+      tracer,
+    })) {
+      // Consume the complete team invocation before inspecting the observation tree.
+    }
+    await tracer.flush?.();
+
+    const chains = FakeLangfuseObservation.observations.filter(observation => observation.type === "chain");
+    const roots = chains.filter(observation => !observation.parent);
+    expect(roots).toHaveLength(1);
+    expect(roots[0]).toMatchObject({
+      name: "trace-team",
+      ended: true,
+      attributes: {
+        metadata: {
+          runtime: "team",
+          team: "trace-team",
+        },
+        output: {
+          subtype: "success",
+          result: "Team completed",
+        },
+      },
+    });
+    const childChains = chains.filter(observation => observation.parent === roots[0]);
+    expect(childChains).toHaveLength(3);
+    // Trace-level attributes live on the trace root only.
+    expect(roots[0]?.otelSpan.attributes["langfuse.trace.name"]).toBe("trace-team");
+    for (const child of childChains) {
+      expect(child.otelSpan.attributes["langfuse.trace.name"]).toBeUndefined();
+    }
+    const rootMetadata = chains.map(observation => observation.attributes.metadata!);
+    expect(new Set(rootMetadata.map(metadata => metadata.sdk_session_id)).size).toBe(1);
+    expect(new Set(
+      childChains.map(observation => observation.attributes.metadata!.agent_session_id),
+    ).size).toBe(2);
+  });
+
+  test("maps SDK tool use events to Langfuse tool observations without agent loop changes", async () => {
+    FakeLangfuseObservation.reset();
+    const tracer = createLangfuseContextTracer({
+      startObservation: fakeLangfuseStartObservation as never,
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([
+        toolUseAssistant("toolu_1", "calculator", { expr: "2+2" }),
+        textAssistant("The answer is 4"),
+      ]),
+      tools: [
+        tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => ({
+          content: "4",
+        })),
+      ],
+    });
+
+    await collect(agent.query("What is 2+2?", { stream: false, tracer }));
+    await tracer.flush?.();
+
+    const root = FakeLangfuseObservation.observations.find(observation => observation.type === "chain");
+    const toolObservation = FakeLangfuseObservation.observations.find(observation => observation.type === "tool");
+    const generations = FakeLangfuseObservation.observations.filter(observation => observation.type === "generation");
+    expect(generations).toHaveLength(2);
+    expect(toolObservation).toMatchObject({
+      name: "calculator",
+      type: "tool",
+      parent: root,
+      ended: true,
+      attributes: {
+        input: {
+          input: { expr: "2+2" },
+        },
+        output: {
+          content: "4",
+          is_error: false,
+        },
+        metadata: {
+          tool_use_id: "toolu_1",
+          tool_name: "calculator",
+          tool_description: "Calculate",
+          sdk_end_event_type: "tool_result",
+        },
+      },
+    });
+    expect(root?.attributes.output).toMatchObject({
+      subtype: "success",
+      result: "The answer is 4",
+    });
+  });
+
+  test("drains the Langfuse span processor on close", async () => {
+    FakeLangfuseObservation.reset();
+    const flushes: string[] = [];
+    const tracer = createLangfuseContextTracer({
+      startObservation: fakeLangfuseStartObservation as never,
+      spanProcessor: {
+        async forceFlush() {
+          flushes.push("forceFlush");
+        },
+      },
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      name: "close-drain-check",
+      model: "claude-test",
+      modelClient: clientFromResponses([textAssistant("done")]),
+    });
+
+    await collect(agent.query("Trace then close", { stream: false, tracer }));
+    flushes.length = 0;
+    await tracer.close?.();
+
+    expect(flushes).toEqual(["forceFlush"]);
   });
 
   test("passes systemPrompt to the model client", async () => {

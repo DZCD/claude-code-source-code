@@ -5,7 +5,8 @@ description: Record context traces for agent runs, tool calls, and delegated tea
 
 Context tracing lets a host observe an agent run without changing the agent loop.
 The SDK emits structured trace events through a small `ContextTracer` interface.
-Built-in tracers can write JSONL locally or project those events into LangSmith.
+Built-in tracers can write JSONL locally or project those events into LangSmith
+or Langfuse.
 
 Tracing is append-only observability. It is not resume support: agents still keep
 conversation state in memory for the lifetime of the `Agent` instance.
@@ -159,6 +160,84 @@ const tracer = createCompositeContextTracer([
 
 When a composite tracer contains LangSmith, close the composite tracer in the
 same `finally` block; it forwards `close()` to every child tracer.
+
+## Langfuse tracer
+
+*Requires 0.19.0 or later.*
+
+Use `createLangfuseContextTracer()` when you want SDK runs to appear as
+Langfuse traces. The adapter targets the current Langfuse JS SDK generation
+(`@langfuse/tracing` v5), which is OpenTelemetry-based: register the
+`LangfuseSpanProcessor` once at process startup, and the tracer works out of
+the box from then on.
+
+Configure Langfuse with its standard environment variables:
+
+```bash
+LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
+LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com # or your self-hosted host
+```
+
+```bash
+npm install @langfuse/otel @opentelemetry/sdk-trace-node
+```
+
+```ts
+// instrumentation: register the span processor before agents run.
+import { LangfuseSpanProcessor } from "@langfuse/otel";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+
+export const langfuseSpanProcessor = new LangfuseSpanProcessor();
+
+const tracerProvider = new NodeTracerProvider({
+  spanProcessors: [langfuseSpanProcessor],
+});
+tracerProvider.register();
+```
+
+```ts
+import { createAgent, createLangfuseContextTracer } from "agent-lattice";
+import { langfuseSpanProcessor } from "./instrumentation";
+
+const tracer = createLangfuseContextTracer({
+  // Drained by tracer.flush()/close() so spans reach Langfuse before a
+  // short-lived process exits.
+  spanProcessor: langfuseSpanProcessor,
+  tags: ["local-debug"],
+});
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
+```
+
+`startObservation` defaults to the bundled `@langfuse/tracing` function; pass
+`startObservation` only to inject a custom runtime or a test fake.
+
+Langfuse receives one trace per SDK query:
+
+| SDK event sequence | Langfuse projection |
+| --- | --- |
+| `run_start` to `result` | `chain` observation; it is the trace root unless `parent_run_id` nests it under another chain. |
+| `model_request` to `assistant_message` | Child `generation` observation with the `model` attribute. |
+| `tool_use` to `tool_result` | Child `tool` observation. |
+| `team_message` and other auxiliary events | Auto-ended `event` observations on the active chain. |
+
+The trace root observation carries the trace name, `session.id`, and
+`langfuse.trace.tags` attributes — the same attributes
+`propagateAttributes` writes on the active span — so traces stay grouped and
+filterable in the Langfuse UI. Error results and tool errors set the
+observation `level` to `ERROR` with a `statusMessage`.
 
 ## Event types
 

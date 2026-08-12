@@ -22,6 +22,7 @@ description: Stable exports exposed by the SDK package.
 | `connectMCPStreamableHTTPServer(url, options)` | Connects a remote Streamable HTTP MCP server, with optional OAuth support. |
 | `createJsonlContextTracer(options)` | Creates a JSONL trace sink for agent run context events. |
 | `createLangSmithContextTracer(options)` | Creates a LangSmith trace sink from the same provider-agnostic context events. |
+| `createLangfuseContextTracer(options)` | Creates a Langfuse trace sink (built on `@langfuse/tracing` v5) from the same provider-agnostic context events. |
 | `createCompositeContextTracer(tracers)` | Fans context trace events out to multiple trace sinks. |
 | `defineContextTracer(impl)` | Creates a custom trace sink from an implementation object, validating `onEvent` and binding `failOnError` at creation time. |
 | `createCompositeAgentHooks(hooks)` | Chains hooks in array order; each receives the previous one's output. |
@@ -181,6 +182,18 @@ LangSmith client customization, pass an explicit `Client` as `client`.
 In short-lived tests or scripts, close or flush the tracer in `finally` before
 the process exits so LangSmith receives the final root run patch.
 
+`createLangfuseContextTracer()` (requires 0.19.0) maps the same events onto
+Langfuse observations through the current `@langfuse/tracing` (v5) SDK: a
+`chain` observation per agent run, a `generation` per model turn, a `tool` per
+tool call, and auto-ended `event` observations for auxiliary events. The
+Langfuse SDK is OpenTelemetry-based — register a `LangfuseSpanProcessor` (from
+`@langfuse/otel`) with a tracer provider at process startup and configure the
+standard `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL`
+environment variables. Pass the registered processor as `spanProcessor` so
+`flush()`/`close()` drains pending spans before a short-lived process exits.
+`startObservation` defaults to the bundled `@langfuse/tracing` function; pass
+it only to inject a custom runtime or a test fake.
+
 When the tracer is passed to `team.query()` or `team.prompt()`, one Team call
 creates one root chain. Lead runs, delegated Member runs, and later Lead runs
 share its trace session and appear as child chains. Their original Agent session
@@ -206,6 +219,7 @@ than relying on an error.
 | `Agent.replaceHistory()`, `AgentLike.interrupt()` returns `boolean` (breaking for custom implementers), `defineContextTracer()`, `defineHistoryStore()` (breaking: `failOnError` removed from the `ContextTracer`/`HistoryStore` port types — custom implementations must use the `defineXxx` factories), `Agent` becomes a type-only export (breaking: `new Agent()` no longer available), `createLangSmithContextTracer()` defaults to the bundled `RunTree`, `tool_use` trace events carry the tool `description` | 0.17.0 |
 | `thinkingConfig: { type: "disabled" }` is sent to the provider explicitly as `thinking: { "type": "disabled" }` instead of being omitted (fixes providers that default thinking to on, e.g. DeepSeek) | 0.17.1 |
 | Tool calls in a response truncated at `max_tokens` are not executed; each call gets an error `tool_result` asking the model to reissue it with shorter output | 0.18.0 |
+| `createLangfuseContextTracer()`, `LangfuseContextTracerOptions`, `LangfuseObservationLike`, `LangfuseChainLike`, `LangfuseGenerationLike`, `LangfuseToolLike`, `LangfuseStartObservation`, `LangfuseFlushableSpanProcessor`, `LangfuseKVMap` | 0.19.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -237,6 +251,10 @@ package does not export it as an importable path.
 | `ContextTraceEventType` | Union of trace event type strings. |
 | `JsonlContextTracerOptions` | Options for the built-in JSONL tracer. |
 | `LangSmithContextTracerOptions` | Options for the LangSmith tracer adapter. |
+| `LangfuseContextTracerOptions` | Options for the Langfuse tracer adapter (requires 0.19.0). |
+| `LangfuseObservationLike` | Alias for the `@langfuse/tracing` `LangfuseObservation` union; `LangfuseChainLike`, `LangfuseGenerationLike`, and `LangfuseToolLike` alias the concrete observation classes (requires 0.19.0). |
+| `LangfuseStartObservation` | Alias for the `@langfuse/tracing` `startObservation` function type, accepted by `LangfuseContextTracerOptions.startObservation` (requires 0.19.0). |
+| `LangfuseFlushableSpanProcessor` | Minimal `forceFlush()` shape a `LangfuseSpanProcessor` satisfies, accepted by `LangfuseContextTracerOptions.spanProcessor` (requires 0.19.0). |
 | `HistoryStore` | Persistence adapter interface for an Agent's conversation history: `load()`, `append(message)`, `replace(messages)`. Compaction calls `replace()`, so stores must support full replacement. Methods only — `failOnError` is bound by the creating factory (`createJsonlHistoryStore` options or `defineHistoryStore()`). |
 | `JsonlHistoryStoreOptions` | Options for the built-in JSONL history store: `path` and optional `failOnError`. |
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |

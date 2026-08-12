@@ -308,6 +308,82 @@ root and share one trace session. Each Agent keeps its own SDK session identity,
 recorded as `agent_session_id` metadata, so tracing does not change Agent state
 or returned SDK messages.
 
+## Langfuse Context Tracing
+
+*Requires 0.19.0 or later.*
+
+The Langfuse adapter targets the current Langfuse JS SDK generation
+(`@langfuse/tracing` v5), which is OpenTelemetry-based. Register the
+`LangfuseSpanProcessor` once at process startup, then create the tracer —
+no other wiring needed.
+
+Configure Langfuse with its standard environment variables:
+
+```bash
+LANGFUSE_PUBLIC_KEY=<your-langfuse-public-key>
+LANGFUSE_SECRET_KEY=<your-langfuse-secret-key>
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com # or your self-hosted host
+```
+
+```bash
+npm install @langfuse/otel @opentelemetry/sdk-trace-node
+```
+
+```ts
+// instrumentation: register the span processor before agents run.
+import { LangfuseSpanProcessor } from "@langfuse/otel";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+
+export const langfuseSpanProcessor = new LangfuseSpanProcessor();
+
+const tracerProvider = new NodeTracerProvider({
+  spanProcessors: [langfuseSpanProcessor],
+});
+tracerProvider.register();
+```
+
+```ts
+import {
+  createAgent,
+  createCompositeContextTracer,
+  createJsonlContextTracer,
+  createLangfuseContextTracer,
+} from "agent-lattice";
+import { langfuseSpanProcessor } from "./instrumentation";
+
+const tracer = createCompositeContextTracer([
+  createJsonlContextTracer({ path: ".agent-runs/session.jsonl" }),
+  createLangfuseContextTracer({
+    // Drained by tracer.flush()/close() so spans reach Langfuse before a
+    // short-lived process exits.
+    spanProcessor: langfuseSpanProcessor,
+    tags: ["local-debug"],
+  }),
+]);
+
+const agent = createAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash",
+  tracer,
+});
+
+try {
+  await agent.prompt("Trace this run.", { stream: false });
+} finally {
+  await tracer.close?.();
+}
+```
+
+Langfuse receives one trace per SDK query: the agent run is a root `chain`
+observation carrying the trace name, session id, and tags; model turns appear
+as child `generation` observations and SDK tool calls as child `tool`
+observations. For a `Team` query, delegated runs nest as child `chain`
+observations under the team root, so one handoff invocation stays one trace.
+
+`startObservation` defaults to the bundled `@langfuse/tracing` function; pass
+`startObservation` only to inject a custom runtime or a test fake.
+
 Custom sinks can implement the same interface for SQLite, OpenTelemetry, object
 storage, or host-specific observability. A `ContextTracer` port object exposes
 methods only — `failOnError` is bound when the factory creates the tracer, not
