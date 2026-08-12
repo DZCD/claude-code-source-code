@@ -196,6 +196,8 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `defineAgent()`、`AgentSpec`、`AgentToolTarget`、`isAgentSpec()`、`agentTool()`/`delegateTool()` 的 `AgentSpec` 模板目标 | 0.15.0 |
 | `AssistantModelMessage.providerResponseId`、`AssistantModelMessage.model`、`ToolResult.endTurn`、`Agent.interrupt()`（同时加入 `AgentLike` 接口——对自定义实现方是破坏性变更）、result subtype `interrupted`、`AgentOptions.historyStore`、`HistoryStore`、`createJsonlHistoryStore`、`Agent.getHistory()` | 0.16.0 |
 | `Agent.replaceHistory()`、`AgentLike.interrupt()` 返回 `boolean`（对自定义实现方是破坏性变更）、`defineContextTracer()`、`defineHistoryStore()`（破坏性变更：`failOnError` 字段从 `ContextTracer`/`HistoryStore` 端口类型移除——自定义实现方必须改用 `defineXxx` 工厂）、`Agent` 改为 type-only 导出（破坏性变更：`new Agent()` 不再可用）、`createLangSmithContextTracer()` 默认使用内置 `RunTree`、`tool_use` trace 事件携带工具 `description` | 0.17.0 |
+| `thinkingConfig: { type: "disabled" }` 显式发送 `thinking: { "type": "disabled" }` 而不再省略该字段（修复 DeepSeek 等默认开启思考的 provider） | 0.17.1 |
+| 在 `max_tokens` 处截断的响应中的工具调用不再执行；每个调用收到一条错误 `tool_result`，要求模型缩短输出后重新发起 | 0.18.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

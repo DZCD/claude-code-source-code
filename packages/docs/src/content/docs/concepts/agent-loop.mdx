@@ -146,6 +146,10 @@ if (result.stop_reason === "max_tokens") {
 
 `stop_reason: "max_tokens"` means the model ran out of output budget mid-response. The SDK does not treat that as an error, so checking it is the only way to tell a complete answer from a truncated one. Raise `maxTokens` or ask for less output.
 
+When a response containing tool calls is truncated at `max_tokens`, the SDK does not execute those calls: the last `tool_use` input may be incomplete, and a truncated value can even survive JSON parsing with its meaning changed. Every call in the batch receives an error `tool_result` explaining the truncation and asking the model to reissue the call with a shorter output, then the loop continues.
+
+*Requires 0.18.0 or later.*
+
 Usage is reported by the model client. The built-in Anthropic client fills it in; a custom `ModelClient` that omits `usage` yields zeroed counts rather than an error.
 
 Assistant messages also carry provider response metadata: `providerResponseId` (the provider-assigned response id) and `model` (the model that actually served the response, which may differ from the requested one). The built-in Anthropic client fills both in on streaming and non-streaming requests; a custom `ModelClient` may set them on the `AssistantModelMessage` it returns. Both are absent when the client does not report them.

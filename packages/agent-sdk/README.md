@@ -1301,6 +1301,13 @@ if (result.stop_reason === "max_tokens") {
 The SDK does not treat that as an error, so checking this field is the only way
 to distinguish a complete answer from a truncated one.
 
+When a response containing tool calls is truncated at `max_tokens`, the SDK
+does not execute those calls: the last `tool_use` input may be incomplete, and
+a truncated value can even survive JSON parsing with its meaning changed.
+Every call in the batch gets an error `tool_result` explaining the truncation
+and asking the model to reissue the call with a shorter output, and the loop
+continues. *Requires 0.18.0 or later.*
+
 Usage comes from the model client. The built-in Anthropic client fills it in from
 the response, including the streaming path; a custom `ModelClient` that omits
 `usage` produces zeroed counts rather than an error.

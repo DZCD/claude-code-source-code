@@ -2650,6 +2650,71 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("does not execute tool calls from a response truncated at max_tokens", async () => {
+    let handlerCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([
+        {
+          ...toolUseAssistant("toolu_truncated", "calculator", {}),
+          stopReason: "max_tokens" as const,
+        },
+        textAssistant("done"),
+      ]),
+      tools: [
+        tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => {
+          handlerCalls++;
+          return { content: "4" };
+        }),
+      ],
+    });
+
+    const messages = await collect(agent.query("What is 2+2?"));
+
+    expect(handlerCalls).toBe(0);
+    const toolResultMessage = messages.find(message => message.type === "user");
+    expect(toolResultMessage).toMatchObject({ type: "user" });
+    const content = JSON.stringify(
+      toolResultMessage && toolResultMessage.type === "user" ? toolResultMessage.message.content : "",
+    );
+    expect(content).toContain("truncated at max_tokens");
+    expect(content).not.toContain("invalid_type");
+    expect(messages.at(-1)).toMatchObject({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+    });
+  });
+
+  test("still validates tool input when the response was not truncated", async () => {
+    let handlerCalls = 0;
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: clientFromResponses([
+        toolUseAssistant("toolu_invalid", "calculator", {}),
+        textAssistant("done"),
+      ]),
+      tools: [
+        tool("calculator", "Calculate", z.object({ expr: z.string() }), async () => {
+          handlerCalls++;
+          return { content: "4" };
+        }),
+      ],
+    });
+
+    const messages = await collect(agent.query("What is 2+2?"));
+
+    expect(handlerCalls).toBe(0);
+    const toolResultMessage = messages.find(message => message.type === "user");
+    const content = JSON.stringify(
+      toolResultMessage && toolResultMessage.type === "user" ? toolResultMessage.message.content : "",
+    );
+    expect(content).toContain("invalid_type");
+    expect(content).not.toContain("truncated at max_tokens");
+  });
+
   test("returns an abort result when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

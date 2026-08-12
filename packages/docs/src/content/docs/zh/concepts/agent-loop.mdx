@@ -144,6 +144,10 @@ if (result.stop_reason === "max_tokens") {
 
 `stop_reason: "max_tokens"` 表示模型在输出预算用尽时被截断。SDK 不把它当作错误，所以**检查这个字段是区分完整答案和截断片段的唯一方式**。遇到时调大 `maxTokens` 或让模型少输出。
 
+如果携带工具调用的响应在 `max_tokens` 处被截断，SDK 不会执行这批调用：末尾 `tool_use` 的入参可能不完整，被截断的值甚至可能通过 JSON 解析但语义已变。批次里的每个调用都会收到一条说明截断情况的错误 `tool_result`，要求模型缩短输出后重新发起调用，随后 loop 继续。
+
+*需要 0.18.0 及以上版本。*
+
 用量由 model client 上报。内置的 Anthropic 客户端会填好；自定义 `ModelClient` 若不提供 `usage`，得到的是全零计数而不是报错。
 
 assistant 消息还会携带 provider 响应元数据：`providerResponseId`（provider 分配的响应 id）和 `model`（实际服务该响应的模型，可能与请求的模型不同）。内置 Anthropic 客户端在流式和非流式请求中都会填好这两个字段；自定义 `ModelClient` 也可以在返回的 `AssistantModelMessage` 上设置它们。客户端不上报时两个字段都缺省。

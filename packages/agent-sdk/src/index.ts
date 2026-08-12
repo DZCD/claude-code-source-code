@@ -2671,6 +2671,13 @@ class Agent<TContext = unknown> {
         return;
       }
 
+      // A response cut off at max_tokens can end mid-tool-call: the last
+      // tool_use input may be missing or corrupt, and a truncated string can
+      // even survive JSON parsing with its meaning changed. Never execute
+      // calls from a truncated response — send every call back with a
+      // truncation error so the model reissues them with a shorter output.
+      const truncatedAtMaxTokens = assistant.stopReason === "max_tokens";
+
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
       let batchRejection: ToolBatchPolicyRejection | undefined;
@@ -2749,7 +2756,7 @@ class Agent<TContext = unknown> {
         });
       };
 
-      if (this.options.toolBatchPolicy) {
+      if (!truncatedAtMaxTokens && this.options.toolBatchPolicy) {
         const toolCalls: ToolBatchCall[] = toolUseBlocks.map(block => ({
           id: block.id,
           name: block.name,
@@ -2819,7 +2826,25 @@ class Agent<TContext = unknown> {
         : undefined;
 
       let executionResults: ToolExecutionOutcome[];
-      if (batchRejection && batchError) {
+      if (truncatedAtMaxTokens) {
+        executionResults = [];
+        for (const block of toolUseBlocks) {
+          const error = new ToolExecutionError(
+            `Tool ${block.name} was not executed: the model response was truncated at max_tokens, so tool inputs may be incomplete.`,
+          );
+          await startToolExecution(block);
+          executionResults.push(await finishToolExecution({
+            block: {
+              type: "tool_result",
+              tool_use_id: block.id,
+              content:
+                `${error.message} Shorten your thinking and output, then issue the tool call again.`,
+              is_error: true,
+            },
+            error,
+          }));
+        }
+      } else if (batchRejection && batchError) {
         executionResults = [];
         for (const block of toolUseBlocks) {
           await startToolExecution(block);
