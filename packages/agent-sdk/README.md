@@ -150,6 +150,14 @@ Anthropic-compatible providers (for example DeepSeek's
 `https://api.deepseek.com/anthropic` endpoint) default thinking to on —
 omitting the field would leave it enabled.
 
+On DeepSeek, the on/off switch is the only thinking control that works:
+DeepSeek accepts `budget_tokens` but ignores the value, treats `adaptive` as
+plain enabled thinking, and does not support `reasoning_effort` at all. Its own
+thinking-strength knob is `output_config.effort`, which the SDK does not expose
+yet. See
+[Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/)
+for the full matrix.
+
 For Kimi K3 through an Anthropic-compatible endpoint or gateway, use
 `reasoningEffort` to send the provider's top-level `reasoning_effort` parameter:
 
@@ -414,6 +422,12 @@ const agent = createAgent({
   model: "deepseek-v4-flash",
 });
 ```
+
+Pass an explicit `deepseek-*` model name — unknown names are silently mapped to
+`deepseek-v4-flash`. For which SDK options DeepSeek actually honors (thinking
+budgets are ignored; `reasoningEffort` does not apply; structured output is not
+supported), see
+[Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/).
 
 ## Custom Tool
 

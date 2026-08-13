@@ -99,8 +99,8 @@ const agent = createBareAgent({
 | `systemPrompt` | `string` | Stable role and responsibility instructions sent as the provider system prompt. |
 | `maxTokens` | `number` | Maximum output tokens per model request. |
 | `maxTurns` | `number` | Maximum agent loop turns before returning `error_max_turns`. |
-| `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. `disabled` is sent to the provider explicitly (as `thinking: { "type": "disabled" }`) because some Anthropic-compatible providers, such as DeepSeek, default thinking to on. When omitted, the SDK sends no thinking configuration. |
-| `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort`. When omitted, the provider applies its default. |
+| `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. `disabled` is sent to the provider explicitly (as `thinking: { "type": "disabled" }`) because some Anthropic-compatible providers, such as DeepSeek, default thinking to on. When omitted, the SDK sends no thinking configuration. See [Provider Compatibility](../provider-compatibility/) for what each provider actually honors. |
+| `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort` (a Kimi convention — ignored by DeepSeek; see [Provider Compatibility](../provider-compatibility/)). When omitted, the provider applies its default. |
 | `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
