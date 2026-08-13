@@ -96,8 +96,8 @@ const agent = createBareAgent({
 | `systemPrompt` | `string` | 作为 provider system prompt 发送的稳定角色和职责指令。 |
 | `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
-| `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。`disabled` 会显式发送给 provider（即 `thinking: { "type": "disabled" }`），因为 DeepSeek 等 Anthropic 兼容端点默认开启思考。省略时，SDK 不发送 thinking 配置。 |
-| `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`。省略时使用 provider 默认值。 |
+| `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。`disabled` 会显式发送给 provider（即 `thinking: { "type": "disabled" }`），因为 DeepSeek 等 Anthropic 兼容端点默认开启思考。省略时，SDK 不发送 thinking 配置。各 provider 的实际生效情况见 [Provider 兼容性](../provider-compatibility/)。 |
+| `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`（Kimi 约定——DeepSeek 忽略，见 [Provider 兼容性](../provider-compatibility/)）。省略时使用 provider 默认值。 |
 | `requestTimeoutMs` | `number` | 单次模型请求的期限（毫秒）。即使 model client 忽略它，SDK 也会兜底执行。不设置则 SDK 不加限制。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |

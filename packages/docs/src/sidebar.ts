@@ -46,6 +46,9 @@ export const sidebar: SidebarGroup[] = [
   {
     label: "Reference",
     translations: { "zh-CN": "参考" },
-    items: [{ label: "Public API", translations: { "zh-CN": "公开 API" }, slug: "reference/public-api" }],
+    items: [
+      { label: "Public API", translations: { "zh-CN": "公开 API" }, slug: "reference/public-api" },
+      { label: "Provider Compatibility", translations: { "zh-CN": "Provider 兼容性" }, slug: "reference/provider-compatibility" },
+    ],
   },
 ];

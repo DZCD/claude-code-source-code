@@ -1,0 +1,51 @@
+---
+title: Provider 兼容性
+description: SDK 的思考、力度和结构化输出选项在 DeepSeek、Kimi 等 Anthropic 兼容 provider 上的实际生效情况。
+---
+
+SDK 的内置模型客户端使用 Anthropic Messages 格式，可以对接任何 Anthropic
+兼容端点，但每个 provider 对思考相关参数的支持子集不同。本页记录的内容
+以 provider 官方兼容性文档和真实请求验证为准。
+
+## DeepSeek
+
+端点：`https://api.deepseek.com/anthropic`。DeepSeek 官方发布了
+[Anthropic API 兼容表](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api)，
+下表把 SDK 选项映射到该兼容表。
+
+| SDK 选项 | 线上格式 | DeepSeek 行为 |
+| --- | --- | --- |
+| `thinkingConfig: { type: "disabled" }` | `thinking: { "type": "disabled" }` | 生效，响应中不再出现 thinking 块。 |
+| `thinkingConfig: { type: "enabled", budgetTokens }` | `thinking: { "type": "enabled", "budget_tokens": N }` | 思考会开启，但 DeepSeek **忽略 `budget_tokens`**——实际思考量可能远超预算，不要用它控制延迟。 |
+| `thinkingConfig: { type: "adaptive" }` | `thinking: { "type": "adaptive" }` | 不报错且模型照常思考；DeepSeek 没有文档化 `adaptive` 取值，视同 `enabled`，不做任何保证。 |
+| `reasoningEffort` | 顶层 `reasoning_effort` | 不在 DeepSeek 兼容表内，不生效。`reasoning_effort` 是 Kimi 的约定，见下文。 |
+| `outputFormat` | `output_config.format` | 被忽略。DeepSeek 对 `output_config` 只支持 `effort`，SDK 的结构化输出不适用。 |
+
+DeepSeek 自己的思考力度旋钮是 `output_config.effort`，SDK 目前尚未暴露，
+所以在 DeepSeek 上唯一可靠的思考控制就是 `thinkingConfig` 的开/关。
+
+其他值得知道的 DeepSeek 差异：
+
+- 不认识的模型名会被静默映射到 `deepseek-v4-flash`，请显式传入
+  `deepseek-*` 模型名。
+- 消息历史里的 `thinking` 内容块被接受，`redacted_thinking` 块不支持。
+- `max_tokens`、`system`、`stream`、`temperature`、`top_p`、
+  `stop_sequences` 和工具调用完全支持；`cache_control` 一律被忽略。
+
+## Kimi
+
+Kimi K3 经 Anthropic 兼容端点/网关使用时，约定正好相反：它接受 SDK 从
+`reasoningEffort` 发出的顶层 `reasoning_effort` 参数（`"low"`、`"high"`、
+`"max"`），而不接受 `thinkingConfig`。省略 `reasoningEffort` 时 SDK 不发送
+该字段，应用 provider 默认值（Kimi K3 为 `"max"`）。
+
+Kimi 开放平台的 `https://api.moonshot.cn/v1` 是 OpenAI Chat Completions
+协议，不是 SDK 内置 Anthropic 客户端可用的 `baseURL`。
+
+## Anthropic
+
+`thinkingConfig` 面向 Anthropic 官方 API：`adaptive`、固定
+`budgetTokens`（封顶 `maxTokens - 1`）、`disabled` 都序列化为 Anthropic
+官方的 `thinking` 线上格式，`outputFormat` 映射为 `output_config.format`。
+例外是 `reasoningEffort`——它发送的是 Kimi 的顶层 `reasoning_effort`
+参数，不是 Anthropic 字段。

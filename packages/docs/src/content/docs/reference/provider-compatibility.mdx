@@ -1,0 +1,57 @@
+---
+title: Provider Compatibility
+description: How SDK thinking, reasoning-effort, and structured-output options behave on Anthropic-compatible providers such as DeepSeek and Kimi.
+---
+
+The SDK's built-in model client speaks the Anthropic Messages format and works
+against any Anthropic-compatible endpoint, but each provider honors a different
+subset of the thinking-related parameters. This page records what actually
+works, verified against the provider's official compatibility documentation
+and live requests.
+
+## DeepSeek
+
+Endpoint: `https://api.deepseek.com/anthropic`. DeepSeek publishes an
+[Anthropic API compatibility table](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api);
+the rows below map SDK options onto it.
+
+| SDK option | Wire format | DeepSeek behavior |
+| --- | --- | --- |
+| `thinkingConfig: { type: "disabled" }` | `thinking: { "type": "disabled" }` | Honored. Thinking blocks disappear from the response. |
+| `thinkingConfig: { type: "enabled", budgetTokens }` | `thinking: { "type": "enabled", "budget_tokens": N }` | Thinking turns on, but DeepSeek **ignores `budget_tokens`** — the model may think far beyond the budget. Do not rely on it for latency control. |
+| `thinkingConfig: { type: "adaptive" }` | `thinking: { "type": "adaptive" }` | Accepted without an error and the model still thinks; DeepSeek documents no `adaptive` value, so treat it as `enabled` with no guarantees. |
+| `reasoningEffort` | top-level `reasoning_effort` | Not in DeepSeek's compatibility table; no effect. `reasoning_effort` is a Kimi convention — see below. |
+| `outputFormat` | `output_config.format` | Ignored. DeepSeek supports only `effort` inside `output_config`, so SDK structured output does not apply. |
+
+DeepSeek's own thinking-strength knob is `output_config.effort`. The SDK does
+not expose it yet, so on DeepSeek the only reliable thinking control today is
+the on/off switch via `thinkingConfig`.
+
+Other DeepSeek specifics worth knowing:
+
+- Unknown model names are silently mapped to `deepseek-v4-flash`; pass an
+  explicit `deepseek-*` model name.
+- `thinking` content blocks in message history are accepted;
+  `redacted_thinking` blocks are not.
+- `max_tokens`, `system`, `stream`, `temperature`, `top_p`, `stop_sequences`,
+  and tool use are fully supported. `cache_control` is ignored everywhere.
+
+## Kimi
+
+Kimi K3 through an Anthropic-compatible endpoint uses the inverse convention:
+it accepts the top-level `reasoning_effort` parameter that the SDK sends from
+`reasoningEffort` (`"low"`, `"high"`, `"max"`), and it does not accept
+`thinkingConfig`. When `reasoningEffort` is omitted the SDK sends nothing, so
+the provider default applies (`"max"` for Kimi K3).
+
+The Kimi Open Platform endpoint at `https://api.moonshot.cn/v1` uses the OpenAI
+Chat Completions protocol and is not a valid `baseURL` for the SDK's built-in
+Anthropic client.
+
+## Anthropic
+
+`thinkingConfig` targets the Anthropic API first: `adaptive`, fixed
+`budgetTokens` (capped at `maxTokens - 1`), and `disabled` all serialize to
+the official Anthropic `thinking` wire format, and `outputFormat` maps to
+`output_config.format`. `reasoningEffort` is the exception — it sends Kimi's
+top-level `reasoning_effort` parameter, not an Anthropic field.
