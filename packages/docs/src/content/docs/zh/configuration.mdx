@@ -77,6 +77,8 @@ const backendAgent = createAgent({
 
 SDK 会自动给 agent 增加 workspace 工具，并注入说明：交付时用自然语言汇报重要路径和验证结果。
 
+传 `workspace: false` 可以完全关闭内建工作区：不装内建文件/Shell 工具，也不加 workspace 提示段落——等价于 `createBareAgent()`。*需要 0.23.0 及以上版本。* 与 `createBareAgent()` 不同，这个选项对 `defineAgent()` 也生效，`defineAgent({ workspace: false })` spawn 出来的就是裸会话。适合不需要任何文件系统和 Shell 权限面的 typed 委派专科子 agent。
+
 ## Bare agent
 
 当宿主需要一个不带默认提示词、不带默认工具、也不创建 workspace 目录的纯模型循环时，使用 `createBareAgent()`。它适合已经由宿主提供 sandbox 的应用、需要精确控制工具列表的测试，或由应用自己组装能力的 wrapper。

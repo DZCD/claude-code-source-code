@@ -157,7 +157,17 @@ const supervisor = createAgent({
 
 仍然可以显式传 `AgentToolOptions.outputSchema`，但它必须与 target 的声明一致——先按引用相等比较，再按派生 JSON Schema 的结构比较。不一致时 `agentTool()` 在装配期直接抛错，错误信息会建议在 `createAgent`/`defineAgent` 和 `agentTool()` 之间共享一个 schema 实例，或省略 `agentTool()` 这份直接继承。宿主自定义的 `AgentLike` 适配器没有可读的声明，因此对它们既不继承也不核对——显式传的 `outputSchema` 仍然生效。
 
+自 0.23.0 起还固定了一种组合：**target 未声明 schema、`agentTool()` 显式声明**时，装配期放行（没有可核对的对象），`ask` 会把子级的 `structuredResult` 按父级这份 schema 校验后以 JSON 返回。这适合子级用自造的 `endTurn` + `structuredResult` 工具做 schema 之外的领域校验（如引用真实性）、契约由父级单方面声明的场景。
+
 *0.21.0 行为变化：*子级声明了 `outputSchema` 而父级没声明的现存代码，`ask` 的工具结果从固定文本 `"Structured output submitted."` 变为校验后的 JSON。这是修复意图，0.x 阶段随 minor 发布。
+
+### 无 schema 时 structuredResult 透出
+
+*需要 0.23.0 及以上版本。*
+
+父子都没声明 `outputSchema` 时，如果子级带着 `structuredResult` 结束（经自定义 `endTurn` 工具），`ask` 的工具结果会原样返回它的 JSON——不做校验——而不是回退成文本 content 把它丢掉。信任等级与回文本相同；schema 的职责收敛为「校验」，不再是结构化通道的开关。直连路径和 team runtime delegate 路径都生效。
+
+*0.23.0 行为变化：*现存「子级 `endTurn` 带 `structuredResult`、父级无 schema」的代码，`ask` 的结果从文本变为结构化 JSON。
 
 ## Typed 委派
 

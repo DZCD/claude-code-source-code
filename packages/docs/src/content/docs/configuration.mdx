@@ -77,6 +77,8 @@ const backendAgent = createAgent({
 
 The SDK automatically adds workspace tools and instructions telling the agent to report important paths and verification notes in natural language.
 
+Pass `workspace: false` to opt out of the built-in workspace entirely: no built-in file/shell tools, no workspace prompt section — equivalent to `createBareAgent()`. *Requires 0.23.0 or later.* Unlike `createBareAgent()`, the option also works through `defineAgent()`, so `defineAgent({ workspace: false })` spawns bare sessions. This is useful for typed-delegation specialists that should have no filesystem or shell surface.
+
 ## Bare agents
 
 Use `createBareAgent()` when the host wants a plain model loop with no default prompt, no default tools, and no workspace directory creation. This is useful for hosted applications that provide their own sandbox, tests that need exact tool lists, or wrappers that assemble capabilities themselves.

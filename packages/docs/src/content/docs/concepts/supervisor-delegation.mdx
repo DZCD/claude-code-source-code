@@ -157,7 +157,17 @@ The structure is enforced by the harness rather than by prompt discipline, and u
 
 Passing `AgentToolOptions.outputSchema` explicitly is still allowed, but it must match the target's declaration — compared by reference first, then by derived JSON Schema structure. A mismatch throws from `agentTool()` at assembly time; the error suggests sharing one schema instance between `createAgent`/`defineAgent` and `agentTool()`, or omitting the `agentTool()` copy to inherit it. Host-defined `AgentLike` adapters expose no readable declaration, so nothing is inherited or cross-checked for them — an explicit `outputSchema` still applies.
 
+One combination is pinned down since 0.23.0: when the **target declares no schema and `agentTool()` declares one explicitly**, assembly allows it (there is nothing to cross-check against), and an `ask` call validates the child's `structuredResult` against the parent-side schema and returns it as JSON. This fits children that end through a custom `endTurn` + `structuredResult` tool performing domain validation beyond the schema (for example reference truthfulness), with the contract declared by the parent alone.
+
 *Behavior change in 0.21.0:* where the child declares an `outputSchema` and the parent does not, the `ask` tool result changed from the fixed text `"Structured output submitted."` to the validated JSON. That is the intended fix and ships in a minor under 0.x.
+
+### Structured result passthrough without a schema
+
+*Requires 0.23.0 or later.*
+
+When neither side declares an `outputSchema` and the child ends with a `structuredResult` (via a custom `endTurn` tool), the `ask` tool result is that payload's JSON as-is — unvalidated — instead of falling back to the text content and dropping it. The trust level is the same as the text result; the schema's job is validation only, not gating the structured channel. This applies on both the direct path and the team runtime delegate path.
+
+*Behavior change in 0.23.0:* existing code where the child ends with `endTurn` + `structuredResult` and the parent declares no schema now receives the structured JSON from `ask` instead of the text content.
 
 ## Typed delegation
 
