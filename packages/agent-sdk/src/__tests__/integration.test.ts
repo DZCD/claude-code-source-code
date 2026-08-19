@@ -220,4 +220,44 @@ describe("agent-sdk integration", () => {
       expect(result.result).toContain("42");
     },
   );
+
+  test.skipIf(!process.env.DEEPSEEK_API_KEY)(
+    "DeepSeek typed delegation: inputSchema + mapInput, outputSchema inherited from the child",
+    async () => {
+      const outputSchema = z.object({
+        sum: z.number(),
+        note: z.string(),
+      });
+      const child = createAgent({
+        ...deepseekAgentOptions(),
+        outputSchema,
+      });
+      const parent = createAgent({
+        ...deepseekAgentOptions(),
+        tools: [
+          agentTool("calculator", child, {
+            description: "Compute an addition and return the structured result.",
+            inputSchema: z.object({
+              a: z.number(),
+              b: z.number(),
+            }),
+            mapInput: input => `计算 ${input.a}+${input.b}，完成后必须调用 submit_output 工具提交结果。`,
+            // outputSchema omitted on purpose: inherited from the child.
+          }),
+        ],
+      });
+
+      const result = await parent.prompt(
+        "必须调用 calculator 工具计算 a=19、b=23，然后只回答得到的 sum。",
+        { stream: false },
+      );
+
+      expect(result).toMatchObject({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+      });
+      expect(result.result).toContain("42");
+    },
+  );
 });
