@@ -115,7 +115,7 @@ const supervisor = createAgent({
 
 *需要 0.20.0 及以上版本。*
 
-当子智能体的交付物应该是带类型的数据而不是一段散文时，父子两边传同一份 `OutputSchema`（zod schema 直接可用）：子 agent 配上 `outputSchema`，它必须通过注入的 `submit_output` 工具提交答案；`agentTool()` 配上 `outputSchema`，父级一侧负责校验返回的内容。
+当子智能体的交付物应该是带类型的数据而不是一段散文时，在子级声明一份 `OutputSchema`（zod schema 直接可用）：子 agent 必须通过注入的 `submit_output` 工具提交答案，父级一侧负责校验返回的内容。自 0.21.0 起 `agentTool()` 会从 target 的声明继承 schema——`AgentSpec` 走 `spec.options.outputSchema`，活 Agent 走 `outputSchema` getter——父级这份可以省略：
 
 ```ts
 import { agentTool, createAgent } from "agent-lattice";
@@ -139,15 +139,49 @@ const supervisor = createAgent({
   tools: [
     agentTool("explore", explorer, {
       description: "让一个临时 explore 子智能体检查代码库并报告发现。",
-      outputSchema: findingsSchema,
+      // outputSchema 自 target 继承（0.21.0+）。
     }),
   ],
 });
 ```
 
-`mode: "ask"` 时，工具结果是子级校验后的结构化输出序列化成的 JSON 字符串，生成的工具描述也会告诉 supervisor 模型这一点。如果子级没有提交就结束了，或提交的内容没通过父级的 schema，工具会返回一条以 `child_output_invalid:` 开头的 `is_error` `tool_result`——这在 supervisor 的 loop 里就是一条普通的工具错误，supervisor 可以重试或换个说法再派。runtime delegate 路径同理：子级失败会抛 `child_output_invalid`，并带上原始的 failure code 和 message。
+`mode: "ask"` 时，工具结果是子级校验后的结构化输出序列化成的 JSON 字符串，生成的工具描述也会告诉 supervisor 模型这一点。如果子级没有提交就结束了，或提交的内容没通过 schema 校验，工具会返回一条以 `child_output_invalid:` 开头的 `is_error` `tool_result`——这在 supervisor 的 loop 里就是一条普通的工具错误，supervisor 可以重试或换个说法再派。runtime delegate 路径同理：子级失败会抛 `child_output_invalid`，并带上原始的 failure code 和 message。
 
 结构由 harness 把守，而不是靠 prompt 纪律；与 `outputFormat` 不同，它不依赖各 provider 的 `response_format`/`json_schema` 特性——任何支持工具调用的 provider 都能用（见 [Provider 兼容性](/zh/reference/provider-compatibility/)）。
+
+### 契约继承与装配期校验
+
+*需要 0.21.0 及以上版本。*
+
+仍然可以显式传 `AgentToolOptions.outputSchema`，但它必须与 target 的声明一致——先按引用相等比较，再按派生 JSON Schema 的结构比较。不一致时 `agentTool()` 在装配期直接抛错，错误信息会建议在 `createAgent`/`defineAgent` 和 `agentTool()` 之间共享一个 schema 实例，或省略 `agentTool()` 这份直接继承。宿主自定义的 `AgentLike` 适配器没有可读的声明，因此对它们既不继承也不核对——显式传的 `outputSchema` 仍然生效。
+
+*0.21.0 行为变化：*子级声明了 `outputSchema` 而父级没声明的现存代码，`ask` 的工具结果从固定文本 `"Structured output submitted."` 变为校验后的 JSON。这是修复意图，0.x 阶段随 minor 发布。
+
+## Typed 委派
+
+*需要 0.21.0 及以上版本。*
+
+`AgentToolOptions.inputSchema` 把默认的 `{mode, task, expectedOutput, acceptanceCriteria, workspaceGrants}` 输入形状换成你自己的 schema，`mapInput` 负责把校验后的 typed 入参投影成子级 prompt：
+
+```ts
+const judge = createAgent({
+  model: "deepseek-v4-flash",
+  name: "judge",
+  systemPrompt: "你负责判案并提交结构化裁决。",
+  outputSchema: verdictSchema,
+});
+
+const judgeTool = agentTool("judge", judge, {
+  description: "根据案情摘要和文档判案。",
+  inputSchema: z.object({
+    caseSummary: z.string(),
+    documents: z.array(z.object({ title: z.string(), content: z.string() })),
+  }),
+  mapInput: input => renderJudgeTask(input.caseSummary, input.documents),
+});
+```
+
+父模型的入参先按 `inputSchema` parse，不合格当场作为 error `tool_result` 打回 supervisor 的 loop——与普通 `tool()` 的打回语义一致——子级不会被调用。`inputSchema` 和 `mapInput` 必须成对出现，缺一个在 `agentTool()` 装配期抛错。Typed 委派是 ask-only：没有 `mode` 字段，也没有 `workspaceGrants`。`mapInput` 可以返回 string 或 `ContentBlock[]`，但 `ContentBlock[]` 只支持直连 `ask` 调用；在 team runtime 里投影出的 prompt 必须是 string，否则运行时报错。
 
 ## Workspace
 

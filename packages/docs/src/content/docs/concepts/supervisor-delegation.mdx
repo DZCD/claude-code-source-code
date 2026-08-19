@@ -115,7 +115,7 @@ A spec target spawns a **fresh session on every tool call** — no history leaks
 
 *Requires 0.20.0 or later.*
 
-When the child's deliverable should be typed data rather than prose, give both sides the same `OutputSchema` (a zod schema works directly): the child agent gets `outputSchema`, so it must submit its answer through the injected `submit_output` tool, and `agentTool()` gets `outputSchema` so the parent side validates what comes back.
+When the child's deliverable should be typed data rather than prose, declare an `OutputSchema` on the child (a zod schema works directly): the child agent must then submit its answer through the injected `submit_output` tool, and the parent side validates what comes back. Since 0.21.0 `agentTool()` inherits the target's declared schema — from `spec.options.outputSchema` for an `AgentSpec`, or from the live Agent's `outputSchema` getter — so the parent-side copy can be omitted:
 
 ```ts
 import { agentTool, createAgent } from "agent-lattice";
@@ -139,15 +139,49 @@ const supervisor = createAgent({
   tools: [
     agentTool("explore", explorer, {
       description: "Ask a temporary explore subagent to inspect the codebase and report findings.",
-      outputSchema: findingsSchema,
+      // outputSchema is inherited from the target (0.21.0+).
     }),
   ],
 });
 ```
 
-With `mode: "ask"` the tool result is the child's validated structured output as a JSON string, and the generated tool description tells the supervisor model to expect that. If the child ends without submitting, or its submission fails the parent's schema, the tool returns an `is_error` `tool_result` starting with `child_output_invalid:` — a normal tool error in the supervisor's loop, so the supervisor can retry or rephrase the task. The same applies on the runtime delegate path: a failed child surfaces as `child_output_invalid` carrying the original failure code and message.
+With `mode: "ask"` the tool result is the child's validated structured output as a JSON string, and the generated tool description tells the supervisor model to expect that. If the child ends without submitting, or its submission fails the schema, the tool returns an `is_error` `tool_result` starting with `child_output_invalid:` — a normal tool error in the supervisor's loop, so the supervisor can retry or rephrase the task. The same applies on the runtime delegate path: a failed child surfaces as `child_output_invalid` carrying the original failure code and message.
 
 The structure is enforced by the harness rather than by prompt discipline, and unlike `outputFormat` it does not depend on provider `response_format`/`json_schema` support — any tool-capable provider works (see [Provider Compatibility](/reference/provider-compatibility/)).
+
+### Contract inheritance and assembly-time checks
+
+*Requires 0.21.0 or later.*
+
+Passing `AgentToolOptions.outputSchema` explicitly is still allowed, but it must match the target's declaration — compared by reference first, then by derived JSON Schema structure. A mismatch throws from `agentTool()` at assembly time; the error suggests sharing one schema instance between `createAgent`/`defineAgent` and `agentTool()`, or omitting the `agentTool()` copy to inherit it. Host-defined `AgentLike` adapters expose no readable declaration, so nothing is inherited or cross-checked for them — an explicit `outputSchema` still applies.
+
+*Behavior change in 0.21.0:* where the child declares an `outputSchema` and the parent does not, the `ask` tool result changed from the fixed text `"Structured output submitted."` to the validated JSON. That is the intended fix and ships in a minor under 0.x.
+
+## Typed delegation
+
+*Requires 0.21.0 or later.*
+
+`AgentToolOptions.inputSchema` replaces the default `{mode, task, expectedOutput, acceptanceCriteria, workspaceGrants}` input shape with your own schema, and `mapInput` projects the validated input into the child prompt:
+
+```ts
+const judge = createAgent({
+  model: "deepseek-v4-flash",
+  name: "judge",
+  systemPrompt: "You judge a case and submit a structured verdict.",
+  outputSchema: verdictSchema,
+});
+
+const judgeTool = agentTool("judge", judge, {
+  description: "Judge a case from its summary and documents.",
+  inputSchema: z.object({
+    caseSummary: z.string(),
+    documents: z.array(z.object({ title: z.string(), content: z.string() })),
+  }),
+  mapInput: input => renderJudgeTask(input.caseSummary, input.documents),
+});
+```
+
+The parent's arguments are parsed against `inputSchema` before anything runs; invalid input is rejected as an error `tool_result` in the supervisor's loop — the same semantics as a plain `tool()` call — and the child is never invoked. `inputSchema` and `mapInput` must come as a pair: `agentTool()` throws at assembly time when one is missing. Typed delegation is ask-only — there is no `mode` field and no `workspaceGrants`. `mapInput` may return a string or `ContentBlock[]`, but `ContentBlock[]` is only supported for direct `ask` calls; inside a team runtime the projected prompt must be a string, or the call fails at runtime.
 
 ## Workspaces
 

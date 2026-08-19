@@ -13,7 +13,7 @@ description: Stable exports exposed by the SDK package.
 | `isAgentSpec(target)` | Type guard distinguishing an `AgentSpec` template from a live `AgentLike` session. |
 | `query(params)` | One-shot async generator helper. |
 | `tool(name, description, inputSchema, handler)` | Creates a custom tool definition. |
-| `agentTool(name, target, metadata)` | Exposes another `AgentLike` or `AgentSpec` as a model tool with explicit `ask`, `handoff`, or `observe` modes. A spec target spawns a fresh session per call; a session target keeps its history across calls. |
+| `agentTool(name, target, metadata)` | Exposes another `AgentLike` or `AgentSpec` as a model tool with explicit `ask`, `handoff`, or `observe` modes. A spec target spawns a fresh session per call; a session target keeps its history across calls. With `inputSchema` + `mapInput` (requires 0.21.0) the tool takes a custom typed input shape instead (ask-only) and the return type is `ToolDefinition<any>`. |
 | `delegateTool(name, description, agent, options)` | Advanced helper that exposes an `AgentLike` or `AgentSpec` as a mailbox-backed delegate tool. |
 | `skill(options)` | Creates an in-memory skill definition. |
 | `loadSkill(path)` | Loads a skill from a directory containing `SKILL.md`. |
@@ -68,6 +68,11 @@ await agent.replaceHistory(messages);
 // in history so a follow-up query can continue the conversation. Returns
 // true when a query was interrupted, false when idle.
 agent.interrupt();
+
+// The structured output contract declared via AgentOptions.outputSchema,
+// if any. Read-only; used by agentTool() for contract inheritance.
+// Requires 0.21.0 or later.
+agent.outputSchema;
 ```
 
 `interrupt()` is the cooperative counterpart of `QueryOptions.signal`: the signal terminates the query with `error_abort`, while an interrupt finishes it with `interrupted` (not an error) after dropping only the in-flight turn. It returns `false` when no query is running, so the host knows it can send its next query directly.
@@ -223,6 +228,7 @@ than relying on an error.
 | Tool calls in a response truncated at `max_tokens` are not executed; each call gets an error `tool_result` asking the model to reissue it with shorter output | 0.18.0 |
 | `createLangfuseContextTracer()`, `LangfuseContextTracerOptions`, `LangfuseObservationLike`, `LangfuseChainLike`, `LangfuseGenerationLike`, `LangfuseToolLike`, `LangfuseStartObservation`, `LangfuseFlushableSpanProcessor`, `LangfuseKVMap` | 0.19.0 |
 | `AgentOptions.outputSchema`, `OutputSchema`, `SUBMIT_OUTPUT_TOOL_NAME`, `MissingOutputError`, `SDKResultMessage.structuredResult`, result subtype `error_missing_output`, `AgentRuntimeFailure` code `missing_output`, `ToolResult.structuredResult`, `AgentToolOptions.outputSchema` | 0.20.0 |
+| `AgentToolOptions.inputSchema` + `mapInput` (typed ask-only delegation), `agentTool()` inherits `outputSchema` from the target and cross-checks explicit copies at assembly time, `Agent.outputSchema` getter, `agentTool()` returns `ToolDefinition<any>` (behavior change: `ask` with an inherited schema now returns the validated JSON instead of the fixed `"Structured output submitted."` text) | 0.21.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -278,7 +284,7 @@ package does not export it as an importable path.
 | `ToolBatchPolicyContext` | Policy input containing source, host context, signal, and tool calls with `tool` or `agent_tool` kind. |
 | `ToolBatchPolicyResult` | Allows a batch or rejects it with a code, message, conflicting call IDs, and suggested next step. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
-| `AgentToolOptions` | Description and target mailbox options for `agentTool()`, plus optional `outputSchema` (requires 0.20.0): in `ask` mode the tool result is the child's validated structured output as a JSON string, and a missing or invalid child submission surfaces as a `child_output_invalid` tool error. |
+| `AgentToolOptions` | Description and target mailbox options for `agentTool()`, plus `outputSchema` (requires 0.20.0): in `ask` mode the tool result is the child's validated structured output as a JSON string, and a missing or invalid child submission surfaces as a `child_output_invalid` tool error. Since 0.21.0 an omitted `outputSchema` is inherited from the target's own declaration (`spec.options.outputSchema` or the live Agent's `outputSchema` getter; host-defined `AgentLike` adapters carry no declaration, so nothing is inherited or cross-checked), and an explicit copy that does not match the target's declaration throws at assembly time. Also since 0.21.0, `inputSchema` + `mapInput` (required as a pair) enable typed delegation: the tool takes the custom schema as input — ask-only, no `mode`/`workspaceGrants` — validates the parent's arguments before the child runs, and projects the validated input into the child prompt. |
 | `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
 | `SkillDefinition` | Reusable instruction bundle passed to an agent. |
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
