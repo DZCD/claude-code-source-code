@@ -82,6 +82,8 @@ console.log(result.result);
 
 > 这里的 **team runtime** 指驱动 mailbox 持久团队的运行时——它维护消息队列、保存任务状态，并负责 `handoff` 之后成员的生命周期。本模式是一次性委派，默认没有 runtime，所以 `handoff` / `observe` 基本用不上；需要它们时请改用 [Mailbox Team 持久团队](/zh/concepts/mailbox-team/)。
 
+`AgentToolOptions` 还接收 `metadata`：一个宿主持有的 `Record<string, unknown>`，原样透传到生成的 `ToolDefinition.metadata`（例如契约版本）。SDK 不读也不解释它，也不会展示给模型。*需要 0.22.0 及以上版本。*
+
 ## 模板目标还是会话目标
 
 *需要 0.15.0 及以上版本。*

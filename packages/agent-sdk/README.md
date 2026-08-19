@@ -700,6 +700,46 @@ policy, tool execution is unchanged. A policy prevents known bad combinations
 inside one model response, but it does not replace database transactions or
 revision checks against concurrent external updates.
 
+## Strict Option Validation And Tool Metadata
+
+*Requires 0.22.0 or later.*
+
+The option objects of `createAgent()`/`createBareAgent()`/`defineAgent()`
+(`AgentOptions`), `agentTool()` (`AgentToolOptions`), `delegateTool()`
+(`DelegateToolOptions`), and `tool()` (`ToolOptions`) are validated strictly:
+an unknown key throws at assembly time —
+
+```
+AgentOptions: unknown option "bogusOption". Check for a typo, or upgrade the SDK if this option was added in a newer version.
+```
+
+(`agentTool()`/`delegateTool()` prefix the message with `agentTool("<name>"):` /
+`delegateTool("<name>"):` instead.) The point is to fail fast on the old-SDK +
+new-API combination: before 0.22.0 an unknown option was silently ignored, so
+calling a newer API on an older install "worked" with the feature absent.
+
+*Behavior change in 0.22.0:* extra keys that used to be silently ignored —
+for example host fields spread into an options object — now throw. If your
+host assembles options by spreading wider objects, strip the extra fields when
+upgrading.
+
+Separately, `ToolOptions.metadata` and `AgentToolOptions.metadata` accept a
+`Record<string, unknown>` that is passed through to `ToolDefinition.metadata`:
+
+```ts
+const search = tool(
+  "search",
+  "Search documents",
+  z.object({ query: z.string() }),
+  async ({ query }) => ({ content: await documentIndex.search(query) }),
+  { metadata: { contractVersion: 3 } },
+);
+```
+
+The SDK never reads or interprets `metadata`, and it is never shown to the
+model — it is host-owned, machine-readable annotation (for example a contract
+version). When not passed, the key is absent from the `ToolDefinition`.
+
 ## Automatic Context Compaction
 
 History only grows, so a long-running agent eventually exceeds the model's
