@@ -20,6 +20,21 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 
 *需要 0.16.0 及以上版本。*
 
+## 用 submit_output 提交结构化输出
+
+*需要 0.20.0 及以上版本。*
+
+当一次 run 必须以校验过的、带类型的 payload 收尾而不是一段自由文本时，设置 `AgentOptions.outputSchema`。SDK 会注入内置的 `submit_output` 工具（名字导出为 `SUBMIT_OUTPUT_TOOL_NAME`），其 input schema 就是你的 schema 转成的 JSON Schema——`OutputSchema<T>` 就是 `{ parse(input: unknown): T }`，zod schema 直接可用。
+
+它会改变 loop 允许的收尾方式：
+
+- 模型通过调用 `submit_output` 来交卷。payload 先按 schema 校验；校验失败会作为 error `tool_result` 打回 loop，模型可以修正后重试。校验通过则以 `subtype: "success"` 结束，payload 落在 `SDKResultMessage.structuredResult`。
+- 模型没调用 `submit_output` 就直接结束回合，run 失败：`subtype: "error_missing_output"`，`error` 是 `MissingOutputError`。没有「把最终文本当 JSON 解析」的后门——提交是一个显式动作。
+- `submit_output` 必须独占一个 batch：同批混入其它工具调用、或同批出现两次提交，整批被拒绝（code `submit_output_exclusive_batch`），loop 继续。
+- `outputSchema` 设置期间该名字被保留——注册自己的 `submit_output` 工具会让 `createAgent`/`addTools` 直接抛错。
+
+结构由 harness 把守，而不是靠 prompt 纪律；它只要求模型会 tool call——与 `outputFormat` 不同，不依赖各 provider 的 `response_format`/`json_schema` 特性（见 [Provider 兼容性](/zh/reference/provider-compatibility/)）。
+
 ## 内存态会话
 
 同一个 `Agent` 实例会在内存里保存 conversation messages：

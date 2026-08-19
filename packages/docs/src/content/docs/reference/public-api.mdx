@@ -29,6 +29,7 @@ description: Stable exports exposed by the SDK package.
 | `createJsonlHistoryStore(options)` | Creates a JSONL history store that persists an Agent's conversation as one message per line. |
 | `defineHistoryStore(impl)` | Creates a custom history store from an implementation object, validating `load`/`append`/`replace` and binding `failOnError` at creation time. |
 | `DEFAULT_COMPACTION_PROMPT` | The built-in summarization instruction used by `autoCompact`. |
+| `SUBMIT_OUTPUT_TOOL_NAME` | Name of the built-in tool (`"submit_output"`) injected when `AgentOptions.outputSchema` is set. The name is reserved in that mode. |
 | `teamMember(options)` | Creates a named team member with role, focus, and agent. |
 | `createTeam(options)` | Creates a callable team wrapper around a lead, members, mailbox, and built-in runtime. After the lead queues a handoff batch, members run before the lead model is called again. Set `runner.maxConcurrentWorkItems` for bounded cross-member concurrency; the default is `1`. |
 | `createTeamRunner(options)` | Advanced runtime for manually running a root `AgentLike` with mailbox-backed delegate tools. Accepts `maxConcurrentWorkItems`; member failures stay isolated and a run-wide abort cancels remaining work. |
@@ -102,6 +103,7 @@ const agent = createBareAgent({
 | `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. `disabled` is sent to the provider explicitly (as `thinking: { "type": "disabled" }`) because some Anthropic-compatible providers, such as DeepSeek, default thinking to on. When omitted, the SDK sends no thinking configuration. See [Provider Compatibility](../provider-compatibility/) for what each provider actually honors. |
 | `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort` (a Kimi convention — ignored by DeepSeek; see [Provider Compatibility](../provider-compatibility/)). When omitted, the provider applies its default. |
 | `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
+| `outputSchema` | `OutputSchema` | Requires the run to end with a validated structured payload. The SDK injects a built-in `submit_output` tool; a valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`, while ending the turn without submitting fails with `error_missing_output` (`MissingOutputError`). Unlike `QueryOptions.outputFormat`, it only requires a tool-capable provider. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
 | `hooks` | `AgentHooks` | Lifecycle callbacks that rewrite tool results and outgoing model requests. Not inherited by delegated agents. |
@@ -220,6 +222,7 @@ than relying on an error.
 | `thinkingConfig: { type: "disabled" }` is sent to the provider explicitly as `thinking: { "type": "disabled" }` instead of being omitted (fixes providers that default thinking to on, e.g. DeepSeek) | 0.17.1 |
 | Tool calls in a response truncated at `max_tokens` are not executed; each call gets an error `tool_result` asking the model to reissue it with shorter output | 0.18.0 |
 | `createLangfuseContextTracer()`, `LangfuseContextTracerOptions`, `LangfuseObservationLike`, `LangfuseChainLike`, `LangfuseGenerationLike`, `LangfuseToolLike`, `LangfuseStartObservation`, `LangfuseFlushableSpanProcessor`, `LangfuseKVMap` | 0.19.0 |
+| `AgentOptions.outputSchema`, `OutputSchema`, `SUBMIT_OUTPUT_TOOL_NAME`, `MissingOutputError`, `SDKResultMessage.structuredResult`, result subtype `error_missing_output`, `AgentRuntimeFailure` code `missing_output`, `ToolResult.structuredResult`, `AgentToolOptions.outputSchema` | 0.20.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -239,6 +242,7 @@ package does not export it as an importable path.
 | `AgentWorkspaceToolsOptions` | `cwd`, write-root, and shell timeout options accepted by `createBuiltinTools()` and `createAgentWorkspaceTools()`. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
+| `OutputSchema` | Validation shape accepted by `AgentOptions.outputSchema` and `AgentToolOptions.outputSchema`: `{ parse(input: unknown): T }`. A zod schema satisfies it directly (requires 0.20.0). |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
 | `TokenUsage` | Token counts reported on `SDKResultMessage.usage` and `AssistantModelMessage.usage`. |
@@ -260,7 +264,7 @@ package does not export it as an importable path.
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
 | `ToolDefinition` | Tool shape passed to an agent. |
-| `ToolResult` | Tool handler return value: `content` plus optional `endTurn`, which ends the run with `subtype: "success"` after the batch instead of calling the model again. |
+| `ToolResult` | Tool handler return value: `content` plus optional `endTurn`, which ends the run with `subtype: "success"` after the batch instead of calling the model again, and optional `structuredResult` (requires 0.20.0), a structured payload carried to `SDKResultMessage.structuredResult` when combined with `endTurn: true` and ignored otherwise. |
 | `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check. |
 | `ToolConcurrencyMode` | Tool scheduling mode: `"safe"`, `"all"`, or `"sequential"`. |
 | `ToolConcurrencyOptions` | Agent tool scheduling mode and positive `maxConcurrency` limit. |
@@ -274,7 +278,7 @@ package does not export it as an importable path.
 | `ToolBatchPolicyContext` | Policy input containing source, host context, signal, and tool calls with `tool` or `agent_tool` kind. |
 | `ToolBatchPolicyResult` | Allows a batch or rejects it with a code, message, conflicting call IDs, and suggested next step. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
-| `AgentToolOptions` | Description and target mailbox options for `agentTool()`. |
+| `AgentToolOptions` | Description and target mailbox options for `agentTool()`, plus optional `outputSchema` (requires 0.20.0): in `ask` mode the tool result is the child's validated structured output as a JSON string, and a missing or invalid child submission surfaces as a `child_output_invalid` tool error. |
 | `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
 | `SkillDefinition` | Reusable instruction bundle passed to an agent. |
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |
@@ -304,3 +308,4 @@ package does not export it as an importable path.
 | `TimeoutError` | A model request exceeded `requestTimeoutMs`; the result subtype is `error_timeout`. |
 | `ToolBatchRejectedError` | Tool batch was rejected before any tool executed. |
 | `ConcurrentQueryError` | A second query was started while the Agent was still running one. An Agent holds one conversation. |
+| `MissingOutputError` | A run with `AgentOptions.outputSchema` ended without the model calling `submit_output`; the result subtype is `error_missing_output`. |

@@ -33,6 +33,21 @@ A tool can also end the loop itself: when any tool in a batch returns `endTurn: 
 
 *Requires 0.16.0 or later.*
 
+## Structured output with submit_output
+
+*Requires 0.20.0 or later.*
+
+Set `AgentOptions.outputSchema` when a run must end with a validated, typed payload instead of free text. The SDK injects a built-in `submit_output` tool (its name is exported as `SUBMIT_OUTPUT_TOOL_NAME`) whose input schema is your schema converted to JSON Schema — `OutputSchema<T>` is just `{ parse(input: unknown): T }`, so a zod schema works directly.
+
+This changes how the loop is allowed to end:
+
+- The model finishes by calling `submit_output`. The payload is validated against the schema first; a validation failure goes back into the loop as an error `tool_result`, so the model can fix it and retry. A valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`.
+- Ending the turn without calling `submit_output` fails the run with `subtype: "error_missing_output"` and a `MissingOutputError`. There is no fallback that parses the final text as JSON — submission is an explicit act.
+- `submit_output` must be the only tool call in its batch: a batch that mixes it with other calls, or contains two submissions, is rejected with code `submit_output_exclusive_batch` and the loop continues.
+- The name is reserved while `outputSchema` is set — registering your own `submit_output` tool throws from `createAgent`/`addTools`.
+
+The structure is enforced by the harness, not by prompt discipline, and only requires a model that can call tools — unlike `outputFormat`, it does not depend on provider `response_format`/`json_schema` support (see [Provider Compatibility](/reference/provider-compatibility/)).
+
 ## One Agent holds one conversation
 
 *Requires 0.10.0 or later.*

@@ -111,6 +111,44 @@ const supervisor = createAgent({
 
 模板目标会在**每次工具调用时 spawn 一个全新会话**——不相关的任务之间不会泄漏历史，并发调用也不会争抢同一段对话。会话目标则跨调用保留历史，先前的任务可能影响后续回答。Supervisor 委派场景优先传模板；只有当专家需要记住之前的任务时，才注册 `spec.spawn()` 产生的会话。生成的工具描述会声明目标是哪种语义，supervisor 模型据此知道任务是否必须自包含。
 
+## 结构化子级输出
+
+*需要 0.20.0 及以上版本。*
+
+当子智能体的交付物应该是带类型的数据而不是一段散文时，父子两边传同一份 `OutputSchema`（zod schema 直接可用）：子 agent 配上 `outputSchema`，它必须通过注入的 `submit_output` 工具提交答案；`agentTool()` 配上 `outputSchema`，父级一侧负责校验返回的内容。
+
+```ts
+import { agentTool, createAgent } from "agent-lattice";
+import { z } from "zod/v4";
+
+const findingsSchema = z.object({
+  files: z.array(z.string()),
+  notes: z.string(),
+});
+
+const explorer = createAgent({
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: "你是 explore 子智能体。检查并报告；不要修改代码。",
+  outputSchema: findingsSchema,
+});
+
+const supervisor = createAgent({
+  model: "deepseek-v4-flash",
+  name: "supervisor",
+  tools: [
+    agentTool("explore", explorer, {
+      description: "让一个临时 explore 子智能体检查代码库并报告发现。",
+      outputSchema: findingsSchema,
+    }),
+  ],
+});
+```
+
+`mode: "ask"` 时，工具结果是子级校验后的结构化输出序列化成的 JSON 字符串，生成的工具描述也会告诉 supervisor 模型这一点。如果子级没有提交就结束了，或提交的内容没通过父级的 schema，工具会返回一条以 `child_output_invalid:` 开头的 `is_error` `tool_result`——这在 supervisor 的 loop 里就是一条普通的工具错误，supervisor 可以重试或换个说法再派。runtime delegate 路径同理：子级失败会抛 `child_output_invalid`，并带上原始的 failure code 和 message。
+
+结构由 harness 把守，而不是靠 prompt 纪律；与 `outputFormat` 不同，它不依赖各 provider 的 `response_format`/`json_schema` 特性——任何支持工具调用的 provider 都能用（见 [Provider 兼容性](/zh/reference/provider-compatibility/)）。
+
 ## Workspace
 
 每个子智能体都有自己的 workspace。对于报告、日志、生成文件或代码等持久交付物，让子智能体写在自己的 workspace 下，并在最终文本里说明关键路径。

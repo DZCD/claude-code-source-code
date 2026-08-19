@@ -29,6 +29,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `createJsonlHistoryStore(options)` | 创建 JSONL history store，把 Agent 的对话历史按每行一条 message 持久化。 |
 | `defineHistoryStore(impl)` | 从实现对象创建自定义 history store，校验 `load`/`append`/`replace` 并在创建时绑定 `failOnError`。 |
 | `DEFAULT_COMPACTION_PROMPT` | `autoCompact` 使用的内置摘要指令。 |
+| `SUBMIT_OUTPUT_TOOL_NAME` | 设置 `AgentOptions.outputSchema` 时注入的内置工具名（`"submit_output"`）。该模式下此名字被保留。 |
 | `teamMember(options)` | 创建一个团队成员，带 name、role、focus 和 agent。 |
 | `createTeam(options)` | 创建一个围绕 Lead 的可调用 Team，包含成员、mailbox 和内置 runtime。Lead 提交一批 handoff 后，SDK 会先执行成员，再继续调用 Lead 模型。通过 `runner.maxConcurrentWorkItems` 设置跨成员并发上限，默认值为 `1`。 |
 | `createTeamRunner(options)` | 高级 runtime，用于手动运行带 mailbox AgentLike 委托工具的 root `AgentLike`。它接收 `maxConcurrentWorkItems`，同时保留成员失败隔离和全局中止清理。 |
@@ -99,6 +100,7 @@ const agent = createBareAgent({
 | `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。`disabled` 会显式发送给 provider（即 `thinking: { "type": "disabled" }`），因为 DeepSeek 等 Anthropic 兼容端点默认开启思考。省略时，SDK 不发送 thinking 配置。各 provider 的实际生效情况见 [Provider 兼容性](../provider-compatibility/)。 |
 | `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`（Kimi 约定——DeepSeek 忽略，见 [Provider 兼容性](../provider-compatibility/)）。省略时使用 provider 默认值。 |
 | `requestTimeoutMs` | `number` | 单次模型请求的期限（毫秒）。即使 model client 忽略它，SDK 也会兜底执行。不设置则 SDK 不加限制。 |
+| `outputSchema` | `OutputSchema` | 要求 run 以校验过的结构化 payload 收尾。SDK 会注入内置的 `submit_output` 工具；校验通过的提交以 `subtype: "success"` 结束、payload 落在 `SDKResultMessage.structuredResult`；未提交就结束回合则以 `error_missing_output`（`MissingOutputError`）失败。与 `QueryOptions.outputFormat` 不同，它只要求 provider 支持工具调用。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
 | `hooks` | `AgentHooks` | 改写工具结果和外发模型请求的生命周期回调。委派的子 agent 不会继承。 |
@@ -210,6 +212,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `thinkingConfig: { type: "disabled" }` 显式发送 `thinking: { "type": "disabled" }` 而不再省略该字段（修复 DeepSeek 等默认开启思考的 provider） | 0.17.1 |
 | 在 `max_tokens` 处截断的响应中的工具调用不再执行；每个调用收到一条错误 `tool_result`，要求模型缩短输出后重新发起 | 0.18.0 |
 | `createLangfuseContextTracer()`、`LangfuseContextTracerOptions`、`LangfuseObservationLike`、`LangfuseChainLike`、`LangfuseGenerationLike`、`LangfuseToolLike`、`LangfuseStartObservation`、`LangfuseFlushableSpanProcessor`、`LangfuseKVMap` | 0.19.0 |
+| `AgentOptions.outputSchema`、`OutputSchema`、`SUBMIT_OUTPUT_TOOL_NAME`、`MissingOutputError`、`SDKResultMessage.structuredResult`、result subtype `error_missing_output`、`AgentRuntimeFailure` code `missing_output`、`ToolResult.structuredResult`、`AgentToolOptions.outputSchema` | 0.20.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -228,6 +231,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentWorkspaceToolsOptions` | `createBuiltinTools()` 和 `createAgentWorkspaceTools()` 接收的 `cwd`、写入根目录和 Shell 超时配置。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
+| `OutputSchema` | `AgentOptions.outputSchema` 和 `AgentToolOptions.outputSchema` 接收的校验形状：`{ parse(input: unknown): T }`。zod schema 直接满足该接口（需要 0.20.0）。 |
 | `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
 | `ReasoningEffort` | `AgentOptions.reasoningEffort` 和 `QueryOptions.reasoningEffort` 接收的 provider 推理强度：`"low"`、`"high"` 或 `"max"`。 |
 | `TokenUsage` | `SDKResultMessage.usage` 和 `AssistantModelMessage.usage` 上报的 token 计数。 |
@@ -249,7 +253,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
 | `ToolDefinition` | 传入 Agent 的工具定义。 |
-| `ToolResult` | 工具 handler 的返回值：`content` 加可选的 `endTurn`——设置后该批次结束后以 `subtype: "success"` 收尾，不再调用模型。 |
+| `ToolResult` | 工具 handler 的返回值：`content` 加可选的 `endTurn`——设置后该批次结束后以 `subtype: "success"` 收尾，不再调用模型；以及可选的 `structuredResult`（需要 0.20.0）——与 `endTurn: true` 搭配时作为结构化 payload 落到 `SDKResultMessage.structuredResult`，否则被忽略。 |
 | `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`。 |
 | `ToolConcurrencyMode` | 工具调度模式：`"safe"`、`"all"` 或 `"sequential"`。 |
 | `ToolConcurrencyOptions` | Agent 的工具调度模式和正整数 `maxConcurrency` 上限。 |
@@ -263,7 +267,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
 | `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
-| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置。 |
+| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及可选的 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
@@ -293,3 +297,4 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `TimeoutError` | 模型请求超过 `requestTimeoutMs`，result subtype 为 `error_timeout`。 |
 | `ToolBatchRejectedError` | 工具批次在任何工具执行前被拒绝。 |
 | `ConcurrentQueryError` | Agent 上一次 query 尚未结束时又发起了一次。一个 Agent 只承载一个会话。 |
+| `MissingOutputError` | 设置了 `AgentOptions.outputSchema` 的 run 在模型未调用 `submit_output` 的情况下结束；result subtype 为 `error_missing_output`。 |

@@ -86,7 +86,7 @@ them, so keep expensive handling off the loop itself.
 | `stream_event` | While the model is responding | Raw provider stream event for incremental rendering. |
 | `assistant` | After each model turn is assembled | The `AssistantModelMessage` with text / `tool_use` blocks and provider metadata. |
 | `user` | After a whole tool batch finishes | Tool results as `ToolResultBlock[]`; the prompt is never echoed. |
-| `result` | Once, at the end of the query | Final text, `subtype` (`"success"`, `"interrupted"`, or an error variant), and token usage. |
+| `result` | Once, at the end of the query | Final text, `subtype` (`"success"`, `"interrupted"`, or an error variant), optional `structuredResult`, and token usage. |
 
 For the exact per-event guarantees see
 [Streaming Events](https://docs.claude-code-sdk.com/concepts/streaming-events/).
@@ -475,6 +475,92 @@ started concurrently, their `tool_result` blocks still enter the history, and
 `onToolResult` hooks and trace events run for them as usual. Only the next
 model call is skipped. When several tools in a batch set `endTurn`, the first
 one's content becomes the result text.
+
+A tool can also return `structuredResult` next to `endTurn: true` to carry a
+structured payload to `SDKResultMessage.structuredResult`
+(*requires 0.20.0 or later*). Without `endTurn`, `structuredResult` is
+ignored.
+
+## Structured Output Via submit_output
+
+*Requires 0.20.0 or later.*
+
+Set `AgentOptions.outputSchema` when a run must deliver a typed result rather
+than free text. The SDK injects a built-in `submit_output` tool (exported as
+`SUBMIT_OUTPUT_TOOL_NAME`) whose input schema is your schema converted to JSON
+Schema — a zod schema works directly, since `OutputSchema<T>` is just
+`{ parse(input: unknown): T }`:
+
+```ts
+import { createAgent } from "agent-lattice";
+import { z } from "zod/v4";
+
+const reviewSchema = z.object({
+  approved: z.boolean(),
+  issues: z.array(z.string()),
+});
+
+const reviewer = createAgent({
+  model: "claude-sonnet-4-6",
+  systemPrompt: "Review the change and submit your verdict.",
+  outputSchema: reviewSchema,
+});
+
+const result = await reviewer.prompt("Review the patch in this workspace.");
+if (result.subtype === "success") {
+  console.log(result.structuredResult); // { approved: false, issues: [...] }
+}
+```
+
+The structure is enforced by the harness, not by prompt discipline:
+
+- The model submits its answer by calling `submit_output`. The payload is
+  validated against the schema first; a validation failure goes back into the
+  loop as an error `tool_result`, so the model can fix it and retry. A valid
+  submission ends the run with `subtype: "success"` and the payload on
+  `SDKResultMessage.structuredResult`.
+- If the model ends its turn without calling `submit_output`, the run fails
+  with `subtype: "error_missing_output"` and a `MissingOutputError`. There is
+  no fallback that parses the final text as JSON.
+- `submit_output` must be the only tool call in its batch. A batch that mixes
+  it with other calls — or contains two submissions — is rejected with code
+  `submit_output_exclusive_batch` and the loop continues.
+- The name is reserved: registering your own `submit_output` tool while
+  `outputSchema` is set throws from `createAgent`/`addTools`.
+
+Unlike `outputFormat` (which relies on the provider's
+`response_format`/`json_schema` support — DeepSeek ignores it, see
+[Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/)),
+`submit_output` only requires a model that can call tools, so it ports to any
+tool-capable provider.
+
+The same schema composes with `agentTool()` for parent/child delegation: pass
+it to the child agent and to `AgentToolOptions.outputSchema` on the parent
+side, and an `ask` call returns the child's validated output as a JSON string:
+
+```ts
+import { agentTool, createAgent } from "agent-lattice";
+
+const child = createAgent({
+  model: "claude-sonnet-4-5",
+  systemPrompt: "You review code and submit a structured verdict.",
+  outputSchema: reviewSchema, // child submits via submit_output
+});
+
+const parent = createAgent({
+  model: "claude-sonnet-4-6",
+  tools: [
+    agentTool("review", child, {
+      description: "Ask the reviewer to audit a change.",
+      outputSchema: reviewSchema, // validates the child's submission
+    }),
+  ],
+});
+```
+
+If the child ends without submitting or submits a payload that fails the
+parent's schema, the tool returns an `is_error` `tool_result` starting with
+`child_output_invalid:`, so the parent model sees the failure and can retry.
 
 ## Concurrent Tool Calls
 
