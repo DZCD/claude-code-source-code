@@ -578,6 +578,26 @@ explicit `outputSchema` still applies. Whenever a schema is in effect, the
 generated tool description states that the tool returns the target's
 validated structured output as JSON.
 
+Two more contract combinations are pinned down since 0.23.0:
+
+- **Target declares no `outputSchema`, `agentTool()` declares one
+  explicitly.** Assembly allows it (nothing to cross-check against), and an
+  `ask` call validates the child's `structuredResult` against the parent-side
+  schema and returns it as JSON. This fits children that end through a custom
+  `endTurn` + `structuredResult` tool performing domain validation beyond the
+  schema (for example reference truthfulness), with the contract declared by
+  the parent alone.
+- **Neither side declares a schema.** When the child ends with a
+  `structuredResult`, the `ask` tool result is its JSON as-is (unvalidated)
+  instead of falling back to the text content and dropping it. The trust
+  level is the same as the text result; the schema's job is validation only,
+  not gating the structured channel. This applies on both the direct path and
+  the team runtime delegate path.
+
+*Behavior change in 0.23.0:* existing code where the child ends with
+`endTurn` + `structuredResult` and the parent declares no schema now receives
+the structured JSON from `ask` instead of the text content.
+
 ### Typed delegation
 
 *Requires 0.21.0 or later.*
@@ -1389,6 +1409,14 @@ the configured workspace roots and task-scoped shared workspace grants, so
 production hosts should pair write and shell access with a permission callback.
 Shell redirects to `/dev/null` are treated as discard targets, not workspace
 writes.
+
+Pass `workspace: false` to opt out of the built-in workspace entirely — no
+built-in file/shell tools and no workspace prompt section, equivalent to
+`createBareAgent()` (*requires 0.23.0 or later*). Unlike `createBareAgent()`,
+the option also works through `defineAgent()`, so
+`defineAgent({ workspace: false })` spawns bare sessions — handy for
+typed-delegation specialists that should have no filesystem or shell surface
+at all.
 
 ## Multi-turn Session
 
