@@ -138,3 +138,15 @@ const agent = createAgent({
 策略拒绝时，整批工具都不会执行，handoff 也不会进入 mailbox。SDK 会给本批每个工具调用返回 `is_error: true`。如果策略自身抛错，SDK 返回 `tool_batch_policy_error`，同样不会执行任何工具。配置策略后，SDK 总会先检查完整批次，再进行并发调度。
 
 该检查只能阻止同一次模型响应中的已知冲突。其它请求或进程也可能修改数据，因此数据库事务和 revision 校验仍然必须保留。
+
+## 工具 metadata
+
+*需要 0.22.0 及以上版本。*
+
+`ToolOptions.metadata` 接收一个 `Record<string, unknown>`，原样透传到 `ToolDefinition.metadata`。SDK 不读也不解释它，也不会展示给模型——它是宿主持有的机器可读注解（例如契约版本）。不传时 `ToolDefinition` 上没有这个键。`AgentToolOptions.metadata` 对 `agentTool()` 生成的工具同理。
+
+## 严格 options 校验
+
+*需要 0.22.0 及以上版本。*
+
+`createAgent()`/`createBareAgent()`/`defineAgent()`（`AgentOptions`）、`agentTool()`（`AgentToolOptions`）、`delegateTool()`（`DelegateToolOptions`）和 `tool()`（`ToolOptions`）的 options 对象现在严格校验：遇到未知键会在装配期直接抛错——`AgentOptions: unknown option "bogusOption". Check for a typo, or upgrade the SDK if this option was added in a newer version.`（`agentTool()`/`delegateTool()` 的错误前缀是 `agentTool("<name>"):` / `delegateTool("<name>"):`）。目的是让「旧版 SDK + 新版 API」的组合快速失败——以前这种组合会成功但功能静默缺失。*行为变化：*以前会被静默忽略的多余键（例如 spread 进来的宿主字段）现在会抛错，升级时记得剔除。

@@ -208,9 +208,12 @@ IDs remain available as `agent_session_id` metadata.
 
 ## Feature availability
 
-Everything below works on the version shown and later. The SDK ignores unknown
-options rather than rejecting them, so calling a newer API on an older install
-succeeds with the feature silently absent — check the installed version rather
+Everything below works on the version shown and later. Before 0.22.0 the SDK
+ignored unknown options rather than rejecting them, so calling a newer API on
+an older install succeeded with the feature silently absent. Since 0.22.0 the
+main factories (`createAgent()`/`createBareAgent()`/`defineAgent()`,
+`agentTool()`, `delegateTool()`, `tool()`) throw on unknown option keys, but
+other options objects still ignore them — check the installed version rather
 than relying on an error.
 
 | Feature | Requires |
@@ -229,6 +232,7 @@ than relying on an error.
 | `createLangfuseContextTracer()`, `LangfuseContextTracerOptions`, `LangfuseObservationLike`, `LangfuseChainLike`, `LangfuseGenerationLike`, `LangfuseToolLike`, `LangfuseStartObservation`, `LangfuseFlushableSpanProcessor`, `LangfuseKVMap` | 0.19.0 |
 | `AgentOptions.outputSchema`, `OutputSchema`, `SUBMIT_OUTPUT_TOOL_NAME`, `MissingOutputError`, `SDKResultMessage.structuredResult`, result subtype `error_missing_output`, `AgentRuntimeFailure` code `missing_output`, `ToolResult.structuredResult`, `AgentToolOptions.outputSchema` | 0.20.0 |
 | `AgentToolOptions.inputSchema` + `mapInput` (typed ask-only delegation), `agentTool()` inherits `outputSchema` from the target and cross-checks explicit copies at assembly time, `Agent.outputSchema` getter, `agentTool()` returns `ToolDefinition<any>` (behavior change: `ask` with an inherited schema now returns the validated JSON instead of the fixed `"Structured output submitted."` text) | 0.21.0 |
+| Strict option validation: `createAgent()`/`createBareAgent()`/`defineAgent()` (`AgentOptions`), `agentTool()` (`AgentToolOptions`), `delegateTool()` (`DelegateToolOptions`), and `tool()` (`ToolOptions`) throw on unknown option keys at assembly time (behavior change: extra keys that used to be silently ignored, e.g. spread host fields, now throw). `ToolOptions.metadata` / `AgentToolOptions.metadata` pass through to `ToolDefinition.metadata` (host-owned, never shown to the model) | 0.22.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -269,9 +273,9 @@ package does not export it as an importable path.
 | `JsonlHistoryStoreOptions` | Options for the built-in JSONL history store: `path` and optional `failOnError`. |
 | `LangSmithRunTreeLike` | Alias for LangSmith's official `RunTree` type. |
 | `LangSmithRunTreeConfig` | Alias for LangSmith's official `RunTreeConfig` type. |
-| `ToolDefinition` | Tool shape passed to an agent. |
+| `ToolDefinition` | Tool shape passed to an agent. Carries optional host-owned `metadata` passed through from `ToolOptions.metadata`/`AgentToolOptions.metadata` (requires 0.22.0); never shown to the model. |
 | `ToolResult` | Tool handler return value: `content` plus optional `endTurn`, which ends the run with `subtype: "success"` after the batch instead of calling the model again, and optional `structuredResult` (requires 0.20.0), a structured payload carried to `SDKResultMessage.structuredResult` when combined with `endTurn: true` and ignored otherwise. |
-| `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check. |
+| `ToolOptions` | Optional `tool()` settings, including the input-aware `isConcurrencySafe` check and host-owned `metadata` (requires 0.22.0) passed through to `ToolDefinition.metadata`. |
 | `ToolConcurrencyMode` | Tool scheduling mode: `"safe"`, `"all"`, or `"sequential"`. |
 | `ToolConcurrencyOptions` | Agent tool scheduling mode and positive `maxConcurrency` limit. |
 | `AutoCompactOptions` | Compaction settings: `thresholdTokens` (100000), `keepRecentMessages` (6), `prompt`, `model`, `maxTokens`. |
@@ -284,7 +288,7 @@ package does not export it as an importable path.
 | `ToolBatchPolicyContext` | Policy input containing source, host context, signal, and tool calls with `tool` or `agent_tool` kind. |
 | `ToolBatchPolicyResult` | Allows a batch or rejects it with a code, message, conflicting call IDs, and suggested next step. |
 | `AgentToolInput` | Standard input shape for `agentTool()`. |
-| `AgentToolOptions` | Description and target mailbox options for `agentTool()`, plus `outputSchema` (requires 0.20.0): in `ask` mode the tool result is the child's validated structured output as a JSON string, and a missing or invalid child submission surfaces as a `child_output_invalid` tool error. Since 0.21.0 an omitted `outputSchema` is inherited from the target's own declaration (`spec.options.outputSchema` or the live Agent's `outputSchema` getter; host-defined `AgentLike` adapters carry no declaration, so nothing is inherited or cross-checked), and an explicit copy that does not match the target's declaration throws at assembly time. Also since 0.21.0, `inputSchema` + `mapInput` (required as a pair) enable typed delegation: the tool takes the custom schema as input — ask-only, no `mode`/`workspaceGrants` — validates the parent's arguments before the child runs, and projects the validated input into the child prompt. |
+| `AgentToolOptions` | Description and target mailbox options for `agentTool()`, plus `outputSchema` (requires 0.20.0): in `ask` mode the tool result is the child's validated structured output as a JSON string, and a missing or invalid child submission surfaces as a `child_output_invalid` tool error. Since 0.21.0 an omitted `outputSchema` is inherited from the target's own declaration (`spec.options.outputSchema` or the live Agent's `outputSchema` getter; host-defined `AgentLike` adapters carry no declaration, so nothing is inherited or cross-checked), and an explicit copy that does not match the target's declaration throws at assembly time. Also since 0.21.0, `inputSchema` + `mapInput` (required as a pair) enable typed delegation: the tool takes the custom schema as input — ask-only, no `mode`/`workspaceGrants` — validates the parent's arguments before the child runs, and projects the validated input into the child prompt. Also accepts host-owned `metadata` (requires 0.22.0) passed through to `ToolDefinition.metadata`; never shown to the model. |
 | `DelegateToolOptions` | Options for mailbox-backed AgentLike delegation. |
 | `SkillDefinition` | Reusable instruction bundle passed to an agent. |
 | `MCPClient` | Minimal MCP client interface used by `createMCPTools()`. |

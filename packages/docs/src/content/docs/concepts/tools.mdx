@@ -136,3 +136,15 @@ const agent = createAgent({
 When rejected, no handler runs and no handoff enters the mailbox. The SDK returns an `is_error: true` result for every tool call in the batch. If the policy throws, the SDK uses `tool_batch_policy_error` and still executes no tools. When configured, the policy always checks the complete batch before concurrency scheduling begins.
 
 This check prevents known conflicts inside one model response. Keep database transactions and revision checks for changes made by other requests or processes.
+
+## Tool metadata
+
+*Requires 0.22.0 or later.*
+
+`ToolOptions.metadata` accepts a `Record<string, unknown>` that is passed through to `ToolDefinition.metadata`. The SDK never reads or interprets it, and it is never shown to the model — it is host-owned, machine-readable annotation (for example a contract version). When not passed, the key is absent from the `ToolDefinition`. `AgentToolOptions.metadata` works the same way for `agentTool()` tools.
+
+## Strict option validation
+
+*Requires 0.22.0 or later.*
+
+The option objects of `createAgent()`/`createBareAgent()`/`defineAgent()` (`AgentOptions`), `agentTool()` (`AgentToolOptions`), `delegateTool()` (`DelegateToolOptions`), and `tool()` (`ToolOptions`) are validated strictly: an unknown key throws at assembly time with `AgentOptions: unknown option "bogusOption". Check for a typo, or upgrade the SDK if this option was added in a newer version.` (`agentTool()`/`delegateTool()` prefix the message with `agentTool("<name>"):` / `delegateTool("<name>"):`). This fails fast on the old-SDK + new-API combination, which previously succeeded with the feature silently absent. *Behavior change:* extra keys that used to be silently ignored — such as host fields spread into an options object — now throw, so strip them when upgrading.

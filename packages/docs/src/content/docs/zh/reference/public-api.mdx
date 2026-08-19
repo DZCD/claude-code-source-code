@@ -200,7 +200,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 
 ## 版本可用性
 
-下表中的能力在所列版本及之后可用。SDK 对**未知选项是忽略而不是报错**，因此在旧版本上调用新 API 会正常成功、而该特性静默失效——请核对已安装版本，不要指望有异常抛出。
+下表中的能力在所列版本及之后可用。0.22.0 之前，SDK 对**未知选项是忽略而不是报错**，因此在旧版本上调用新 API 会正常成功、而该特性静默失效。自 0.22.0 起，主要工厂（`createAgent()`/`createBareAgent()`/`defineAgent()`、`agentTool()`、`delegateTool()`、`tool()`）遇到未知 option 键会直接抛错，但其它 options 对象仍然忽略未知键——请核对已安装版本，不要指望有异常抛出。
 
 | 特性 | 最低版本 |
 | --- | --- |
@@ -218,6 +218,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `createLangfuseContextTracer()`、`LangfuseContextTracerOptions`、`LangfuseObservationLike`、`LangfuseChainLike`、`LangfuseGenerationLike`、`LangfuseToolLike`、`LangfuseStartObservation`、`LangfuseFlushableSpanProcessor`、`LangfuseKVMap` | 0.19.0 |
 | `AgentOptions.outputSchema`、`OutputSchema`、`SUBMIT_OUTPUT_TOOL_NAME`、`MissingOutputError`、`SDKResultMessage.structuredResult`、result subtype `error_missing_output`、`AgentRuntimeFailure` code `missing_output`、`ToolResult.structuredResult`、`AgentToolOptions.outputSchema` | 0.20.0 |
 | `AgentToolOptions.inputSchema` + `mapInput`（typed ask-only 委派）、`agentTool()` 从 target 继承 `outputSchema` 并在装配期核对显式声明、`Agent.outputSchema` getter、`agentTool()` 返回 `ToolDefinition<any>`（行为变化：schema 被继承时 `ask` 的工具结果从固定文本 `"Structured output submitted."` 变为校验后的 JSON） | 0.21.0 |
+| 严格 options 校验：`createAgent()`/`createBareAgent()`/`defineAgent()`（`AgentOptions`）、`agentTool()`（`AgentToolOptions`）、`delegateTool()`（`DelegateToolOptions`）和 `tool()`（`ToolOptions`）在装配期对未知 option 键抛错（行为变化：以前被静默忽略的多余键，例如 spread 进来的宿主字段，现在会抛错）。`ToolOptions.metadata` / `AgentToolOptions.metadata` 透传到 `ToolDefinition.metadata`（宿主持有，不展示给模型） | 0.22.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -257,9 +258,9 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `JsonlHistoryStoreOptions` | 内置 JSONL history store 的配置：`path` 和可选 `failOnError`。 |
 | `LangSmithRunTreeLike` | LangSmith 官方 `RunTree` 类型的别名。 |
 | `LangSmithRunTreeConfig` | LangSmith 官方 `RunTreeConfig` 类型的别名。 |
-| `ToolDefinition` | 传入 Agent 的工具定义。 |
+| `ToolDefinition` | 传入 Agent 的工具定义。可携带从 `ToolOptions.metadata`/`AgentToolOptions.metadata` 透传的宿主持有 `metadata`（需要 0.22.0）；不展示给模型。 |
 | `ToolResult` | 工具 handler 的返回值：`content` 加可选的 `endTurn`——设置后该批次结束后以 `subtype: "success"` 收尾，不再调用模型；以及可选的 `structuredResult`（需要 0.20.0）——与 `endTurn: true` 搭配时作为结构化 payload 落到 `SDKResultMessage.structuredResult`，否则被忽略。 |
-| `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`。 |
+| `ToolOptions` | `tool()` 的可选配置，包括根据输入判断的 `isConcurrencySafe`，以及透传到 `ToolDefinition.metadata` 的宿主持有 `metadata`（需要 0.22.0）。 |
 | `ToolConcurrencyMode` | 工具调度模式：`"safe"`、`"all"` 或 `"sequential"`。 |
 | `ToolConcurrencyOptions` | Agent 的工具调度模式和正整数 `maxConcurrency` 上限。 |
 | `AutoCompactOptions` | 压缩配置：`thresholdTokens`（100000）、`keepRecentMessages`（6）、`prompt`、`model`、`maxTokens`。 |
@@ -272,7 +273,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
 | `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
-| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。 |
+| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。还接收宿主持有的 `metadata`（需要 0.22.0），透传到 `ToolDefinition.metadata`，不展示给模型。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |
