@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { createAgent, createAgentWorkspaceTools, tool, type SDKMessage } from "../index.js";
+import { createAgent, createAgentWorkspaceTools, agentTool, tool, type SDKMessage } from "../index.js";
 
 async function collect(iterable: AsyncIterable<SDKMessage>): Promise<SDKMessage[]> {
   const messages: SDKMessage[] = [];
@@ -159,6 +159,65 @@ describe("agent-sdk integration", () => {
       } finally {
         await rm(cwd, { recursive: true, force: true });
       }
+    },
+  );
+
+  test.skipIf(!process.env.DEEPSEEK_API_KEY)(
+    "DeepSeek submits structured output via submit_output",
+    async () => {
+      const agent = createAgent({
+        ...deepseekAgentOptions(),
+        outputSchema: z.object({
+          sum: z.number(),
+          note: z.string(),
+        }),
+      });
+
+      const result = await agent.prompt("计算 19+23，完成后必须调用 submit_output 工具提交结果。", {
+        stream: false,
+      });
+
+      expect(result).toMatchObject({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+      });
+      expect(result.structuredResult).toMatchObject({ sum: 42 });
+    },
+  );
+
+  test.skipIf(!process.env.DEEPSEEK_API_KEY)(
+    "DeepSeek parent agentTool receives the child's validated structured output",
+    async () => {
+      const outputSchema = z.object({
+        sum: z.number(),
+        note: z.string(),
+      });
+      const child = createAgent({
+        ...deepseekAgentOptions(),
+        outputSchema,
+      });
+      const parent = createAgent({
+        ...deepseekAgentOptions(),
+        tools: [
+          agentTool("calculator", child, {
+            description: "Compute an arithmetic task and return the structured result.",
+            outputSchema,
+          }),
+        ],
+      });
+
+      const result = await parent.prompt(
+        "必须调用 calculator 工具（mode 为 ask）计算 19+23，然后只回答得到的 sum。",
+        { stream: false },
+      );
+
+      expect(result).toMatchObject({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+      });
+      expect(result.result).toContain("42");
     },
   );
 });
