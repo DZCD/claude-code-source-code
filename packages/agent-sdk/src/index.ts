@@ -1196,6 +1196,31 @@ function validateChildStructuredOutput(
   }
 }
 
+/**
+ * The output contract a target declares about itself. Only Agent and AgentSpec
+ * carry a readable declaration; host-defined AgentLike adapters return
+ * undefined, so agentTool neither inherits from nor cross-checks them.
+ */
+function resolveTargetOutputSchema(target: AgentToolTarget): OutputSchema | undefined {
+  if (isAgentSpec(target)) return target.options.outputSchema;
+  if (target instanceof Agent) return target.outputSchema;
+  return undefined;
+}
+
+/**
+ * Reference equality first (the recommended pattern shares one schema
+ * instance), then a structural comparison of the derived JSON Schema so two
+ * independently constructed but identical zod schemas still match.
+ */
+function sameOutputSchema(a: OutputSchema, b: OutputSchema): boolean {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(schemaToJSONSchema(a)) === JSON.stringify(schemaToJSONSchema(b));
+  } catch {
+    return false;
+  }
+}
+
 export type DelegateToolOptions = {
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
@@ -1223,13 +1248,34 @@ export type AgentToolOptions = {
   description: string;
   targetMailboxId?: string;
   /**
-   * Expected structured output of the target, declared with the same schema
-   * the target uses for its own `AgentOptions.outputSchema`. With mode "ask"
-   * the tool result is the target's validated structured output as JSON; a
-   * target that ends without submitting — or submits a payload that fails this
-   * schema — produces a `child_output_invalid` tool error the parent can retry.
+   * Expected structured output of the target. When omitted, the declaration is
+   * inherited from the target itself (an Agent's or AgentSpec's
+   * `AgentOptions.outputSchema`); when passed explicitly it must match the
+   * target's declaration or `agentTool()` throws at assembly time. Host-defined
+   * AgentLike adapters carry no readable declaration, so nothing is inherited
+   * or cross-checked for them.
+   *
+   * With the schema in effect, the tool result is the target's validated
+   * structured output as JSON; a target that ends without submitting — or
+   * submits a payload that fails the schema — produces a `child_output_invalid`
+   * tool error the parent can retry.
    */
   outputSchema?: OutputSchema;
+  /**
+   * Typed delegation: replaces the default `{mode, task, ...}` input shape
+   * with this schema (same structural shape as OutputSchema; a zod schema
+   * works directly). The parent's arguments are validated before the child is
+   * invoked, and `mapInput` projects the validated input into the child
+   * prompt. Typed delegation is ask-only: there is no `mode` field and no
+   * `workspaceGrants`. Requires `mapInput`.
+   */
+  inputSchema?: OutputSchema;
+  /**
+   * Projects validated `inputSchema` input into the child prompt. Returning
+   * `ContentBlock[]` is only supported for direct ask calls; inside a team
+   * runtime the projected prompt must be a string.
+   */
+  mapInput?: (input: any) => string | ContentBlock[];
 };
 
 /**
@@ -1244,46 +1290,83 @@ export function agentTool(
   name: string,
   agent: AgentToolTarget,
   options: AgentToolOptions,
-): ToolDefinition<AgentToolInput> {
+): ToolDefinition<any> {
   const toolName = sanitizeToolName(name);
+
+  if (options.inputSchema && !options.mapInput) {
+    throw new Error(
+      `agentTool("${toolName}") inputSchema requires mapInput to project the validated input into the child prompt.`,
+    );
+  }
+  if (options.mapInput && !options.inputSchema) {
+    throw new Error(`agentTool("${toolName}") mapInput requires inputSchema.`);
+  }
+
+  // The parent's explicit declaration wins when present; otherwise the
+  // target's own declaration is inherited. A target that also declares one
+  // makes drift statically checkable: mismatch fails here, at assembly time.
+  const targetOutputSchema = resolveTargetOutputSchema(agent);
+  if (options.outputSchema && targetOutputSchema && !sameOutputSchema(options.outputSchema, targetOutputSchema)) {
+    throw new Error(
+      `agentTool("${toolName}") outputSchema does not match the target's declared outputSchema. ` +
+        "Share one schema between createAgent/defineAgent and agentTool, or omit the agentTool copy to inherit it.",
+    );
+  }
+  const outputSchema = options.outputSchema ?? targetOutputSchema;
+
+  const typed = options.inputSchema !== undefined;
   const baseDescription = formatAgentToolDescription(options.description, isAgentSpec(agent));
-  const description = options.outputSchema
-    ? `${baseDescription}\n\nWith mode "ask", returns the target's validated structured output as JSON.`
+  const description = outputSchema
+    ? `${baseDescription}\n\nReturns the target's validated structured output as JSON.`
     : baseDescription;
   const definition = tool(
     toolName,
     description,
-    agentToolInputSchema,
-    async (input, toolContext) => {
-      const task = formatAgentToolTask(input);
+    options.inputSchema ?? agentToolInputSchema,
+    async (input: any, toolContext) => {
       // Resolve per invocation: a spec spawns a new session every call, so no
       // history leaks between unrelated tasks.
       const target = resolveAgentTarget(agent);
-      if (input.mode === "observe") {
-        throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
-      }
 
-      if (input.workspaceGrants?.length && !toolContext.agentRuntime) {
-        throw new Error(`agentTool("${toolName}") workspaceGrants require an AgentRuntime so grants can be authorized and reported.`);
-      }
-
-      if (input.mode === "handoff") {
-        if (!toolContext.agentRuntime) {
-          throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
+      let task: string | ContentBlock[];
+      let workspaceGrants: AgentToolInput["workspaceGrants"];
+      if (typed) {
+        task = options.mapInput!(input);
+      } else {
+        const agentInput = input as AgentToolInput;
+        if (agentInput.mode === "observe") {
+          throw new Error(`agentTool("${toolName}") mode=observe is not supported. Available modes: ask, handoff.`);
         }
-        const result = await toolContext.agentRuntime.delegate({
-          name: toolName,
-          description: options.description,
-          agent: target,
-          task,
-          wait: "accepted",
-          targetMailboxId: options.targetMailboxId,
-          workspaceGrants: input.workspaceGrants,
-        });
-        return { content: result.content };
+
+        if (agentInput.workspaceGrants?.length && !toolContext.agentRuntime) {
+          throw new Error(`agentTool("${toolName}") workspaceGrants require an AgentRuntime so grants can be authorized and reported.`);
+        }
+
+        if (agentInput.mode === "handoff") {
+          if (!toolContext.agentRuntime) {
+            throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
+          }
+          const result = await toolContext.agentRuntime.delegate({
+            name: toolName,
+            description: options.description,
+            agent: target,
+            task: formatAgentToolTask(agentInput),
+            wait: "accepted",
+            targetMailboxId: options.targetMailboxId,
+            workspaceGrants: agentInput.workspaceGrants,
+          });
+          return { content: result.content };
+        }
+        task = formatAgentToolTask(agentInput);
+        workspaceGrants = agentInput.workspaceGrants;
       }
 
       if (toolContext.agentRuntime) {
+        if (typeof task !== "string") {
+          throw new Error(
+            `agentTool("${toolName}") mapInput must return a string when the tool runs inside a team runtime; ContentBlock[] prompts are only supported for direct ask calls.`,
+          );
+        }
         const result = await toolContext.agentRuntime.delegate({
           name: toolName,
           description: options.description,
@@ -1291,16 +1374,16 @@ export function agentTool(
           task,
           wait: "result",
           targetMailboxId: options.targetMailboxId,
-          workspaceGrants: input.workspaceGrants,
+          workspaceGrants,
         });
-        if (options.outputSchema) {
+        if (outputSchema) {
           if (result.status === "failed") {
             throw formatChildOutputInvalidError(
               toolName,
               `target failed (${result.error?.code ?? "unknown"}): ${result.error?.message ?? result.content}`,
             );
           }
-          return { content: validateChildStructuredOutput(toolName, options.outputSchema, result.result) };
+          return { content: validateChildStructuredOutput(toolName, outputSchema, result.result) };
         }
         return { content: result.content };
       }
@@ -1310,7 +1393,7 @@ export function agentTool(
         context: toolContext.context,
       });
       if (result.is_error) {
-        if (options.outputSchema && result.subtype === "error_missing_output") {
+        if (outputSchema && result.subtype === "error_missing_output") {
           throw formatChildOutputInvalidError(
             toolName,
             `target ended without calling ${SUBMIT_OUTPUT_TOOL_NAME}, so no structured output was produced`,
@@ -1318,8 +1401,8 @@ export function agentTool(
         }
         throw result.error ?? new Error(result.result || `agentTool("${toolName}") target returned an error`);
       }
-      if (options.outputSchema) {
-        return { content: validateChildStructuredOutput(toolName, options.outputSchema, result) };
+      if (outputSchema) {
+        return { content: validateChildStructuredOutput(toolName, outputSchema, result) };
       }
       return { content: result.result };
     },
@@ -3265,6 +3348,11 @@ class Agent<TContext = unknown> {
       );
     }
     this.options.tools = [...(this.options.tools ?? []), ...tools];
+  }
+
+  /** The structured output contract declared via `AgentOptions.outputSchema`, if any. */
+  get outputSchema(): OutputSchema | undefined {
+    return this.options.outputSchema;
   }
 
   private initMessage(): SDKSystemInitMessage {

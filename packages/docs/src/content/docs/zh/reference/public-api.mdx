@@ -13,7 +13,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `isAgentSpec(target)` | 类型守卫，区分 `AgentSpec` 模板与存活的 `AgentLike` 会话。 |
 | `query(params)` | 一次性 async generator helper。 |
 | `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
-| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 或 `AgentSpec` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 三种调用模式。传入模板时每次调用 spawn 全新会话；传入会话时跨调用保留历史。 |
+| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 或 `AgentSpec` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 三种调用模式。传入模板时每次调用 spawn 全新会话；传入会话时跨调用保留历史。传入 `inputSchema` + `mapInput`（需要 0.21.0）时工具改用自定义 typed 输入形状（ask-only），返回类型为 `ToolDefinition<any>`。 |
 | `delegateTool(name, description, agent, options)` | 高级 helper，把一个 `AgentLike` 或 `AgentSpec` 暴露成 mailbox-backed 委托工具。 |
 | `skill(options)` | 创建内存态 skill。 |
 | `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
@@ -65,6 +65,10 @@ await agent.replaceHistory(messages);
 // 以 subtype "interrupted" 结束当前 query，已完成轮次保留在历史中，
 // 后续可以用新的 query 继续对话。有 query 被中断时返回 true，空闲时返回 false。
 agent.interrupt();
+
+// 经 AgentOptions.outputSchema 声明的结构化输出契约（如有）。
+// 只读；agentTool() 的契约继承会读取它。需要 0.21.0 及以上版本。
+agent.outputSchema;
 ```
 
 `interrupt()` 是 `QueryOptions.signal` 的协作式对应物：signal 以 `error_abort` 终止 query，而 interrupt 只丢弃在飞的一轮、以 `interrupted` 收尾（不算错误）。没有在飞的 query 时返回 `false`，宿主据此知道可以直接发下一个 query。
@@ -213,6 +217,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 在 `max_tokens` 处截断的响应中的工具调用不再执行；每个调用收到一条错误 `tool_result`，要求模型缩短输出后重新发起 | 0.18.0 |
 | `createLangfuseContextTracer()`、`LangfuseContextTracerOptions`、`LangfuseObservationLike`、`LangfuseChainLike`、`LangfuseGenerationLike`、`LangfuseToolLike`、`LangfuseStartObservation`、`LangfuseFlushableSpanProcessor`、`LangfuseKVMap` | 0.19.0 |
 | `AgentOptions.outputSchema`、`OutputSchema`、`SUBMIT_OUTPUT_TOOL_NAME`、`MissingOutputError`、`SDKResultMessage.structuredResult`、result subtype `error_missing_output`、`AgentRuntimeFailure` code `missing_output`、`ToolResult.structuredResult`、`AgentToolOptions.outputSchema` | 0.20.0 |
+| `AgentToolOptions.inputSchema` + `mapInput`（typed ask-only 委派）、`agentTool()` 从 target 继承 `outputSchema` 并在装配期核对显式声明、`Agent.outputSchema` getter、`agentTool()` 返回 `ToolDefinition<any>`（行为变化：schema 被继承时 `ask` 的工具结果从固定文本 `"Structured output submitted."` 变为校验后的 JSON） | 0.21.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -267,7 +272,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
 | `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
-| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及可选的 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。 |
+| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |

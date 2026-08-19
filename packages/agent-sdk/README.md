@@ -534,9 +534,15 @@ Unlike `outputFormat` (which relies on the provider's
 `submit_output` only requires a model that can call tools, so it ports to any
 tool-capable provider.
 
-The same schema composes with `agentTool()` for parent/child delegation: pass
-it to the child agent and to `AgentToolOptions.outputSchema` on the parent
-side, and an `ask` call returns the child's validated output as a JSON string:
+The same schema composes with `agentTool()` for parent/child delegation: give
+it to the child agent, and an `ask` call returns the child's validated output
+as a JSON string. Since 0.21.0 the parent side inherits the child's declared
+schema, so the `agentTool()` copy can be omitted. Passing
+`AgentToolOptions.outputSchema` explicitly is still allowed, but it must match
+the target's declaration (compared by reference, then by derived JSON Schema
+structure) — a mismatch throws at assembly time, so drift fails fast instead
+of at call time. The error message suggests sharing one schema instance or
+omitting the `agentTool()` copy:
 
 ```ts
 import { agentTool, createAgent } from "agent-lattice";
@@ -552,15 +558,65 @@ const parent = createAgent({
   tools: [
     agentTool("review", child, {
       description: "Ask the reviewer to audit a change.",
-      outputSchema: reviewSchema, // validates the child's submission
+      // outputSchema is inherited from the child (0.21.0+); an explicit copy
+      // must match the child's declaration or agentTool() throws.
     }),
   ],
 });
 ```
 
 If the child ends without submitting or submits a payload that fails the
-parent's schema, the tool returns an `is_error` `tool_result` starting with
+schema, the tool returns an `is_error` `tool_result` starting with
 `child_output_invalid:`, so the parent model sees the failure and can retry.
+
+*Behavior change in 0.21.0:* where the child declares an `outputSchema` and
+the parent does not, the `ask` tool result changed from the fixed text
+`"Structured output submitted."` to the validated JSON. That is the intended
+fix and ships in a minor under 0.x. Host-defined `AgentLike` adapters carry no
+readable declaration, so nothing is inherited or cross-checked for them; an
+explicit `outputSchema` still applies. Whenever a schema is in effect, the
+generated tool description states that the tool returns the target's
+validated structured output as JSON.
+
+### Typed delegation
+
+*Requires 0.21.0 or later.*
+
+`AgentToolOptions.inputSchema` replaces the default `{mode, task,
+expectedOutput, acceptanceCriteria, workspaceGrants}` input shape with your
+own schema (a zod schema works directly), and `mapInput` projects the
+validated input into the child prompt:
+
+```ts
+const judge = createAgent({
+  model: "claude-sonnet-4-5",
+  systemPrompt: "You judge a case and submit a structured verdict.",
+  outputSchema: verdictSchema,
+});
+
+const judgeTool = agentTool("judge", judge, {
+  description: "Judge a case from its summary and documents.",
+  inputSchema: z.object({
+    caseSummary: z.string(),
+    documents: z.array(z.object({ title: z.string(), content: z.string() })),
+  }),
+  mapInput: input => renderJudgeTask(input.caseSummary, input.documents),
+});
+```
+
+- The parent's arguments are parsed against `inputSchema` before anything
+  runs; invalid input is rejected as an error `tool_result` in the parent's
+  loop — the same semantics as a plain `tool()` call — and the child is never
+  invoked.
+- `inputSchema` and `mapInput` must come as a pair: `agentTool()` throws at
+  assembly time when one is missing.
+- Typed delegation is ask-only: there is no `mode` field and no
+  `workspaceGrants`.
+- `mapInput` may return a string or `ContentBlock[]`; `ContentBlock[]` is only
+  supported for direct `ask` calls — inside a team runtime the projected
+  prompt must be a string, or the call fails at runtime.
+- Because typed input no longer matches `AgentToolInput`, `agentTool()` now
+  returns `ToolDefinition<any>`.
 
 ## Concurrent Tool Calls
 
