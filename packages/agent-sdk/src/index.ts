@@ -556,6 +556,11 @@ export type ToolHandler<TInput = unknown, TContext = unknown> = (
 
 export type ToolOptions<TInput = unknown> = {
   isConcurrencySafe?: (input: TInput) => boolean;
+  /**
+   * Host-owned, machine-readable annotations carried on the tool definition.
+   * The SDK never reads or interprets it; it is never shown to the model.
+   */
+  metadata?: Record<string, unknown>;
 };
 
 export type ToolDefinition<TInput = unknown, TContext = unknown> = {
@@ -567,7 +572,57 @@ export type ToolDefinition<TInput = unknown, TContext = unknown> = {
   parse(input: unknown): TInput;
   handler: ToolHandler<TInput, TContext>;
   isConcurrencySafe?: (input: TInput) => boolean;
+  /** Host-owned annotations passed through from `ToolOptions.metadata`. */
+  metadata?: Record<string, unknown>;
 };
+
+const KNOWN_TOOL_OPTION_KEYS = new Set(["isConcurrencySafe", "metadata"]);
+
+function assertKnownOptionKeys(factory: string, options: object, knownKeys: Set<string>): void {
+  for (const key of Object.keys(options)) {
+    if (!knownKeys.has(key)) {
+      throw new Error(
+        `${factory}: unknown option "${key}". Check for a typo, or upgrade the SDK if this option was added in a newer version.`,
+      );
+    }
+  }
+}
+
+const KNOWN_AGENT_OPTION_KEYS = new Set([
+  "apiKey",
+  "baseURL",
+  "name",
+  "model",
+  "systemPrompt",
+  "maxTokens",
+  "maxTurns",
+  "thinkingConfig",
+  "reasoningEffort",
+  "requestTimeoutMs",
+  "tools",
+  "toolBatchPolicy",
+  "hooks",
+  "autoCompact",
+  "toolConcurrency",
+  "skills",
+  "workspace",
+  "permission",
+  "modelClient",
+  "tracer",
+  "historyStore",
+  "outputSchema",
+]);
+
+const KNOWN_AGENT_TOOL_OPTION_KEYS = new Set([
+  "description",
+  "targetMailboxId",
+  "metadata",
+  "outputSchema",
+  "inputSchema",
+  "mapInput",
+]);
+
+const KNOWN_DELEGATE_TOOL_OPTION_KEYS = new Set(["wait", "targetMailboxId", "workspaceGrants"]);
 
 export type ToolConcurrencyMode = "safe" | "all" | "sequential";
 
@@ -1125,6 +1180,9 @@ function createToolDefinition<TSchema, TContext = unknown>(
   handler: ToolHandler<InferInput<TSchema>, TContext>,
   options?: ToolOptions<InferInput<TSchema>>,
 ): ToolDefinition<InferInput<TSchema>, TContext> {
+  if (options) {
+    assertKnownOptionKeys(`tool("${name}")`, options, KNOWN_TOOL_OPTION_KEYS);
+  }
   return {
     name,
     description,
@@ -1135,6 +1193,7 @@ function createToolDefinition<TSchema, TContext = unknown>(
     },
     handler,
     ...(options?.isConcurrencySafe ? { isConcurrencySafe: options.isConcurrencySafe } : {}),
+    ...(options?.metadata ? { metadata: options.metadata } : {}),
   };
 }
 
@@ -1248,6 +1307,12 @@ export type AgentToolOptions = {
   description: string;
   targetMailboxId?: string;
   /**
+   * Host-owned, machine-readable annotations carried on the tool definition
+   * (e.g. a contract version). The SDK never reads or interprets it; it is
+   * never shown to the model.
+   */
+  metadata?: Record<string, unknown>;
+  /**
    * Expected structured output of the target. When omitted, the declaration is
    * inherited from the target itself (an Agent's or AgentSpec's
    * `AgentOptions.outputSchema`); when passed explicitly it must match the
@@ -1292,6 +1357,8 @@ export function agentTool(
   options: AgentToolOptions,
 ): ToolDefinition<any> {
   const toolName = sanitizeToolName(name);
+
+  assertKnownOptionKeys(`agentTool("${toolName}")`, options, KNOWN_AGENT_TOOL_OPTION_KEYS);
 
   if (options.inputSchema && !options.mapInput) {
     throw new Error(
@@ -1406,6 +1473,7 @@ export function agentTool(
       }
       return { content: result.result };
     },
+    options.metadata ? { metadata: options.metadata } : undefined,
   );
   return { ...definition, kind: "agent_tool" };
 }
@@ -1417,6 +1485,7 @@ export function delegateTool(
   options: DelegateToolOptions = {},
 ): ToolDefinition<{ task: string }> {
   const toolName = sanitizeToolName(name);
+  assertKnownOptionKeys(`delegateTool("${toolName}")`, options, KNOWN_DELEGATE_TOOL_OPTION_KEYS);
   const definition = tool(
     toolName,
     description,
@@ -1467,6 +1536,7 @@ export type AgentSpec<TContext = unknown> = {
 };
 
 export function defineAgent<TContext = unknown>(options: AgentOptions<TContext>): AgentSpec<TContext> {
+  assertKnownOptionKeys("AgentOptions", options, KNOWN_AGENT_OPTION_KEYS);
   if (!options?.model) {
     throw new Error("AgentOptions.model is required");
   }
@@ -2553,6 +2623,7 @@ class Agent<TContext = unknown> {
     if (!options.model) {
       throw new Error("AgentOptions.model is required");
     }
+    assertKnownOptionKeys("AgentOptions", options, KNOWN_AGENT_OPTION_KEYS);
     const internalOptions = options as InternalAgentOptions<TContext>;
     const publicOptions = { ...options } as InternalAgentOptions<TContext>;
     delete publicOptions[BARE_AGENT_OPTIONS];
