@@ -440,3 +440,78 @@ describe("agentTool outputSchema inheritance and assembly-time checks", () => {
     );
   });
 });
+
+describe("agentTool structured channel without a child outputSchema declaration", () => {
+  // A child that delivers via its own domain-validating submit tool: the tool
+  // attaches the payload as structuredResult with endTurn, no outputSchema.
+  function createDomainChild(payload: Record<string, unknown>) {
+    return createBareAgent({
+      model: "claude-test-child",
+      tools: [
+        tool(
+          "deliver_judgment",
+          "Deliver the validated judgment.",
+          z.object({ verdict: z.string(), citations: z.array(z.string()) }),
+          async input => ({
+            content: "Judgment delivered.",
+            endTurn: true,
+            structuredResult: input,
+          }),
+        ),
+      ],
+      modelClient: clientFromResponses([
+        toolUseAssistant("deliver_1", "deliver_judgment", payload),
+      ]),
+    });
+  }
+
+  const payload = { verdict: "supported", citations: ["doc-1"] };
+
+  function parentRequests(): ModelRequest[] {
+    return [];
+  }
+
+  async function runParent(childToolsOptions: { outputSchema?: z.ZodTypeAny }) {
+    const requests = parentRequests();
+    const parent = createBareAgent({
+      model: "claude-test-parent",
+      tools: [
+        agentTool("judge", createDomainChild(payload), {
+          description: "Judge a case.",
+          ...childToolsOptions,
+        }),
+      ],
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("call_1", "judge", { mode: "ask", task: "judge it" }),
+          textAssistant("parent done"),
+        ],
+        requests,
+      ),
+    });
+    const result = await parent.prompt("Use the judge", { stream: false });
+    return { result, requests };
+  }
+
+  test("explicit outputSchema with an undeclared target validates the structuredResult", async () => {
+    const { result, requests } = await runParent({
+      outputSchema: z.object({ verdict: z.string(), citations: z.array(z.string()) }),
+    });
+    expect(result.subtype).toBe("success");
+    expect(JSON.stringify(requests[1]?.messages)).toContain(JSON.stringify(JSON.stringify(payload)));
+  });
+
+  test("explicit outputSchema rejects a payload that fails it, child_output_invalid", async () => {
+    const { result, requests } = await runParent({
+      outputSchema: z.object({ verdict: z.literal("rejected"), citations: z.array(z.string()) }),
+    });
+    expect(result.subtype).toBe("success");
+    expect(JSON.stringify(requests[1]?.messages)).toContain("child_output_invalid");
+  });
+
+  test("no schema anywhere: the structuredResult is passed through as JSON", async () => {
+    const { result, requests } = await runParent({});
+    expect(result.subtype).toBe("success");
+    expect(JSON.stringify(requests[1]?.messages)).toContain(JSON.stringify(JSON.stringify(payload)));
+  });
+});

@@ -892,7 +892,13 @@ export type AgentOptions<TContext = unknown> = {
   autoCompact?: boolean | AutoCompactOptions;
   toolConcurrency?: ToolConcurrencyOptions;
   skills?: SkillDefinition[];
-  workspace?: AgentWorkspaceOptions;
+  /**
+   * Workspace root for the built-in file/shell tools. `false` disables the
+   * built-in workspace entirely: no workspace tools, no workspace prompt
+   * section — equivalent to `createBareAgent`, and the way to make
+   * `defineAgent` spawn bare sessions.
+   */
+  workspace?: AgentWorkspaceOptions | false;
   permission?: (request: PermissionRequest) => Promise<PermissionDecision> | PermissionDecision;
   modelClient?: ModelClient;
   tracer?: ContextTracer;
@@ -1323,7 +1329,10 @@ export type AgentToolOptions = {
    * With the schema in effect, the tool result is the target's validated
    * structured output as JSON; a target that ends without submitting — or
    * submits a payload that fails the schema — produces a `child_output_invalid`
-   * tool error the parent can retry.
+   * tool error the parent can retry. Without any schema, a `structuredResult`
+   * the target produced is still passed through as JSON (same trust level as
+   * the text result); schema only adds validation, it does not gate the
+   * structured channel.
    */
   outputSchema?: OutputSchema;
   /**
@@ -1452,6 +1461,11 @@ export function agentTool(
           }
           return { content: validateChildStructuredOutput(toolName, outputSchema, result.result) };
         }
+        // No declared schema: pass a structured result through as JSON rather
+        // than dropping it for the text content — same trust level as text.
+        if (result.result?.structuredResult !== undefined) {
+          return { content: JSON.stringify(result.result.structuredResult) ?? "null" };
+        }
         return { content: result.content };
       }
 
@@ -1470,6 +1484,11 @@ export function agentTool(
       }
       if (outputSchema) {
         return { content: validateChildStructuredOutput(toolName, outputSchema, result) };
+      }
+      // No declared schema: pass a structured result through as JSON rather
+      // than dropping it for the text content — same trust level as text.
+      if (result.structuredResult !== undefined) {
+        return { content: JSON.stringify(result.structuredResult) ?? "null" };
       }
       return { content: result.result };
     },
@@ -2627,9 +2646,12 @@ class Agent<TContext = unknown> {
     const internalOptions = options as InternalAgentOptions<TContext>;
     const publicOptions = { ...options } as InternalAgentOptions<TContext>;
     delete publicOptions[BARE_AGENT_OPTIONS];
-    const configuredOptions = internalOptions[BARE_AGENT_OPTIONS]?.installWorkspace === false
-      ? publicOptions
-      : applyAgentWorkspaceOptions(publicOptions, this.sessionId);
+    // workspace: false opts out of the built-in workspace entirely — the bare
+    // path createBareAgent uses, reachable from createAgent/defineAgent too.
+    const configuredOptions =
+      internalOptions[BARE_AGENT_OPTIONS]?.installWorkspace === false || publicOptions.workspace === false
+        ? publicOptions
+        : applyAgentWorkspaceOptions(publicOptions, this.sessionId);
     this.options = {
       maxTokens: 16384,
       maxTurns: 50,

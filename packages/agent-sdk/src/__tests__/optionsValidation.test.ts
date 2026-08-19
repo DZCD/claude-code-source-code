@@ -7,6 +7,7 @@ import {
   defineAgent,
   delegateTool,
   tool,
+  type SDKMessage,
 } from "../index.js";
 
 const validAgentOptions = {
@@ -86,5 +87,41 @@ describe("tool metadata", () => {
   test("definitions without metadata have no metadata key", () => {
     const definition = tool("t", "d", z.object({}), async () => ({ content: "x" }));
     expect("metadata" in definition).toBe(false);
+  });
+});
+
+describe("workspace: false", () => {
+  test("createAgent with workspace: false installs no workspace tools", async () => {
+    const agent = createAgent({
+      ...validAgentOptions,
+      workspace: false,
+      modelClient: {
+        async createMessage() {
+          return { role: "assistant" as const, content: [{ type: "text" as const, text: "hi" }] };
+        },
+      },
+    });
+    const messages: SDKMessage[] = [];
+    for await (const message of agent.query("hi", { stream: false })) {
+      messages.push(message);
+    }
+    expect(messages[0]).toMatchObject({ type: "system", subtype: "init", tools: [] });
+  });
+
+  test("defineAgent with workspace: false spawns bare sessions", async () => {
+    const spec = defineAgent({
+      ...validAgentOptions,
+      workspace: false,
+      modelClient: {
+        async createMessage() {
+          return { role: "assistant" as const, content: [{ type: "text" as const, text: "hi" }] };
+        },
+      },
+    });
+    const messages: SDKMessage[] = [];
+    for await (const message of spec.spawn().query("hi", { stream: false })) {
+      messages.push(message);
+    }
+    expect(messages[0]).toMatchObject({ type: "system", subtype: "init", tools: [] });
   });
 });
