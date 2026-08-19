@@ -4,6 +4,7 @@ import {
   MissingOutputError,
   agentTool,
   createBareAgent,
+  defineAgent,
   tool,
   type ModelClient,
   type ModelRequest,
@@ -280,5 +281,162 @@ describe("agentTool outputSchema", () => {
     expect(result.subtype).toBe("success");
     const toolResults = JSON.stringify(requests[1]?.messages);
     expect(toolResults).toContain("child_output_invalid");
+  });
+});
+
+describe("agentTool typed delegation (inputSchema + mapInput)", () => {
+  const judgeInputSchema = z.object({
+    caseSummary: z.string(),
+    score: z.number(),
+  });
+
+  function createJudge(childRequests: ModelRequest[]) {
+    return defineAgent({
+      model: "claude-test-child",
+      outputSchema,
+      modelClient: clientFromResponses(
+        [toolUseAssistant("submit_1", "submit_output", submittedPayload())],
+        childRequests,
+      ),
+    });
+  }
+
+  function createTypedParent(child: ReturnType<typeof createJudge>, parentRequests?: ModelRequest[]) {
+    return createBareAgent({
+      model: "claude-test-parent",
+      tools: [
+        agentTool("judge", child, {
+          description: "Judge a case.",
+          inputSchema: judgeInputSchema,
+          mapInput: input => `Judge this case: ${input.caseSummary} (score ${input.score})`,
+          // outputSchema omitted on purpose: inherited from the target spec.
+        }),
+      ],
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("call_1", "judge", { caseSummary: "case A", score: 3 }),
+          textAssistant("parent done"),
+        ],
+        parentRequests,
+      ),
+    });
+  }
+
+  test("typed input is validated, mapped to the child prompt, and outputSchema is inherited", async () => {
+    const childRequests: ModelRequest[] = [];
+    const parentRequests: ModelRequest[] = [];
+    const parent = createTypedParent(createJudge(childRequests), parentRequests);
+
+    const result = await parent.prompt("Judge case A", { stream: false });
+
+    expect(result.subtype).toBe("success");
+    // mapInput projected the validated input into the child's prompt.
+    expect(JSON.stringify(childRequests[0]?.messages)).toContain("Judge this case: case A (score 3)");
+    // The parent omitted outputSchema; the child spec's declaration was
+    // inherited, so the tool result is the validated output as JSON.
+    expect(JSON.stringify(parentRequests[1]?.messages)).toContain(
+      JSON.stringify(JSON.stringify(submittedPayload())),
+    );
+  });
+
+  test("invalid typed input is rejected before the child is invoked", async () => {
+    const childRequests: ModelRequest[] = [];
+    const parentRequests: ModelRequest[] = [];
+    const parent = createBareAgent({
+      model: "claude-test-parent",
+      tools: [
+        agentTool("judge", createJudge(childRequests), {
+          description: "Judge a case.",
+          inputSchema: judgeInputSchema,
+          mapInput: input => `Judge this case: ${input.caseSummary}`,
+        }),
+      ],
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("call_1", "judge", { caseSummary: "case A", score: "not-a-number" }),
+          textAssistant("parent done"),
+        ],
+        parentRequests,
+      ),
+    });
+
+    const result = await parent.prompt("Judge case A", { stream: false });
+
+    expect(result.subtype).toBe("success");
+    // The parse failure went back to the parent loop as an error tool_result.
+    expect(JSON.stringify(parentRequests[1]?.messages)).toContain("Tool judge failed");
+    // The child was never invoked.
+    expect(childRequests).toHaveLength(0);
+  });
+
+  test("inputSchema without mapInput (and vice versa) throws at assembly time", () => {
+    const child = createJudge([]);
+    expect(() =>
+      agentTool("judge", child, {
+        description: "Judge a case.",
+        inputSchema: judgeInputSchema,
+      }),
+    ).toThrow(/mapInput/);
+    expect(() =>
+      agentTool("judge", child, {
+        description: "Judge a case.",
+        mapInput: () => "task",
+      }),
+    ).toThrow(/inputSchema/);
+  });
+});
+
+describe("agentTool outputSchema inheritance and assembly-time checks", () => {
+  test("an explicit outputSchema equal in structure to the target's does not throw", () => {
+    const child = createBareAgent({
+      model: "claude-test-child",
+      outputSchema,
+      modelClient: clientFromResponses([]),
+    });
+    // A separately constructed but structurally identical schema is accepted.
+    const sameShape = z.object({ answer: z.number(), summary: z.string() });
+    expect(() =>
+      agentTool("child", child, { description: "Run the child.", outputSchema: sameShape }),
+    ).not.toThrow();
+  });
+
+  test("an explicit outputSchema that drifts from the target's throws at assembly time", () => {
+    const child = createBareAgent({
+      model: "claude-test-child",
+      outputSchema,
+      modelClient: clientFromResponses([]),
+    });
+    const drifted = z.object({ answer: z.number() });
+    expect(() =>
+      agentTool("child", child, { description: "Run the child.", outputSchema: drifted }),
+    ).toThrow(/does not match the target's declared outputSchema/);
+  });
+
+  test("a live Agent target also exposes its declaration for inheritance", async () => {
+    const child = createBareAgent({
+      model: "claude-test-child",
+      outputSchema,
+      modelClient: clientFromResponses([toolUseAssistant("s1", "submit_output", submittedPayload())]),
+    });
+    expect(child.outputSchema).toBe(outputSchema);
+
+    const parentRequests: ModelRequest[] = [];
+    const parent = createBareAgent({
+      model: "claude-test-parent",
+      tools: [agentTool("child", child, { description: "Run the child." })],
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("call_1", "child", { mode: "ask", task: "go" }),
+          textAssistant("done"),
+        ],
+        parentRequests,
+      ),
+    });
+
+    const result = await parent.prompt("Use the child", { stream: false });
+    expect(result.subtype).toBe("success");
+    expect(JSON.stringify(parentRequests[1]?.messages)).toContain(
+      JSON.stringify(JSON.stringify(submittedPayload())),
+    );
   });
 });
