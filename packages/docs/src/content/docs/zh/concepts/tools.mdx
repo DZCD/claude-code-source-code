@@ -65,6 +65,8 @@ const finish = tool(
 
 `endTurn` 不会取消同批次的其他工具——它们已经并发启动，其 `tool_result` 照常进入历史，`onToolResult` hook 和 trace 事件也照常执行，只是跳过了下一轮模型调用。同一批次多个工具都设置 `endTurn` 时，取第一个工具的内容作为结果文本。
 
+结束运行的工具还可以在 `endTurn: true` 之外返回 `structuredResult`，payload 会落在 `SDKResultMessage.structuredResult` 上；不带 `endTurn` 时 `structuredResult` 会被忽略。*需要 0.20.0 及以上版本。*
+
 ## 并发执行互不依赖的工具
 
 *需要 0.9.25 及以上版本。*

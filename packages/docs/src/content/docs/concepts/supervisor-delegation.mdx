@@ -111,6 +111,44 @@ const supervisor = createAgent({
 
 A spec target spawns a **fresh session on every tool call** — no history leaks between unrelated tasks, and concurrent calls never collide on a shared conversation. A session target keeps its history across calls, so earlier tasks can influence later answers. Prefer a spec for supervisor delegation; register `spec.spawn()` only when the specialist should remember previous tasks. The generated tool description states which semantics the target has, so the supervisor model knows whether each task must be self-contained.
 
+## Structured child output
+
+*Requires 0.20.0 or later.*
+
+When the child's deliverable should be typed data rather than prose, give both sides the same `OutputSchema` (a zod schema works directly): the child agent gets `outputSchema`, so it must submit its answer through the injected `submit_output` tool, and `agentTool()` gets `outputSchema` so the parent side validates what comes back.
+
+```ts
+import { agentTool, createAgent } from "agent-lattice";
+import { z } from "zod/v4";
+
+const findingsSchema = z.object({
+  files: z.array(z.string()),
+  notes: z.string(),
+});
+
+const explorer = createAgent({
+  model: "deepseek-v4-flash",
+  name: "explorer",
+  systemPrompt: "You are an explore subagent. Inspect and report; do not make code changes.",
+  outputSchema: findingsSchema,
+});
+
+const supervisor = createAgent({
+  model: "deepseek-v4-flash",
+  name: "supervisor",
+  tools: [
+    agentTool("explore", explorer, {
+      description: "Ask a temporary explore subagent to inspect the codebase and report findings.",
+      outputSchema: findingsSchema,
+    }),
+  ],
+});
+```
+
+With `mode: "ask"` the tool result is the child's validated structured output as a JSON string, and the generated tool description tells the supervisor model to expect that. If the child ends without submitting, or its submission fails the parent's schema, the tool returns an `is_error` `tool_result` starting with `child_output_invalid:` — a normal tool error in the supervisor's loop, so the supervisor can retry or rephrase the task. The same applies on the runtime delegate path: a failed child surfaces as `child_output_invalid` carrying the original failure code and message.
+
+The structure is enforced by the harness rather than by prompt discipline, and unlike `outputFormat` it does not depend on provider `response_format`/`json_schema` support — any tool-capable provider works (see [Provider Compatibility](/reference/provider-compatibility/)).
+
 ## Workspaces
 
 Each child agent has its own workspace. Ask child agents to write durable reports, logs, generated files, or code under their workspace and mention important paths in their final text.

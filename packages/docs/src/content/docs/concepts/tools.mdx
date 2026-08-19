@@ -39,6 +39,8 @@ type ToolResult = {
   content: string | ContentBlock[];
   /** End the run after this tool batch: finish with subtype "success" instead of calling the model again. */
   endTurn?: boolean;
+  /** Structured payload carried to `SDKResultMessage.structuredResult` when this tool also sets `endTurn: true`. Ignored otherwise. */
+  structuredResult?: unknown;
 };
 ```
 
@@ -60,6 +62,8 @@ const finish = tool(
 ```
 
 `endTurn` does not cancel the other tools of the same batch — they already started concurrently, their `tool_result` blocks still enter the history, and `onToolResult` hooks and trace events run for them as usual. Only the next model call is skipped. When several tools in a batch set `endTurn`, the first one's content becomes the result text.
+
+A tool that ends the run can also return `structuredResult` next to `endTurn: true`; the payload lands on `SDKResultMessage.structuredResult`. Without `endTurn`, `structuredResult` is ignored. *Requires 0.20.0 or later.*
 
 ## Run independent tools concurrently
 

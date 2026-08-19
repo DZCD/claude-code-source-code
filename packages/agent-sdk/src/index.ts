@@ -69,6 +69,7 @@ type ToolExecutionOutcome = {
   block: ToolResultBlock;
   error?: Error;
   endTurn?: boolean;
+  structuredResult?: unknown;
 };
 export type ThinkingBlock = {
   type: "thinking";
@@ -137,6 +138,7 @@ export type AgentRuntimeFailure = {
     | "api_error"
     | "tool_execution_error"
     | "permission_denied"
+    | "missing_output"
     | "agent_error";
   message: string;
   name: string;
@@ -402,6 +404,11 @@ export type ToolResult = {
   content: string | ContentBlock[];
   /** End the run after this tool batch: finish with subtype "success" instead of calling the model again. */
   endTurn?: boolean;
+  /**
+   * Structured payload carried to `SDKResultMessage.structuredResult` when this
+   * tool also ends the run with `endTurn`. Ignored otherwise.
+   */
+  structuredResult?: unknown;
 };
 
 export type ToolKind = "tool" | "agent_tool";
@@ -811,6 +818,16 @@ export type AgentOptions<TContext = unknown> = {
   requestTimeoutMs?: number;
   tools?: Array<ToolDefinition<any, TContext>>;
   toolBatchPolicy?: ToolBatchPolicy<TContext>;
+  /**
+   * Declares the run's structured output contract. When set, the SDK injects a
+   * `submit_output` tool with this schema: the run only ends successfully once
+   * the model submits a payload through it, and the validated payload lands on
+   * `SDKResultMessage.structuredResult`. Ending the turn without submitting
+   * fails the run with subtype `error_missing_output`. The tool must be the
+   * only call in its batch, and its name is reserved (registering a user tool
+   * with the same name throws).
+   */
+  outputSchema?: OutputSchema;
   /** Lifecycle callbacks that rewrite tool results and outgoing model requests. */
   hooks?: AgentHooks<TContext>;
   /**
@@ -939,12 +956,25 @@ export type SDKResultMessage = {
    * way, keeping completed turns in history so a follow-up query can continue
    * the conversation. `is_error` stays `false` for it.
    */
-  subtype: "success" | "interrupted" | "error" | "error_max_turns" | "error_abort" | "error_timeout";
+  subtype:
+    | "success"
+    | "interrupted"
+    | "error"
+    | "error_max_turns"
+    | "error_abort"
+    | "error_timeout"
+    | "error_missing_output";
   is_error: boolean;
   result: string;
   session_id: string;
   num_turns: number;
   error?: Error;
+  /**
+   * Validated structured payload submitted via the `submit_output` tool (see
+   * `AgentOptions.outputSchema`), or by any tool that ended the run with both
+   * `endTurn` and `ToolResult.structuredResult`. Absent otherwise.
+   */
+  structuredResult?: unknown;
   /** Summed over every model request in the query. Zeroed when unreported. */
   usage: TokenUsage;
   /**
@@ -1010,6 +1040,11 @@ export class AgentSDKError extends Error {
 export class APIError extends AgentSDKError {}
 export class ToolExecutionError extends AgentSDKError {}
 export class MaxTurnsError extends AgentSDKError {}
+/**
+ * A run with `AgentOptions.outputSchema` ended without the model calling the
+ * `submit_output` tool, so no structured output was produced.
+ */
+export class MissingOutputError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
 /** A second query was started on an Agent that was still running one. */
 export class ConcurrentQueryError extends AgentSDKError {}
@@ -1103,6 +1138,64 @@ function createToolDefinition<TSchema, TContext = unknown>(
   };
 }
 
+/**
+ * A schema describing structured output: a zod schema, or any object with a
+ * compatible `parse` method. The SDK validates submitted payloads with it and
+ * converts it to the JSON schema shown to the model.
+ */
+export type OutputSchema<TOutput = unknown> = {
+  parse(input: unknown): TOutput;
+};
+
+/**
+ * Name of the tool the SDK injects when `AgentOptions.outputSchema` is set.
+ * Reserved in that configuration: registering a user tool with the same name
+ * throws at `createAgent`/`addTools` time.
+ */
+export const SUBMIT_OUTPUT_TOOL_NAME = "submit_output";
+
+function createSubmitOutputTool(schema: OutputSchema): ToolDefinition<any, any> {
+  return tool(
+    SUBMIT_OUTPUT_TOOL_NAME,
+    "Submit the final structured output of this run. Call it exactly once, alone in its turn, when the task is complete: the call ends the run. A run that ends without this call fails.",
+    schema,
+    async input => ({
+      content: "Structured output submitted.",
+      endTurn: true,
+      structuredResult: input,
+    }),
+  );
+}
+
+function formatChildOutputInvalidError(toolName: string, reason: string): Error {
+  return new Error(
+    `child_output_invalid: agentTool("${toolName}") ${reason}. ` +
+      "Retry the call with a revised task, or continue without the structured output.",
+  );
+}
+
+function validateChildStructuredOutput(
+  toolName: string,
+  schema: OutputSchema,
+  result: SDKResultMessage | undefined,
+): string {
+  const structured = result?.structuredResult;
+  if (structured === undefined) {
+    throw formatChildOutputInvalidError(
+      toolName,
+      `target ended without calling ${SUBMIT_OUTPUT_TOOL_NAME}, so no structured output was produced`,
+    );
+  }
+  try {
+    return JSON.stringify(schema.parse(structured)) ?? "null";
+  } catch (error) {
+    throw formatChildOutputInvalidError(
+      toolName,
+      `structured output failed outputSchema validation: ${errorMessage(error)}`,
+    );
+  }
+}
+
 export type DelegateToolOptions = {
   wait?: DelegateWaitMode;
   targetMailboxId?: string;
@@ -1129,6 +1222,14 @@ export type AgentToolInput = z.infer<typeof agentToolInputSchema>;
 export type AgentToolOptions = {
   description: string;
   targetMailboxId?: string;
+  /**
+   * Expected structured output of the target, declared with the same schema
+   * the target uses for its own `AgentOptions.outputSchema`. With mode "ask"
+   * the tool result is the target's validated structured output as JSON; a
+   * target that ends without submitting — or submits a payload that fails this
+   * schema — produces a `child_output_invalid` tool error the parent can retry.
+   */
+  outputSchema?: OutputSchema;
 };
 
 /**
@@ -1145,9 +1246,13 @@ export function agentTool(
   options: AgentToolOptions,
 ): ToolDefinition<AgentToolInput> {
   const toolName = sanitizeToolName(name);
+  const baseDescription = formatAgentToolDescription(options.description, isAgentSpec(agent));
+  const description = options.outputSchema
+    ? `${baseDescription}\n\nWith mode "ask", returns the target's validated structured output as JSON.`
+    : baseDescription;
   const definition = tool(
     toolName,
-    formatAgentToolDescription(options.description, isAgentSpec(agent)),
+    description,
     agentToolInputSchema,
     async (input, toolContext) => {
       const task = formatAgentToolTask(input);
@@ -1188,6 +1293,15 @@ export function agentTool(
           targetMailboxId: options.targetMailboxId,
           workspaceGrants: input.workspaceGrants,
         });
+        if (options.outputSchema) {
+          if (result.status === "failed") {
+            throw formatChildOutputInvalidError(
+              toolName,
+              `target failed (${result.error?.code ?? "unknown"}): ${result.error?.message ?? result.content}`,
+            );
+          }
+          return { content: validateChildStructuredOutput(toolName, options.outputSchema, result.result) };
+        }
         return { content: result.content };
       }
 
@@ -1196,7 +1310,16 @@ export function agentTool(
         context: toolContext.context,
       });
       if (result.is_error) {
+        if (options.outputSchema && result.subtype === "error_missing_output") {
+          throw formatChildOutputInvalidError(
+            toolName,
+            `target ended without calling ${SUBMIT_OUTPUT_TOOL_NAME}, so no structured output was produced`,
+          );
+        }
         throw result.error ?? new Error(result.result || `agentTool("${toolName}") target returned an error`);
+      }
+      if (options.outputSchema) {
+        return { content: validateChildStructuredOutput(toolName, options.outputSchema, result) };
       }
       return { content: result.result };
     },
@@ -2359,6 +2482,17 @@ class Agent<TContext = unknown> {
       ...configuredOptions,
     };
     this.toolConcurrency = normalizeToolConcurrencyOptions(configuredOptions.toolConcurrency);
+    if (this.options.outputSchema) {
+      if ((this.options.tools ?? []).some(tool => tool.name === SUBMIT_OUTPUT_TOOL_NAME)) {
+        throw new Error(
+          `Tool name "${SUBMIT_OUTPUT_TOOL_NAME}" is reserved when AgentOptions.outputSchema is set`,
+        );
+      }
+      this.options.tools = [
+        ...(this.options.tools ?? []),
+        createSubmitOutputTool(this.options.outputSchema),
+      ];
+    }
     this.modelClient =
       options.modelClient ??
       new AnthropicModelClient({
@@ -2767,6 +2901,24 @@ class Agent<TContext = unknown> {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
+        if (this.options.outputSchema) {
+          // Strict close: a run with a declared output contract must submit
+          // through submit_output; a plain-text ending fails the run rather
+          // than being guessed at as the answer.
+          const error = new MissingOutputError(
+            `Agent ended its turn without calling ${SUBMIT_OUTPUT_TOOL_NAME}. ` +
+              `A run with AgentOptions.outputSchema must submit its structured output via the ${SUBMIT_OUTPUT_TOOL_NAME} tool.`,
+          );
+          const result = this.resultMessage("error_missing_output", extractText(assistant), turns, error, totals);
+          await emitTraceEvent(tracer, {
+            ...traceBase,
+            type: "result",
+            data: traceResultData(result),
+          });
+          await flushTracer(tracer);
+          yield result;
+          return;
+        }
         const result = this.resultMessage("success", extractText(assistant), turns, undefined, totals);
         await emitTraceEvent(tracer, {
           ...traceBase,
@@ -2928,6 +3080,21 @@ class Agent<TContext = unknown> {
         }
       }
 
+      // Submitting the run's structured output while also doing other work in
+      // the same batch is a contradiction: submit_output must own its batch.
+      if (!truncatedAtMaxTokens && !batchRejection && this.options.outputSchema) {
+        const submitCalls = toolUseBlocks.filter(block => block.name === SUBMIT_OUTPUT_TOOL_NAME);
+        if (submitCalls.length > 1 || (submitCalls.length === 1 && toolUseBlocks.length > 1)) {
+          batchRejection = {
+            allowed: false,
+            code: "submit_output_exclusive_batch",
+            message: `${SUBMIT_OUTPUT_TOOL_NAME} must be the only tool call in its batch.`,
+            conflictingToolCallIds: submitCalls.map(block => block.id),
+            suggestedNextStep: `Call ${SUBMIT_OUTPUT_TOOL_NAME} on its own, after all other tool calls have completed.`,
+          };
+        }
+      }
+
       const batchError = batchRejection
         ? new ToolBatchRejectedError(batchRejection)
         : undefined;
@@ -3026,6 +3193,7 @@ class Agent<TContext = unknown> {
           turns,
           undefined,
           totals,
+          endTurnOutcome.structuredResult,
         );
         await emitTraceEvent(tracer, {
           ...traceBase,
@@ -3088,6 +3256,14 @@ class Agent<TContext = unknown> {
   }
 
   addTools(tools: Array<ToolDefinition<any, TContext>>): void {
+    if (
+      this.options.outputSchema &&
+      tools.some(tool => tool.name === SUBMIT_OUTPUT_TOOL_NAME)
+    ) {
+      throw new Error(
+        `Tool name "${SUBMIT_OUTPUT_TOOL_NAME}" is reserved when AgentOptions.outputSchema is set`,
+      );
+    }
     this.options.tools = [...(this.options.tools ?? []), ...tools];
   }
 
@@ -3107,6 +3283,7 @@ class Agent<TContext = unknown> {
     numTurns: number,
     error?: Error,
     totals?: QueryTotals,
+    structuredResult?: unknown,
   ): SDKResultMessage {
     return {
       type: "result",
@@ -3119,6 +3296,7 @@ class Agent<TContext = unknown> {
       ...(error ? { error } : {}),
       usage: totals?.usage ?? emptyUsage(),
       ...(totals?.stopReason ? { stop_reason: totals.stopReason } : {}),
+      ...(structuredResult !== undefined ? { structuredResult } : {}),
     };
   }
 
@@ -3299,6 +3477,7 @@ class Agent<TContext = unknown> {
           content: output.content,
         },
         ...(output.endTurn ? { endTurn: true } : {}),
+        ...(output.structuredResult !== undefined ? { structuredResult: output.structuredResult } : {}),
       };
     } catch (error) {
       if (error instanceof ToolPermissionDeniedError) {
@@ -4540,9 +4719,11 @@ function normalizeAgentRuntimeFailure(error: unknown): AgentRuntimeFailure {
       ? "api_error"
       : normalized instanceof ToolPermissionDeniedError
         ? "permission_denied"
-        : normalized instanceof ToolExecutionError
-          ? "tool_execution_error"
-          : "agent_error";
+        : normalized instanceof MissingOutputError
+          ? "missing_output"
+          : normalized instanceof ToolExecutionError
+            ? "tool_execution_error"
+            : "agent_error";
   return {
     code,
     message: normalized.message,
