@@ -5781,8 +5781,12 @@ async function finishLangSmithModelRun(
     return;
   }
   state.pendingModel = undefined;
+  const usage = traceEventTokenUsage(event);
   await run.end?.(
-    { message: jsonSafeValue(event.data.message) },
+    {
+      message: jsonSafeValue(event.data.message),
+      ...(usage ? { usage_metadata: toLangSmithUsageMetadata(usage) } : {}),
+    },
     undefined,
     Date.parse(event.timestamp),
     {
@@ -6035,6 +6039,79 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Token usage reported by the ModelClient travels on the runtime assistant
+ * message inside `assistant_message` events; extract it defensively since
+ * trace events cross the JSON boundary and custom clients may omit it.
+ */
+function traceEventTokenUsage(event: ContextTraceEvent): TokenUsage | undefined {
+  const message = event.data.message;
+  if (!isRecord(message) || !isRecord(message.usage)) return undefined;
+  const usage = message.usage;
+  if (typeof usage.input_tokens !== "number" || typeof usage.output_tokens !== "number") {
+    return undefined;
+  }
+  return {
+    input_tokens: usage.input_tokens,
+    output_tokens: usage.output_tokens,
+    ...(typeof usage.cache_creation_input_tokens === "number"
+      ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
+      : {}),
+    ...(typeof usage.cache_read_input_tokens === "number"
+      ? { cache_read_input_tokens: usage.cache_read_input_tokens }
+      : {}),
+  };
+}
+
+/**
+ * Langfuse usage buckets are mutually exclusive and Anthropic reports
+ * `input_tokens` exclusive of cache tokens, so the usage maps key-for-key.
+ * Langfuse derives `total` when absent; passing it keeps the value exact.
+ */
+function toLangfuseUsageDetails(usage: TokenUsage): Record<string, number> {
+  return {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    ...(usage.cache_creation_input_tokens !== undefined
+      ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
+      : {}),
+    ...(usage.cache_read_input_tokens !== undefined
+      ? { cache_read_input_tokens: usage.cache_read_input_tokens }
+      : {}),
+    total: usage.input_tokens + usage.output_tokens
+      + (usage.cache_creation_input_tokens ?? 0)
+      + (usage.cache_read_input_tokens ?? 0),
+  };
+}
+
+/**
+ * LangSmith reads `usage_metadata` off an llm run's outputs and prices
+ * `input_tokens` as cache-inclusive (Anthropic cache tokens are additive), so
+ * cache buckets are summed into `input_tokens` — the same conversion the
+ * langsmith Anthropic wrapper performs.
+ */
+function toLangSmithUsageMetadata(usage: TokenUsage): LangSmithKVMap {
+  const inputTokens = usage.input_tokens
+    + (usage.cache_creation_input_tokens ?? 0)
+    + (usage.cache_read_input_tokens ?? 0);
+  const inputTokenDetails: Record<string, number> = {
+    ...(usage.cache_creation_input_tokens !== undefined
+      ? { cache_creation: usage.cache_creation_input_tokens }
+      : {}),
+    ...(usage.cache_read_input_tokens !== undefined
+      ? { cache_read: usage.cache_read_input_tokens }
+      : {}),
+  };
+  return {
+    input_tokens: inputTokens,
+    output_tokens: usage.output_tokens,
+    total_tokens: inputTokens + usage.output_tokens,
+    ...(Object.keys(inputTokenDetails).length > 0
+      ? { input_token_details: inputTokenDetails }
+      : {}),
+  };
+}
+
 function jsonSafeValue(value: unknown): unknown {
   if (value === undefined) return undefined;
   try {
@@ -6207,8 +6284,10 @@ function finishLangfuseModelRun(
     return;
   }
   state.pendingModel = undefined;
+  const usage = traceEventTokenUsage(event);
   pending.run.update({
     output: { message: jsonSafeValue(event.data.message) },
+    ...(usage ? { usageDetails: toLangfuseUsageDetails(usage) } : {}),
     metadata: {
       ...pending.metadata,
       sdk_end_event_type: "assistant_message",
@@ -6396,6 +6475,7 @@ function traceResultData(result: SDKResultMessage): Record<string, unknown> {
     is_error: result.is_error,
     result: result.result,
     num_turns: result.num_turns,
+    usage: result.usage,
     ...(result.error ? { error: result.error } : {}),
   };
 }
