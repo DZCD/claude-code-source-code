@@ -227,8 +227,10 @@ await agent.prompt("Remember that my name is Ada.");
 Each JSONL entry includes `session_id`, `run_id`, `seq`, `source`, `type`, and
 `data`. Agent runs record transcript and context events such as `run_start`,
 `user_message`, `model_request`, `assistant_message`, `tool_use`,
-`tool_result`, and `result`. For team runners, pass the tracer per query to
-propagate it into delegated agents:
+`tool_result`, and `result`. When the model client reports token usage,
+`assistant_message` events carry it as `data.message.usage`, and the `result`
+event carries the query's summed usage as `data.usage` (since 0.23.1). For
+team runners, pass the tracer per query to propagate it into delegated agents:
 
 ```ts
 for await (const event of team.query("Ask engineering to investigate.", {
@@ -316,6 +318,13 @@ root and share one trace session. Each Agent keeps its own SDK session identity,
 recorded as `agent_session_id` metadata, so tracing does not change Agent state
 or returned SDK messages.
 
+When the model client reports token usage, each `llm` run ends with
+`usage_metadata` in its outputs (`input_tokens`, `output_tokens`,
+`total_tokens`, plus cache buckets under `input_token_details`), so LangSmith
+shows token consumption and inferred cost per model turn. Anthropic cache
+tokens are additive, so they are summed into `input_tokens` the same way
+LangSmith's own Anthropic wrapper does. *Requires 0.23.1 or later.*
+
 ## Langfuse Context Tracing
 
 *Requires 0.19.0 or later.*
@@ -388,6 +397,13 @@ observation carrying the trace name, session id, and tags; model turns appear
 as child `generation` observations and SDK tool calls as child `tool`
 observations. For a `Team` query, delegated runs nest as child `chain`
 observations under the team root, so one handoff invocation stays one trace.
+
+When the model client reports token usage, each `generation` observation ends
+with `usageDetails` (`input`, `output`, `cache_creation_input_tokens`,
+`cache_read_input_tokens`, `total`), so Langfuse shows token consumption and
+inferred cost per model turn. Anthropic `input_tokens` already excludes cache
+tokens, matching Langfuse's mutually-exclusive usage buckets. *Requires 0.23.1
+or later.*
 
 `startObservation` defaults to the bundled `@langfuse/tracing` function; pass
 `startObservation` only to inject a custom runtime or a test fake.

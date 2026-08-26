@@ -137,6 +137,12 @@ LangSmith 会收到这样的投影：
 不包含宿主消费流式事件所花的时间。`tool` run 还会把工具的 `description` 放进
 `tool_description` metadata，trace 里能看到工具被声明成做什么，而不只是输入输出。
 
+当模型客户端上报 token 用量时，`llm` run 结束时会带上 outputs 里的
+`usage_metadata`（`input_tokens`、`output_tokens`、`total_tokens`，cache 部分放在
+`input_token_details` 下），LangSmith 因此能展示每个模型轮的 token 消耗和推断成本。
+Anthropic 的 cache token 是增量计数，所以和 LangSmith 官方 Anthropic wrapper 一样，
+会计入 `input_tokens`。*需要 0.23.1 及以上版本。*
+
 可以用 `createCompositeContextTracer()` 把同一份 trace stream 同时发送到多个
 sink：
 
@@ -220,14 +226,18 @@ Langfuse 每次 SDK 查询收到一条 trace：
 | SDK 事件序列 | Langfuse 投影 |
 | --- | --- |
 | `run_start` 到 `result` | `chain` observation；没有 `parent_run_id` 时是 trace 根节点，否则嵌套在另一个 chain 下。 |
-| `model_request` 到 `assistant_message` | 子级 `generation` observation，带 `model` 属性。 |
+| `model_request` 到 `assistant_message` | 子级 `generation` observation，带 `model` 属性和 `usageDetails`（token 用量自 0.23.1 起）。 |
 | `tool_use` 到 `tool_result` | 子级 `tool` observation。 |
 | `team_message` 等其他辅助事件 | 挂在当前 chain 上的自动结束 `event` observation。 |
 
 trace 根 observation 携带 trace 名称、`session.id` 和 `langfuse.trace.tags`
 属性——与 `propagateAttributes` 写到活跃 span 上的属性一致——因此在 Langfuse
 UI 里 trace 仍然可以按会话和标签聚合、筛选。出错的 result 和工具错误会把
-observation 的 `level` 置为 `ERROR` 并附上 `statusMessage`。
+observation 的 `level` 置为 `ERROR` 并附上 `statusMessage`。当模型客户端上报
+token 用量时，`generation` observation 的 `usageDetails` 使用 Langfuse
+互斥的用量桶（`input`、`output`、`cache_creation_input_tokens`、
+`cache_read_input_tokens`、`total`）——Anthropic 的 `input_tokens` 本身就不含
+cache token，因此用量和推断成本不会被重复计算。
 
 ## 事件类型
 
@@ -236,10 +246,10 @@ observation 的 `level` 置为 `ERROR` 并附上 `statusMessage`。
 | `run_start` | Agent run 元数据，包括模型和工具名。 |
 | `user_message` | 加入模型上下文的用户消息或工具结果消息。 |
 | `model_request` | 模型请求上下文，包括选中的 messages、tools 和 stream 模式。 |
-| `assistant_message` | 模型客户端返回的 assistant message。 |
+| `assistant_message` | 模型客户端返回的 assistant message，客户端上报时含 `usage`。 |
 | `tool_use` | Assistant 请求的工具调用，包含工具的 `description`（0.17.0 起）。 |
 | `tool_result` | SDK 产生并回填给模型的工具结果。 |
-| `result` | 本次 query 的最终结果，包括成功和错误 subtype。 |
+| `result` | 本次 query 的最终结果，包括成功和错误 subtype，以及汇总的 `usage`（0.23.1 起）。 |
 
 `seq` 在同一个 tracer 实例中单调递增。UI 或日志管线可以用 `session_id`、
 `run_id` 和 `source` 来分组。

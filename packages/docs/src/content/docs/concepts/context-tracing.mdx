@@ -145,6 +145,13 @@ host finishes consuming the events yielded from it. Tool runs carry the tool's
 `description` as `tool_description` metadata, so a trace shows what the tool
 was advertised to do, not only its input and output.
 
+When the model client reports token usage, an `llm` run ends with
+`usage_metadata` in its outputs (`input_tokens`, `output_tokens`,
+`total_tokens`, plus cache buckets under `input_token_details`), so LangSmith
+shows token consumption and inferred cost per model turn. Anthropic cache
+tokens are additive, so they are summed into `input_tokens` the same way
+LangSmith's own Anthropic wrapper does. *Requires 0.23.1 or later.*
+
 Use `createCompositeContextTracer()` to send the same trace stream to multiple
 sinks:
 
@@ -229,7 +236,7 @@ Langfuse receives one trace per SDK query:
 | SDK event sequence | Langfuse projection |
 | --- | --- |
 | `run_start` to `result` | `chain` observation; it is the trace root unless `parent_run_id` nests it under another chain. |
-| `model_request` to `assistant_message` | Child `generation` observation with the `model` attribute. |
+| `model_request` to `assistant_message` | Child `generation` observation with the `model` attribute and `usageDetails` (token usage since 0.23.1). |
 | `tool_use` to `tool_result` | Child `tool` observation. |
 | `team_message` and other auxiliary events | Auto-ended `event` observations on the active chain. |
 
@@ -237,7 +244,12 @@ The trace root observation carries the trace name, `session.id`, and
 `langfuse.trace.tags` attributes — the same attributes
 `propagateAttributes` writes on the active span — so traces stay grouped and
 filterable in the Langfuse UI. Error results and tool errors set the
-observation `level` to `ERROR` with a `statusMessage`.
+observation `level` to `ERROR` with a `statusMessage`. When the model client
+reports token usage, a `generation` observation's `usageDetails` uses
+Langfuse's mutually-exclusive buckets (`input`, `output`,
+`cache_creation_input_tokens`, `cache_read_input_tokens`, `total`) — Anthropic
+`input_tokens` already excludes cache tokens, so usage and inferred cost are
+counted once.
 
 ## Event types
 
@@ -246,10 +258,10 @@ observation `level` to `ERROR` with a `statusMessage`.
 | `run_start` | Agent run metadata, including model and tool names. |
 | `user_message` | User prompt or tool-result message added to the model context. |
 | `model_request` | Model request context, including selected messages, tools, and stream mode. |
-| `assistant_message` | Assistant message returned by the model client. |
+| `assistant_message` | Assistant message returned by the model client, including `usage` when the client reports it. |
 | `tool_use` | Tool call requested by the assistant, including the tool's `description` (since 0.17.0). |
 | `tool_result` | Tool result produced by the SDK and sent back to the model. |
-| `result` | Final query result, including success and error subtypes. |
+| `result` | Final query result, including success and error subtypes and the summed `usage` (since 0.23.1). |
 
 The tracer uses a monotonically increasing `seq` per tracer instance. Use
 `session_id`, `run_id`, and `source` to group entries in UIs or log pipelines.

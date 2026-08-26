@@ -1325,6 +1325,58 @@ describe("agent-sdk", () => {
     ]));
   });
 
+  test("forwards token usage to LangSmith usage_metadata and the result event", async () => {
+    FakeRunTree.reset();
+    const trace: ContextTraceEvent[] = [];
+    const tracer = createLangSmithContextTracer({
+      RunTree: FakeRunTree,
+      projectName: "agent-sdk-tests",
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return {
+            ...textAssistant("hello"),
+            usage: {
+              input_tokens: 100,
+              output_tokens: 20,
+              cache_creation_input_tokens: 30,
+              cache_read_input_tokens: 50,
+            },
+          };
+        },
+      },
+    });
+
+    await collect(agent.query("Say hello", {
+      stream: false,
+      tracer: createCompositeContextTracer([
+        tracer,
+        { onEvent(event) { trace.push(event); } },
+      ]),
+    }));
+    await tracer.flush?.();
+
+    const llm = FakeRunTree.runs.find(run => run.run_type === "llm");
+    // Anthropic cache buckets are additive and LangSmith prices input_tokens
+    // cache-inclusive, so cache tokens are summed into input_tokens.
+    expect(llm?.outputs?.usage_metadata).toEqual({
+      input_tokens: 180,
+      output_tokens: 20,
+      total_tokens: 200,
+      input_token_details: { cache_creation: 30, cache_read: 50 },
+    });
+    const resultEvent = trace.find(event => event.type === "result");
+    expect(resultEvent?.data.usage).toEqual({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_creation_input_tokens: 30,
+      cache_read_input_tokens: 50,
+    });
+  });
+
   test("maps one team handoff invocation to one LangSmith root chain", async () => {
     FakeRunTree.reset();
     const tracer = createLangSmithContextTracer({
@@ -1612,6 +1664,38 @@ describe("agent-sdk", () => {
           sdk_end_event_type: "assistant_message",
         },
       },
+    });
+  });
+
+  test("forwards token usage to Langfuse usageDetails", async () => {
+    FakeLangfuseObservation.reset();
+    const tracer = createLangfuseContextTracer({
+      startObservation: fakeLangfuseStartObservation as never,
+    });
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          return {
+            ...textAssistant("hello"),
+            usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 50 },
+          };
+        },
+      },
+    });
+
+    await collect(agent.query("Say hello", { stream: false, tracer }));
+    await tracer.flush?.();
+
+    const generation = FakeLangfuseObservation.observations.find(observation => observation.type === "generation");
+    // Anthropic input_tokens already excludes cache tokens, which matches
+    // Langfuse's mutually-exclusive usage buckets.
+    expect(generation?.attributes.usageDetails).toEqual({
+      input: 100,
+      output: 20,
+      cache_read_input_tokens: 50,
+      total: 170,
     });
   });
 
