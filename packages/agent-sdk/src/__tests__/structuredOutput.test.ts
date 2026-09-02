@@ -230,6 +230,145 @@ describe("AgentOptions.outputSchema", () => {
   });
 });
 
+describe("AgentOptions.submitOutputEndTurn", () => {
+  test("endTurn: false records the submission and lets the model close with a summary", async () => {
+    const requests: ModelRequest[] = [];
+    const agent = createBareAgent({
+      model: "claude-test",
+      outputSchema,
+      submitOutputEndTurn: false,
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("submit_1", "submit_output", submittedPayload()),
+          textAssistant("In short: the answer is 42."),
+        ],
+        requests,
+      ),
+    });
+
+    const result = await agent.prompt("Do the task", { stream: false });
+
+    expect(result).toMatchObject({
+      subtype: "success",
+      is_error: false,
+      result: "In short: the answer is 42.",
+      structuredResult: submittedPayload(),
+    });
+    // The submission's tool result went back to the model instead of ending the run.
+    const followUp = requests[1]?.messages.at(-1);
+    expect(followUp).toMatchObject({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "submit_1" }],
+    });
+    expect(JSON.stringify(followUp)).toContain("Structured output recorded");
+  });
+
+  test("re-submitting revises the recorded payload: last submission wins", async () => {
+    const agent = createBareAgent({
+      model: "claude-test",
+      outputSchema,
+      submitOutputEndTurn: false,
+      modelClient: clientFromResponses([
+        toolUseAssistant("submit_1", "submit_output", { answer: 1, summary: "first draft" }),
+        toolUseAssistant("submit_2", "submit_output", submittedPayload()),
+        textAssistant("done"),
+      ]),
+    });
+
+    const result = await agent.prompt("Do the task", { stream: false });
+
+    expect(result).toMatchObject({ subtype: "success", structuredResult: submittedPayload() });
+  });
+
+  test("ending without any submission still fails with error_missing_output", async () => {
+    const agent = createBareAgent({
+      model: "claude-test",
+      outputSchema,
+      submitOutputEndTurn: false,
+      modelClient: clientFromResponses([textAssistant("prose without submitting")]),
+    });
+
+    const result = await agent.prompt("Do the task", { stream: false });
+
+    expect(result.subtype).toBe("error_missing_output");
+    expect(result.error).toBeInstanceOf(MissingOutputError);
+    expect(result.structuredResult).toBeUndefined();
+  });
+
+  test("submit_output must still own its batch when endTurn is false", async () => {
+    const echo = tool("echo", "Echo input.", z.object({ value: z.string() }), async input => ({
+      content: input.value,
+    }));
+    const agent = createBareAgent({
+      model: "claude-test",
+      tools: [echo],
+      outputSchema,
+      submitOutputEndTurn: false,
+      modelClient: clientFromResponses([
+        {
+          role: "assistant" as const,
+          content: [
+            { type: "tool_use" as const, id: "echo_1", name: "echo", input: { value: "hi" } },
+            { type: "tool_use" as const, id: "submit_1", name: "submit_output", input: submittedPayload() },
+          ],
+        },
+        toolUseAssistant("submit_2", "submit_output", submittedPayload()),
+        textAssistant("closing"),
+      ]),
+    });
+
+    const messages = await collect(agent.query("Do the task", { stream: false }));
+
+    expect(
+      messages.some(
+        message =>
+          message.type === "user" &&
+          JSON.stringify(message.tool_use_result).includes("submit_output_exclusive_batch"),
+      ),
+    ).toBe(true);
+    expect(messages.at(-1)).toMatchObject({
+      type: "result",
+      subtype: "success",
+      structuredResult: submittedPayload(),
+    });
+  });
+
+  test("agentTool ask still consumes structuredResult from a spec that closes with a summary", async () => {
+    const requests: ModelRequest[] = [];
+    const childSpec = defineAgent({
+      model: "claude-test-child",
+      outputSchema,
+      submitOutputEndTurn: false,
+      modelClient: clientFromResponses([
+        toolUseAssistant("submit_1", "submit_output", submittedPayload()),
+        textAssistant("child closing summary"),
+      ]),
+    });
+    const parent = createBareAgent({
+      model: "claude-test-parent",
+      tools: [
+        agentTool("solver", childSpec, {
+          description: "Solve a task.",
+          outputSchema,
+        }),
+      ],
+      modelClient: clientFromResponses(
+        [
+          toolUseAssistant("call_1", "solver", { mode: "ask", task: "solve it" }),
+          textAssistant("parent done"),
+        ],
+        requests,
+      ),
+    });
+
+    const result = await parent.prompt("Use the solver", { stream: false });
+
+    expect(result.subtype).toBe("success");
+    const toolResults = JSON.stringify(requests[1]?.messages);
+    expect(toolResults).toContain(JSON.stringify(JSON.stringify(submittedPayload())));
+  });
+});
+
 describe("agentTool outputSchema", () => {
   function createChild(responses: Array<ReturnType<typeof textAssistant> | ReturnType<typeof toolUseAssistant>>) {
     return createBareAgent({

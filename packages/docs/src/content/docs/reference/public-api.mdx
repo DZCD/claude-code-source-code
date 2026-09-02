@@ -109,6 +109,7 @@ const agent = createBareAgent({
 | `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort` (a Kimi convention — ignored by DeepSeek; see [Provider Compatibility](../provider-compatibility/)). When omitted, the provider applies its default. |
 | `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
 | `outputSchema` | `OutputSchema` | Requires the run to end with a validated structured payload. The SDK injects a built-in `submit_output` tool; a valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`, while ending the turn without submitting fails with `error_missing_output` (`MissingOutputError`). Unlike `QueryOptions.outputFormat`, it only requires a tool-capable provider. |
+| `submitOutputEndTurn` | `boolean` | Only meaningful with `outputSchema`; default `true`. `false` (requires 0.25.0) keeps the loop going after a validated `submit_output` call: the submission is recorded (re-submitting revises it, last one wins), and a later text ending succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output`. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
 | `hooks` | `AgentHooks` | Lifecycle callbacks that rewrite tool results and outgoing model requests. Not inherited by delegated agents. |
@@ -236,6 +237,7 @@ than relying on an error.
 | `AgentOptions.workspace: false` (bare mode, also via `defineAgent()`), `agentTool()` contract pinned: explicit `outputSchema` with no target declaration validates the child's `structuredResult`, and with no schema on either side `ask` passes the child's `structuredResult` through as unvalidated JSON (behavior change: previously the `ask` result fell back to the text content and dropped it) | 0.23.0 |
 | Trace events carry token usage end to end: `result` events include the summed `usage`, LangSmith `llm` runs end with `usage_metadata` in outputs, and Langfuse `generation` observations end with `usageDetails` (cache buckets included, so LangSmith/Langfuse show per-turn token consumption and inferred cost) | 0.23.1 |
 | `AgentToolOptions.isConcurrencySafe`: `agentTool()` tools can opt into parallel execution under `toolConcurrency.mode: "safe"` (previously only plain `tool()` declarations could) | 0.24.0 |
+| `AgentOptions.submitOutputEndTurn` (also via `defineAgent()`): `false` keeps the loop going after a validated `submit_output` call — submissions are recorded (last one wins) and a later text ending succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output` | 0.25.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

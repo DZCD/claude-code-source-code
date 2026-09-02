@@ -46,6 +46,8 @@ This changes how the loop is allowed to end:
 - `submit_output` must be the only tool call in its batch: a batch that mixes it with other calls, or contains two submissions, is rejected with code `submit_output_exclusive_batch` and the loop continues.
 - The name is reserved while `outputSchema` is set — registering your own `submit_output` tool throws from `createAgent`/`addTools`.
 
+By default a valid submission ends the run immediately — the bounded, cheapest behavior for schema-delivering workers. For human-facing sessions that should close with a natural-language summary, set `submitOutputEndTurn: false` (*requires 0.25.0 or later*): the submission is recorded — re-submitting revises it, last one wins — the tool result goes back to the model, and the run ends when the model stops. A text ending after a submission succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output`.
+
 The structure is enforced by the harness, not by prompt discipline, and only requires a model that can call tools — unlike `outputFormat`, it does not depend on provider `response_format`/`json_schema` support (see [Provider Compatibility](/reference/provider-compatibility/)).
 
 ## One Agent holds one conversation

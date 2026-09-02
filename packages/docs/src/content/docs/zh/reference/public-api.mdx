@@ -105,6 +105,7 @@ const agent = createBareAgent({
 | `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`（Kimi 约定——DeepSeek 忽略，见 [Provider 兼容性](../provider-compatibility/)）。省略时使用 provider 默认值。 |
 | `requestTimeoutMs` | `number` | 单次模型请求的期限（毫秒）。即使 model client 忽略它，SDK 也会兜底执行。不设置则 SDK 不加限制。 |
 | `outputSchema` | `OutputSchema` | 要求 run 以校验过的结构化 payload 收尾。SDK 会注入内置的 `submit_output` 工具；校验通过的提交以 `subtype: "success"` 结束、payload 落在 `SDKResultMessage.structuredResult`；未提交就结束回合则以 `error_missing_output`（`MissingOutputError`）失败。与 `QueryOptions.outputFormat` 不同，它只要求 provider 支持工具调用。 |
+| `submitOutputEndTurn` | `boolean` | 只在设置 `outputSchema` 时有意义；默认 `true`。设为 `false`（需要 0.25.0）后，校验通过的 `submit_output` 不再结束 run：提交被记录（再次提交即修订，以最后一次为准），之后的文本收尾会成功并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍报 `error_missing_output`。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
 | `hooks` | `AgentHooks` | 改写工具结果和外发模型请求的生命周期回调。委派的子 agent 不会继承。 |
@@ -222,6 +223,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentOptions.workspace: false`（裸模式，经 `defineAgent()` 也生效）、`agentTool()` 契约固定：显式声明 `outputSchema` 而 target 未声明时按父级 schema 校验子级 `structuredResult`；父子都没声明 schema 时 `ask` 把子级 `structuredResult` 以未校验的 JSON 透出（行为变化：以前 `ask` 结果会回退成文本 content 并丢弃它） | 0.23.0 |
 | trace 事件端到端携带 token 用量：`result` 事件带汇总 `usage`，LangSmith `llm` run 结束时 outputs 带 `usage_metadata`，Langfuse `generation` observation 结束时带 `usageDetails`（含 cache 桶，LangSmith/Langfuse 可展示每个模型轮的 token 消耗与推断成本） | 0.23.1 |
 | `AgentToolOptions.isConcurrencySafe`：`agentTool()` 工具可以在 `toolConcurrency.mode: "safe"` 下声明并发安全（此前只有 `tool()` 创建的工具能声明） | 0.24.0 |
+| `AgentOptions.submitOutputEndTurn`（经 `defineAgent()` 也生效）：设为 `false` 后校验通过的 `submit_output` 不再结束 run——提交被记录（以最后一次为准），之后的文本收尾成功并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍报 `error_missing_output` | 0.25.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

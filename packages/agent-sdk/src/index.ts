@@ -611,6 +611,7 @@ const KNOWN_AGENT_OPTION_KEYS = new Set([
   "tracer",
   "historyStore",
   "outputSchema",
+  "submitOutputEndTurn",
 ]);
 
 const KNOWN_AGENT_TOOL_OPTION_KEYS = new Set([
@@ -884,6 +885,19 @@ export type AgentOptions<TContext = unknown> = {
    * with the same name throws).
    */
   outputSchema?: OutputSchema;
+  /**
+   * Whether a validated `submit_output` call ends the run. Only meaningful with
+   * `outputSchema`; default `true` — submitting finishes the run immediately
+   * with subtype "success", the bounded and cheapest behavior for
+   * schema-delivering workers. Set `false` to keep the loop going after a
+   * submission (e.g. human-facing sessions that should close with a
+   * natural-language summary): the submission is recorded — re-submitting
+   * revises it, last one wins — the tool result goes back to the model, and
+   * the run ends when the model stops. A text ending after a submission
+   * succeeds with the last submission as `SDKResultMessage.structuredResult`;
+   * ending without any submission still fails with `error_missing_output`.
+   */
+  submitOutputEndTurn?: boolean;
   /** Lifecycle callbacks that rewrite tool results and outgoing model requests. */
   hooks?: AgentHooks<TContext>;
   /**
@@ -1220,14 +1234,18 @@ export type OutputSchema<TOutput = unknown> = {
  */
 export const SUBMIT_OUTPUT_TOOL_NAME = "submit_output";
 
-function createSubmitOutputTool(schema: OutputSchema): ToolDefinition<any, any> {
+function createSubmitOutputTool(schema: OutputSchema, endTurn: boolean): ToolDefinition<any, any> {
   return tool(
     SUBMIT_OUTPUT_TOOL_NAME,
-    "Submit the final structured output of this run. Call it exactly once, alone in its turn, when the task is complete: the call ends the run. A run that ends without this call fails.",
+    endTurn
+      ? "Submit the final structured output of this run. Call it exactly once, alone in its turn, when the task is complete: the call ends the run. A run that ends without this call fails."
+      : "Submit the structured output of this run, alone in its turn. Submitting records the payload — submit again to revise it — and the run continues; after your final submission, close with a short natural-language summary. A run that ends without any submission fails.",
     schema,
     async input => ({
-      content: "Structured output submitted.",
-      endTurn: true,
+      content: endTurn
+        ? "Structured output submitted."
+        : "Structured output recorded. Submit again to revise it, or close the run with a short summary.",
+      ...(endTurn ? { endTurn: true } : {}),
       structuredResult: input,
     }),
   );
@@ -2683,7 +2701,7 @@ class Agent<TContext = unknown> {
       }
       this.options.tools = [
         ...(this.options.tools ?? []),
-        createSubmitOutputTool(this.options.outputSchema),
+        createSubmitOutputTool(this.options.outputSchema, this.options.submitOutputEndTurn !== false),
       ];
     }
     this.modelClient =
@@ -2846,6 +2864,10 @@ class Agent<TContext = unknown> {
     });
 
     let turns = 0;
+    // Run-scoped record of the last validated submit_output payload. Only
+    // consulted when submitOutputEndTurn is false: the strict close below then
+    // turns a post-submission text ending into a success carrying it.
+    let submittedOutput: { value: unknown } | undefined;
     while (true) {
       const abortError = abortErrorIfNeeded(options.signal);
       if (abortError) {
@@ -3094,10 +3116,12 @@ class Agent<TContext = unknown> {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
-        if (this.options.outputSchema) {
+        if (this.options.outputSchema && !submittedOutput) {
           // Strict close: a run with a declared output contract must submit
           // through submit_output; a plain-text ending fails the run rather
-          // than being guessed at as the answer.
+          // than being guessed at as the answer. With submitOutputEndTurn:
+          // false a recorded submission satisfies the contract — the text
+          // ending then succeeds below, carrying the last submitted payload.
           const error = new MissingOutputError(
             `Agent ended its turn without calling ${SUBMIT_OUTPUT_TOOL_NAME}. ` +
               `A run with AgentOptions.outputSchema must submit its structured output via the ${SUBMIT_OUTPUT_TOOL_NAME} tool.`,
@@ -3112,7 +3136,7 @@ class Agent<TContext = unknown> {
           yield result;
           return;
         }
-        const result = this.resultMessage("success", extractText(assistant), turns, undefined, totals);
+        const result = this.resultMessage("success", extractText(assistant), turns, undefined, totals, submittedOutput?.value);
         await emitTraceEvent(tracer, {
           ...traceBase,
           type: "result",
@@ -3332,6 +3356,18 @@ class Agent<TContext = unknown> {
           executeTool,
           cancelTool,
         );
+      }
+
+      // Record a validated submission so the strict close can honor it when
+      // the run continues (submitOutputEndTurn: false). Re-submitting
+      // overwrites the record: the last submission wins. structuredResult
+      // from any other tool stays ignored, matching ToolResult's contract.
+      const submitOutcome = executionResults.find(result =>
+        result.structuredResult !== undefined &&
+        toolUseBlocks.some(block => block.id === result.block.tool_use_id && block.name === SUBMIT_OUTPUT_TOOL_NAME)
+      );
+      if (submitOutcome) {
+        submittedOutput = { value: submitOutcome.structuredResult };
       }
 
       firstToolError = executionResults.find(result => result.error)?.error;

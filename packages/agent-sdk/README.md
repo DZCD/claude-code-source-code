@@ -544,6 +544,15 @@ The structure is enforced by the harness, not by prompt discipline:
 - The name is reserved: registering your own `submit_output` tool while
   `outputSchema` is set throws from `createAgent`/`addTools`.
 
+By default a valid submission ends the run immediately — the bounded, cheapest
+behavior for schema-delivering workers. For human-facing sessions that should
+close with a natural-language summary, set `submitOutputEndTurn: false`: the
+submission is recorded (re-submitting revises it, last one wins), the tool
+result goes back to the model, and the run ends when the model stops. A text
+ending after a submission succeeds with the last submission as
+`structuredResult`; ending without any submission still fails with
+`error_missing_output`. *Requires 0.25.0 or later.*
+
 Unlike `outputFormat` (which relies on the provider's
 `response_format`/`json_schema` support — DeepSeek ignores it, see
 [Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/)),

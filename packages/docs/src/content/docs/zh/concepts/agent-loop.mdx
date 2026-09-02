@@ -33,6 +33,8 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 - `submit_output` 必须独占一个 batch：同批混入其它工具调用、或同批出现两次提交，整批被拒绝（code `submit_output_exclusive_batch`），loop 继续。
 - `outputSchema` 设置期间该名字被保留——注册自己的 `submit_output` 工具会让 `createAgent`/`addTools` 直接抛错。
 
+默认情况下一次有效提交会立即结束 run——这是交付 schema 的 worker 最有界、最省钱的行为。面向真人的会话如果希望以自然语言总结收尾，可以设置 `submitOutputEndTurn: false`（*需要 0.25.0 及以上版本*）：提交会被记录——再次提交即修订，以最后一次为准——工具结果会回给模型，run 在模型停下时结束。提交之后的文本收尾会成功，并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍然报 `error_missing_output`。
+
 结构由 harness 把守，而不是靠 prompt 纪律；它只要求模型会 tool call——与 `outputFormat` 不同，不依赖各 provider 的 `response_format`/`json_schema` 特性（见 [Provider 兼容性](/zh/reference/provider-compatibility/)）。
 
 ## 内存态会话

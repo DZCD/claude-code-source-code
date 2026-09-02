@@ -60,6 +60,9 @@ describe("strict option validation", () => {
       agentTool("child", child, { description: "d", metadata: { version: 1 } }),
     ).not.toThrow();
     expect(() => createBareAgent({ ...validAgentOptions, maxTurns: 3 })).not.toThrow();
+    expect(() =>
+      createBareAgent({ ...validAgentOptions, outputSchema: z.object({}), submitOutputEndTurn: false }),
+    ).not.toThrow();
   });
 });
 
