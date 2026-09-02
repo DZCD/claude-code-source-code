@@ -221,6 +221,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 严格 options 校验：`createAgent()`/`createBareAgent()`/`defineAgent()`（`AgentOptions`）、`agentTool()`（`AgentToolOptions`）、`delegateTool()`（`DelegateToolOptions`）和 `tool()`（`ToolOptions`）在装配期对未知 option 键抛错（行为变化：以前被静默忽略的多余键，例如 spread 进来的宿主字段，现在会抛错）。`ToolOptions.metadata` / `AgentToolOptions.metadata` 透传到 `ToolDefinition.metadata`（宿主持有，不展示给模型） | 0.22.0 |
 | `AgentOptions.workspace: false`（裸模式，经 `defineAgent()` 也生效）、`agentTool()` 契约固定：显式声明 `outputSchema` 而 target 未声明时按父级 schema 校验子级 `structuredResult`；父子都没声明 schema 时 `ask` 把子级 `structuredResult` 以未校验的 JSON 透出（行为变化：以前 `ask` 结果会回退成文本 content 并丢弃它） | 0.23.0 |
 | trace 事件端到端携带 token 用量：`result` 事件带汇总 `usage`，LangSmith `llm` run 结束时 outputs 带 `usage_metadata`，Langfuse `generation` observation 结束时带 `usageDetails`（含 cache 桶，LangSmith/Langfuse 可展示每个模型轮的 token 消耗与推断成本） | 0.23.1 |
+| `AgentToolOptions.isConcurrencySafe`：`agentTool()` 工具可以在 `toolConcurrency.mode: "safe"` 下声明并发安全（此前只有 `tool()` 创建的工具能声明） | 0.24.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -275,7 +276,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
 | `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
-| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。还接收宿主持有的 `metadata`（需要 0.22.0），透传到 `ToolDefinition.metadata`，不展示给模型。自 0.23.0 起又固定了两种契约组合：显式声明 `outputSchema` 而 target 未声明时放行，并按父级 schema 校验子级的 `structuredResult`；父子都没声明 schema 时，`ask` 会把子级的 `structuredResult` 原样（未校验）以 JSON 透出，而不是回退成文本 content 丢弃它。 |
+| `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。还接收宿主持有的 `metadata`（需要 0.22.0），透传到 `ToolDefinition.metadata`，不展示给模型。自 0.23.0 起又固定了两种契约组合：显式声明 `outputSchema` 而 target 未声明时放行，并按父级 schema 校验子级的 `structuredResult`；父子都没声明 schema 时，`ask` 会把子级的 `structuredResult` 原样（未校验）以 JSON 透出，而不是回退成文本 content 丢弃它。还接收 `isConcurrencySafe`（需要 0.24.0），契约与 `ToolOptions.isConcurrencySafe` 相同，让委派调用可以在 `toolConcurrency.mode: "safe"` 下并发执行；缺省保持顺序执行。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
 | `MCPClient` | `createMCPTools()` 使用的最小 MCP client 接口。 |

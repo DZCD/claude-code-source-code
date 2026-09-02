@@ -684,6 +684,14 @@ an `isConcurrencySafe` declaration stay sequential. Use `mode: "all"` only when
 every tool in the Agent is safe to overlap. Use `mode: "sequential"` to disable
 tool concurrency even for tools marked safe.
 
+`agentTool()` accepts the same declaration as `AgentToolOptions.isConcurrencySafe`,
+so a supervisor can fan out independent delegations in one turn. The input the
+predicate receives is the tool's parsed input — the `inputSchema`-validated
+value for typed delegation, the `AgentToolInput` shape otherwise. Keep in mind
+the target's lifecycle: an `AgentSpec` spawns a fresh session per call, while an
+`AgentLike` target keeps history across calls and is usually not safe to call
+concurrently. *Requires 0.24.0 or later.*
+
 When concurrency is available, the SDK tells the model to batch independent
 calls and to use separate assistant responses when a later call needs an earlier
 result. Runtime safety checks and `toolBatchPolicy` remain authoritative.

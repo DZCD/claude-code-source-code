@@ -84,6 +84,8 @@ console.log(result.result);
 
 `AgentToolOptions` 还接收 `metadata`：一个宿主持有的 `Record<string, unknown>`，原样透传到生成的 `ToolDefinition.metadata`（例如契约版本）。SDK 不读也不解释它，也不会展示给模型。*需要 0.22.0 及以上版本。*
 
+`AgentToolOptions.isConcurrencySafe` 让委派调用可以在默认的 `toolConcurrency.mode: "safe"` 下并发执行，supervisor 因此能在一轮中并行发起多个互不依赖的委派。判断函数收到的是工具解析后的输入。模板目标每次调用都会开启新会话，而会话目标会跨调用保留历史，通常不适合并发调用——见 [模板目标还是会话目标](#模板目标还是会话目标)。*需要 0.24.0 及以上版本。*
+
 ## 模板目标还是会话目标
 
 *需要 0.15.0 及以上版本。*

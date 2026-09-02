@@ -97,6 +97,8 @@ const agent = createAgent({
 
 默认使用 `mode: "safe"`。连续的工具调用只有在 `isConcurrencySafe(input)` 返回 `true` 时才会并发。工具没有声明安全规则、规则返回 `false`、输入无效或规则抛错时，该调用都会顺序执行。内置的 `Read`、`LS`、`Glob` 和 `Grep` 已标记为安全；`Write`、`Edit` 和 `Bash` 没有标记。
 
+`agentTool()` 通过 `AgentToolOptions.isConcurrencySafe` 接受同样的声明（*需要 0.24.0 及以上版本*），supervisor 因此可以在一轮中并行发起多个互不依赖的委派。判断函数收到的是工具解析后的输入——typed delegation 下是 `inputSchema` 校验后的值，默认委派下是 `AgentToolInput` 结构。注意目标的生命周期：`AgentSpec` 每次调用都会开启新会话，而 `AgentLike` 目标会跨调用保留历史，通常不适合并发调用。
+
 存在可并发工具时，SDK 会告诉模型：互不依赖的调用可以放在同一次回复中；后一个调用需要前一个结果时，必须分成两次回复。模型不能绕过 `isConcurrencySafe`、`maxConcurrency` 或 `toolBatchPolicy`。
 
 只有确认 Agent 中所有工具都能安全地同时运行时，才使用 `mode: "all"`。需要强制逐个执行时，使用 `mode: "sequential"`。`maxConcurrency` 默认是 `10`，并且必须是正整数。

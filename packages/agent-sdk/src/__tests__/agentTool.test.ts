@@ -171,4 +171,102 @@ describe("agentTool", () => {
     expect(toolResult?.type === "user" ? toolResult.tool_use_result : "").toContain("Available modes: ask, handoff");
     expect(events.at(-1)).toMatchObject({ type: "result", result: "parent saw unsupported mode" });
   });
+
+  test("isConcurrencySafe opts delegated calls into parallel execution under the default safe mode", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const makeChild = (label: string) => createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise(resolve => setTimeout(resolve, 30));
+          active--;
+          return textAssistant(`${label} done`);
+        },
+      },
+    });
+    let parentCalls = 0;
+    const parent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          parentCalls++;
+          if (parentCalls === 1) {
+            return {
+              role: "assistant" as const,
+              content: [
+                { type: "tool_use" as const, id: "toolu_1", name: "reviewer_a", input: { mode: "ask", task: "Review A" } },
+                { type: "tool_use" as const, id: "toolu_2", name: "reviewer_b", input: { mode: "ask", task: "Review B" } },
+              ],
+            };
+          }
+          return textAssistant("parent final");
+        },
+      },
+      tools: [
+        agentTool("reviewer_a", makeChild("A"), {
+          description: "Delegate review A.",
+          isConcurrencySafe: () => true,
+        }),
+        agentTool("reviewer_b", makeChild("B"), {
+          description: "Delegate review B.",
+          isConcurrencySafe: () => true,
+        }),
+      ],
+    });
+
+    const events = await collect(parent.query("Run both reviews."));
+    expect(events.at(-1)).toMatchObject({ type: "result", result: "parent final" });
+    expect(maxActive).toBe(2);
+  });
+
+  test("delegated calls without isConcurrencySafe stay sequential under the default safe mode", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const makeChild = (label: string) => createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise(resolve => setTimeout(resolve, 30));
+          active--;
+          return textAssistant(`${label} done`);
+        },
+      },
+    });
+    let parentCalls = 0;
+    const parent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient: {
+        async createMessage() {
+          parentCalls++;
+          if (parentCalls === 1) {
+            return {
+              role: "assistant" as const,
+              content: [
+                { type: "tool_use" as const, id: "toolu_1", name: "reviewer_a", input: { mode: "ask", task: "Review A" } },
+                { type: "tool_use" as const, id: "toolu_2", name: "reviewer_b", input: { mode: "ask", task: "Review B" } },
+              ],
+            };
+          }
+          return textAssistant("parent final");
+        },
+      },
+      tools: [
+        agentTool("reviewer_a", makeChild("A"), { description: "Delegate review A." }),
+        agentTool("reviewer_b", makeChild("B"), { description: "Delegate review B." }),
+      ],
+    });
+
+    const events = await collect(parent.query("Run both reviews."));
+    expect(events.at(-1)).toMatchObject({ type: "result", result: "parent final" });
+    expect(maxActive).toBe(1);
+  });
 });

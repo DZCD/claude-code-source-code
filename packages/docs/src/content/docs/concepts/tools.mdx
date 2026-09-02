@@ -95,6 +95,8 @@ const agent = createAgent({
 
 `mode: "safe"` is the default. It concurrently executes consecutive calls whose tools return `true` from `isConcurrencySafe(input)`. A missing declaration, a `false` result, invalid input, or an exception from the safety check makes that call sequential. The built-in `Read`, `LS`, `Glob`, and `Grep` tools are marked safe; `Write`, `Edit`, and `Bash` are not.
 
+`agentTool()` accepts the same declaration as `AgentToolOptions.isConcurrencySafe` (*requires 0.24.0 or later*), so a supervisor can fan out independent delegations in one turn. The predicate receives the tool's parsed input — the `inputSchema`-validated value for typed delegation, the `AgentToolInput` shape otherwise. Note the target's lifecycle: an `AgentSpec` spawns a fresh session per call, while an `AgentLike` target keeps history across calls and is usually not safe to call concurrently.
+
 When concurrency is available, the SDK tells the model to place independent calls in one assistant response and to use separate responses when a later call needs an earlier result. The model cannot override `isConcurrencySafe`, `maxConcurrency`, or `toolBatchPolicy`.
 
 Use `mode: "all"` only when every tool registered on that Agent is safe to overlap. Use `mode: "sequential"` to force every call to run one at a time. `maxConcurrency` defaults to `10` and must be a positive integer.

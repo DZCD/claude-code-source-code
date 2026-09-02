@@ -620,6 +620,7 @@ const KNOWN_AGENT_TOOL_OPTION_KEYS = new Set([
   "outputSchema",
   "inputSchema",
   "mapInput",
+  "isConcurrencySafe",
 ]);
 
 const KNOWN_DELEGATE_TOOL_OPTION_KEYS = new Set(["wait", "targetMailboxId", "workspaceGrants"]);
@@ -1350,6 +1351,17 @@ export type AgentToolOptions = {
    * runtime the projected prompt must be a string.
    */
   mapInput?: (input: any) => string | ContentBlock[];
+  /**
+   * Same contract as `ToolOptions.isConcurrencySafe`: under
+   * `toolConcurrency.mode: "safe"` (the default), only calls whose declaration
+   * returns true here run in parallel; omitted means sequential. For typed
+   * delegation the input is the `inputSchema`-validated value (the same value
+   * `mapInput` receives); for default delegation it is the `AgentToolInput`
+   * shape. Note the target matters: an AgentSpec spawns a fresh session per
+   * call, while an AgentLike target keeps history across calls and is usually
+   * not safe to call concurrently.
+   */
+  isConcurrencySafe?: (input: any) => boolean;
 };
 
 /**
@@ -1492,7 +1504,12 @@ export function agentTool(
       }
       return { content: result.result };
     },
-    options.metadata ? { metadata: options.metadata } : undefined,
+    options.metadata || options.isConcurrencySafe
+      ? {
+          ...(options.isConcurrencySafe ? { isConcurrencySafe: options.isConcurrencySafe } : {}),
+          ...(options.metadata ? { metadata: options.metadata } : {}),
+        }
+      : undefined,
   );
   return { ...definition, kind: "agent_tool" };
 }

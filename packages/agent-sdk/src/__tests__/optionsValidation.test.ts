@@ -84,6 +84,22 @@ describe("tool metadata", () => {
     expect(definition.metadata).toEqual({ contractVersion: 2 });
   });
 
+  test("agentTool carries isConcurrencySafe onto the definition", () => {
+    const child = createBareAgent(validAgentOptions);
+    const definition = agentTool("child", child, {
+      description: "d",
+      isConcurrencySafe: input => input.mode === "ask",
+    });
+    expect(definition.isConcurrencySafe?.({ mode: "ask", task: "t" })).toBe(true);
+    expect(definition.isConcurrencySafe?.({ mode: "handoff", task: "t" })).toBe(false);
+  });
+
+  test("agentTool without isConcurrencySafe has no isConcurrencySafe key", () => {
+    const child = createBareAgent(validAgentOptions);
+    const definition = agentTool("child", child, { description: "d" });
+    expect("isConcurrencySafe" in definition).toBe(false);
+  });
+
   test("definitions without metadata have no metadata key", () => {
     const definition = tool("t", "d", z.object({}), async () => ({ content: "x" }));
     expect("metadata" in definition).toBe(false);
