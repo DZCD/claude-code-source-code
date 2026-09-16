@@ -238,6 +238,7 @@ than relying on an error.
 | Trace events carry token usage end to end: `result` events include the summed `usage`, LangSmith `llm` runs end with `usage_metadata` in outputs, and Langfuse `generation` observations end with `usageDetails` (cache buckets included, so LangSmith/Langfuse show per-turn token consumption and inferred cost) | 0.23.1 |
 | `AgentToolOptions.isConcurrencySafe`: `agentTool()` tools can opt into parallel execution under `toolConcurrency.mode: "safe"` (previously only plain `tool()` declarations could) | 0.24.0 |
 | `AgentOptions.submitOutputEndTurn` (also via `defineAgent()`): `false` keeps the loop going after a validated `submit_output` call — submissions are recorded (last one wins) and a later text ending succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output` | 0.25.0 |
+| Invalid streamed tool argument JSON returns corrective error tool results without executing the handler | 0.25.1 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

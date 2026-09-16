@@ -1654,3 +1654,11 @@ returns. Both fields are optional and absent when the client does not report
 them.
 
 *Requires 0.16.0 or later.*
+
+## Invalid tool argument JSON
+
+*Requires 0.25.1 or later.*
+
+When a completed Anthropic-compatible stream contains malformed tool argument JSON, the SDK does not execute the tool. It returns a matching `tool_result` with `is_error: true`, identifies the JSON syntax problem (including a character position when available), lists required top-level fields, and asks the model to regenerate complete arguments from the tool schema. Raw argument excerpts are not echoed in the error.
+
+Incomplete intermediate chunks are not errors if the final JSON is valid. Valid JSON objects, including `{}`, still go through normal schema validation. Valid JSON values that are not objects are rejected before execution. Existing turn limits still apply; this feedback does not guarantee that a model will correct its response.

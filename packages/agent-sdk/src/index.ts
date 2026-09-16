@@ -58,6 +58,9 @@ export type ToolUseBlock = {
   name: string;
   input: Record<string, unknown>;
 };
+// Internal per-response parse state; never serialized into provider messages.
+const toolInputFailures = new WeakMap<ToolUseBlock, { kind: "json" | "object"; position?: number }>();
+
 export type ToolResultBlock = {
   type: "tool_result";
   tool_use_id: string;
@@ -3679,6 +3682,22 @@ class Agent<TContext = unknown> {
       };
     }
 
+    const inputFailure = toolInputFailures.get(block);
+    if (inputFailure) {
+      const required = Array.isArray(definition.jsonSchema.required)
+        ? definition.jsonSchema.required.filter((key): key is string => typeof key === "string").slice(0, 12)
+        : [];
+      const message = [
+        `Tool ${block.name} was not executed: ${inputFailure.kind === "json" ? "arguments are not valid JSON" : "arguments must be a JSON object"}.`,
+        ...(inputFailure.position === undefined ? [] : [`JSON syntax error near character ${inputFailure.position}.`]),
+        "Regenerate the complete arguments using this tool's input schema. Use double-quoted property names and strings, balanced braces, and no Markdown fences.",
+        ...(required.length ? [`Required top-level fields: ${required.map(key => JSON.stringify(key.slice(0, 80))).join(", ")}. Do not submit an empty object.`] : []),
+        "Correct and retry this tool call. No result was saved by this call.",
+      ].join("\n");
+      const error = new ToolExecutionError(message);
+      return { block: { type: "tool_result", tool_use_id: block.id, content: message, is_error: true }, error };
+    }
+
     try {
       const permission = await (this.options.permission?.({
         toolName: block.name,
@@ -4272,6 +4291,25 @@ class AnthropicStreamAssembler {
   }
 
   message(): AssistantModelMessage {
+    // Partial chunks are often invalid JSON. Only the completed response may
+    // reject a tool call; a temporary parse error must not poison later chunks.
+    for (const [index, raw] of this.jsonDeltas) {
+      const block = this.content[index];
+      if (block?.type !== "tool_use") continue;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          toolInputFailures.set(block, { kind: "object" });
+          block.input = {};
+        } else {
+          block.input = parsed as Record<string, unknown>;
+        }
+      } catch (error) {
+        const match = error instanceof Error ? /position (\d+)/.exec(error.message) : null;
+        toolInputFailures.set(block, { kind: "json", ...(match ? { position: Number(match[1]) } : {}) });
+        block.input = {};
+      }
+    }
     return {
       role: "assistant",
       content: this.content.filter(isContentBlock),

@@ -152,3 +152,11 @@ const agent = createAgent({
 *需要 0.22.0 及以上版本。*
 
 `createAgent()`/`createBareAgent()`/`defineAgent()`（`AgentOptions`）、`agentTool()`（`AgentToolOptions`）、`delegateTool()`（`DelegateToolOptions`）和 `tool()`（`ToolOptions`）的 options 对象现在严格校验：遇到未知键会在装配期直接抛错——`AgentOptions: unknown option "bogusOption". Check for a typo, or upgrade the SDK if this option was added in a newer version.`（`agentTool()`/`delegateTool()` 的错误前缀是 `agentTool("<name>"):` / `delegateTool("<name>"):`）。目的是让「旧版 SDK + 新版 API」的组合快速失败——以前这种组合会成功但功能静默缺失。*行为变化：*以前会被静默忽略的多余键（例如 spread 进来的宿主字段）现在会抛错，升级时记得剔除。
+
+## 工具参数 JSON 非法
+
+*需要 0.25.1 及以上版本。*
+
+Anthropic 兼容流结束后，若工具参数不是合法 JSON，SDK 不执行工具，而是返回匹配该调用的 `tool_result`，设置 `is_error: true`。结果明确说明 JSON 语法问题（能确定时附字符位置）、列出顶层必填字段，并要求模型按工具 schema 重新生成完整参数。错误提示不回显原始参数片段。
+
+中间分片暂时不完整不算错误，只要最终 JSON 合法即可。合法 JSON 对象（包括 `{}`）仍走正常 schema 校验；合法 JSON 但不是对象的值会在执行前被拒绝。原有轮数上限仍生效，这些提示不保证模型一定能纠正输出。
