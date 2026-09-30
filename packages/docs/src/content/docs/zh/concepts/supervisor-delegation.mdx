@@ -115,6 +115,12 @@ const supervisor = createAgent({
 
 模板目标会在**每次工具调用时 spawn 一个全新会话**——不相关的任务之间不会泄漏历史，并发调用也不会争抢同一段对话。会话目标则跨调用保留历史，先前的任务可能影响后续回答。Supervisor 委派场景优先传模板；只有当专家需要记住之前的任务时，才注册 `spec.spawn()` 产生的会话。生成的工具描述会声明目标是哪种语义，supervisor 模型据此知道任务是否必须自包含。
 
+### 持久化每次子级会话
+
+*需要 0.26.0 及以上版本。*
+
+`AgentToolOptions.prepareTarget` 在工具输入校验并投影成子级任务后、子级运行前调用。它收到 target、任务、工具调用 ID、父运行 ID、trace 会话 ID 和中断信号，返回本次要调用的 `AgentLike`。宿主可对 `AgentSpec` 调用 `target.spawn({ historyStore })`，并记录子级事件流；不提供回调时仍为每次调用创建全新会话。直连 `ask` 的子级 trace 事件携带 `parent_run_id` 和 `parent_tool_use_id`，并行调用同一张卡也能分别关联。trace 只负责观测；恢复对话仍需在子级 spawn 时提供 `HistoryStore`。准备子级失败时由宿主清理已创建的记录。
+
 ## 结构化子级输出
 
 *需要 0.20.0 及以上版本。*

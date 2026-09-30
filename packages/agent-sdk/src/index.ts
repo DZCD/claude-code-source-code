@@ -213,6 +213,7 @@ export type ContextTraceEvent = {
   session_id: string;
   run_id: string;
   parent_run_id?: string;
+  parent_tool_use_id?: string;
   seq: number;
   source: AgentRuntimeSource;
   type: ContextTraceEventType;
@@ -449,6 +450,8 @@ export type ToolBatchPolicy<TContext = unknown> = {
 export type ToolExecutionContext<TContext = unknown> = {
   signal?: AbortSignal;
   toolUseId: string;
+  /** Current agent query, when the tool is called from an agent loop. */
+  trace?: { sessionId: string; runId: string };
   context?: TContext;
   agentRuntime?: AgentRuntimeContext;
   permissions?: RuntimePermissions;
@@ -621,6 +624,7 @@ const KNOWN_AGENT_TOOL_OPTION_KEYS = new Set([
   "description",
   "targetMailboxId",
   "metadata",
+  "prepareTarget",
   "outputSchema",
   "inputSchema",
   "mapInput",
@@ -961,6 +965,7 @@ export type QueryOptions<TContext = unknown> = {
 type QueryTraceContext = {
   sessionId: string;
   parentRunId: string;
+  parentToolUseId?: string;
 };
 
 const QUERY_TRACE_CONTEXT = Symbol("queryTraceContext");
@@ -1341,6 +1346,21 @@ export type AgentToolOptions = {
    */
   metadata?: Record<string, unknown>;
   /**
+   * Resolve the child session for this invocation after input validation and
+   * task mapping, before the child runs. A host can spawn an AgentSpec with a
+   * per-call HistoryStore and return an AgentLike that records its event stream.
+   * The default is to spawn a spec or reuse a live AgentLike target.
+   */
+  prepareTarget?: (invocation: {
+    target: AgentToolTarget;
+    toolName: string;
+    toolUseId: string;
+    task: string | ContentBlock[];
+    parentRunId?: string;
+    traceSessionId?: string;
+    signal?: AbortSignal;
+  }) => AgentLike<any> | Promise<AgentLike<any>>;
+  /**
    * Expected structured output of the target. When omitted, the declaration is
    * inherited from the target itself (an Agent's or AgentSpec's
    * `AgentOptions.outputSchema`); when passed explicitly it must match the
@@ -1433,10 +1453,6 @@ export function agentTool(
     description,
     options.inputSchema ?? agentToolInputSchema,
     async (input: any, toolContext) => {
-      // Resolve per invocation: a spec spawns a new session every call, so no
-      // history leaks between unrelated tasks.
-      const target = resolveAgentTarget(agent);
-
       let task: string | ContentBlock[];
       let workspaceGrants: AgentToolInput["workspaceGrants"];
       if (typed) {
@@ -1455,11 +1471,17 @@ export function agentTool(
           if (!toolContext.agentRuntime) {
             throw new Error(`agentTool("${toolName}") mode=handoff requires an AgentRuntime. Available modes without AgentRuntime: ask.`);
           }
+          task = formatAgentToolTask(agentInput);
+          const target = options.prepareTarget ? await options.prepareTarget({
+            target: agent, toolName, toolUseId: toolContext.toolUseId, task,
+            parentRunId: toolContext.trace?.runId, traceSessionId: toolContext.trace?.sessionId,
+            signal: toolContext.signal,
+          }) : resolveAgentTarget(agent);
           const result = await toolContext.agentRuntime.delegate({
             name: toolName,
             description: options.description,
             agent: target,
-            task: formatAgentToolTask(agentInput),
+            task,
             wait: "accepted",
             targetMailboxId: options.targetMailboxId,
             workspaceGrants: agentInput.workspaceGrants,
@@ -1469,6 +1491,15 @@ export function agentTool(
         task = formatAgentToolTask(agentInput);
         workspaceGrants = agentInput.workspaceGrants;
       }
+
+      // Resolve per invocation: a spec spawns a new session every call, so no
+      // history leaks between unrelated tasks. Hosts may attach durable state
+      // to that fresh session at this boundary.
+      const target = options.prepareTarget ? await options.prepareTarget({
+        target: agent, toolName, toolUseId: toolContext.toolUseId, task,
+        parentRunId: toolContext.trace?.runId, traceSessionId: toolContext.trace?.sessionId,
+        signal: toolContext.signal,
+      }) : resolveAgentTarget(agent);
 
       if (toolContext.agentRuntime) {
         if (typeof task !== "string") {
@@ -1502,10 +1533,17 @@ export function agentTool(
         return { content: result.content };
       }
 
-      const result = await target.prompt(task, {
+      const childOptions: QueryOptions = {
         signal: toolContext.signal,
         context: toolContext.context,
-      });
+      };
+      const result = await target.prompt(task, toolContext.trace
+        ? withQueryTraceContext(childOptions, {
+            sessionId: toolContext.trace.sessionId,
+            parentRunId: toolContext.trace.runId,
+            parentToolUseId: toolContext.toolUseId,
+          })
+        : childOptions);
       if (result.is_error) {
         if (outputSchema && result.subtype === "error_missing_output") {
           throw formatChildOutputInvalidError(
@@ -2826,6 +2864,7 @@ class Agent<TContext = unknown> {
       session_id: queryTraceContext?.sessionId ?? this.sessionId,
       run_id: runId,
       ...(queryTraceContext ? { parent_run_id: queryTraceContext.parentRunId } : {}),
+      ...(queryTraceContext?.parentToolUseId ? { parent_tool_use_id: queryTraceContext.parentToolUseId } : {}),
       source,
     };
 
@@ -3219,6 +3258,7 @@ class Agent<TContext = unknown> {
           options.agentRuntime,
           options.permissions,
           options.context,
+          { sessionId: traceBase.session_id, runId },
         ));
       };
       const cancelTool = async (block: ToolUseBlock): Promise<ToolExecutionOutcome> => {
@@ -3669,6 +3709,7 @@ class Agent<TContext = unknown> {
     agentRuntime: AgentRuntimeContext | undefined,
     permissions: RuntimePermissions | undefined,
     context: TContext | undefined,
+    trace: ToolExecutionContext['trace'],
   ): Promise<ToolExecutionOutcome> {
     const definition = (this.options.tools ?? []).find(tool => tool.name === block.name);
     if (!definition) {
@@ -3719,6 +3760,7 @@ class Agent<TContext = unknown> {
       const output = await definition.handler(parsed, {
         signal,
         toolUseId: block.id,
+        trace,
         context,
         agentRuntime,
         permissions: agentRuntime?.permissions ?? permissions,
@@ -5980,6 +6022,7 @@ function recordLangSmithRunEvent(
       sdk_session_id: event.session_id,
       sdk_run_id: event.run_id,
       sdk_parent_run_id: event.parent_run_id,
+      sdk_parent_tool_use_id: event.parent_tool_use_id,
       source: jsonSafeValue(event.source),
       data: jsonSafeValue(event.data),
     },
@@ -6073,6 +6116,7 @@ function traceMetadata(
     sdk_session_id: event.session_id,
     sdk_run_id: event.run_id,
     sdk_parent_run_id: event.parent_run_id,
+    sdk_parent_tool_use_id: event.parent_tool_use_id,
     sdk_source_kind: event.source.kind,
     sdk_source_name: event.source.name,
     sdk_source_team: event.source.team,
@@ -6479,6 +6523,7 @@ function recordLangfuseRunEvent(
         sdk_session_id: event.session_id,
         sdk_run_id: event.run_id,
         sdk_parent_run_id: event.parent_run_id,
+        sdk_parent_tool_use_id: event.parent_tool_use_id,
         source: jsonSafeValue(event.source),
         data: jsonSafeValue(event.data),
       },

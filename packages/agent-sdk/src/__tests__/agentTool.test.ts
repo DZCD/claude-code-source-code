@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import {
   agentTool,
   createAgent,
+  defineAgent,
   type AgentLikeEvent,
+  type AgentSpec,
+  type ContextTraceEvent,
   type ModelClient,
 } from "../index.js";
 
@@ -29,6 +33,40 @@ async function collect(iterable: AsyncIterable<AgentLikeEvent>): Promise<AgentLi
 }
 
 describe("agentTool", () => {
+  test("typed child invocation - parallel-safe identity - links trace to the parent tool call and prepares a durable target", async () => {
+    const traces: ContextTraceEvent[] = [];
+    const tracer = { onEvent(event: ContextTraceEvent) { traces.push(event); } };
+    const child = defineAgent({ name: "child-card", model: "test-model", workspace: false, tracer,
+      modelClient: { async createMessage() { return textAssistant("checked"); } },
+    });
+    const prepared: Array<{ toolUseId: string; parentRunId?: string; traceSessionId?: string; task: string | unknown[] }> = [];
+    let turn = 0;
+    const parent = createAgent({ name: "parent-card", model: "test-model", workspace: false, tracer,
+      tools: [agentTool("child-card", child, {
+        description: "Check a child card", inputSchema: z.object({}), mapInput: () => "Check the case",
+        prepareTarget(invocation) {
+          prepared.push(invocation);
+          return (invocation.target as AgentSpec).spawn();
+        },
+      })],
+      modelClient: { async createMessage() {
+        turn++;
+        return turn === 1 ? toolUseAssistant("child-use-1", "child-card", {}) : textAssistant("done");
+      } },
+    });
+
+    await parent.prompt("Start");
+    const parentStart = traces.find(event => event.type === "run_start" && event.source.name === "parent-card");
+    const childStart = traces.find(event => event.type === "run_start" && event.source.name === "child-card");
+    expect(parentStart).toBeDefined();
+    expect(childStart).toMatchObject({
+      parent_run_id: parentStart!.run_id,
+      parent_tool_use_id: "child-use-1",
+      session_id: parentStart!.session_id,
+    });
+    expect(prepared).toMatchObject([{ toolUseId: "child-use-1", task: "Check the case",
+      parentRunId: parentStart!.run_id, traceSessionId: parentStart!.session_id }]);
+  });
   test("ask mode calls the target AgentLike and returns its final result as tool_result", async () => {
     const child = createAgent({
       apiKey: "test-key",

@@ -239,6 +239,11 @@ token 用量时，`generation` observation 的 `usageDetails` 使用 Langfuse
 `cache_read_input_tokens`、`total`）——Anthropic 的 `input_tokens` 本身就不含
 cache token，因此用量和推断成本不会被重复计算。
 
+直连 `agentTool()` 的 `ask` 调用与父级共用 trace 会话。子级事件携带
+`parent_run_id` 和 `parent_tool_use_id`；即使并行调用同一个子智能体，也能定位
+具体的父工具调用。这些字段只负责追踪关联；需要续聊时仍须给子级装配
+`HistoryStore`。*需要 0.26.0 及以上版本。*
+
 ## 事件类型
 
 | 类型 | 说明 |

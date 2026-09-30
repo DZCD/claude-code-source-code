@@ -701,6 +701,17 @@ the target's lifecycle: an `AgentSpec` spawns a fresh session per call, while an
 `AgentLike` target keeps history across calls and is usually not safe to call
 concurrently. *Requires 0.24.0 or later.*
 
+For durable child sessions, `AgentToolOptions.prepareTarget` runs after the
+child's input has been validated and mapped to a task, before the child starts.
+It receives the target, task, tool-use ID, parent run ID, trace session ID, and
+abort signal; return the `AgentLike` to call. A host can spawn the supplied
+`AgentSpec` with a per-call `HistoryStore` and return an adapter that records
+its event stream. Without the hook, a spec still spawns a fresh session as
+before. Direct `ask` child trace events share the parent's trace session and
+carry both `parent_run_id` and `parent_tool_use_id`, so concurrent calls to the
+same child can be distinguished. The host owns cleanup if preparing a child
+fails. *Requires 0.26.0 or later.*
+
 When concurrency is available, the SDK tells the model to batch independent
 calls and to use separate assistant responses when a later call needs an earlier
 result. Runtime safety checks and `toolBatchPolicy` remain authoritative.

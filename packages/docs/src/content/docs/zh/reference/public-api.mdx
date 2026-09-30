@@ -13,7 +13,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | `isAgentSpec(target)` | 类型守卫，区分 `AgentSpec` 模板与存活的 `AgentLike` 会话。 |
 | `query(params)` | 一次性 async generator helper。 |
 | `tool(name, description, inputSchema, handler)` | 创建自定义工具定义。 |
-| `agentTool(name, target, metadata)` | 把另一个 `AgentLike` 或 `AgentSpec` 暴露成模型工具，并明确支持 `ask`、`handoff`、`observe` 三种调用模式。传入模板时每次调用 spawn 全新会话；传入会话时跨调用保留历史。传入 `inputSchema` + `mapInput`（需要 0.21.0）时工具改用自定义 typed 输入形状（ask-only），返回类型为 `ToolDefinition<any>`。 |
+| `agentTool(name, target, options)` | 把另一个 `AgentLike` 或 `AgentSpec` 暴露成模型工具，支持 `ask` 和 `handoff`。传入模板时每次调用 spawn 全新会话；传入会话时跨调用保留历史。传入 `inputSchema` + `mapInput`（需要 0.21.0）时工具改用自定义 typed 输入形状（ask-only）。`prepareTarget` 可装配每次调用的子级会话（需要 0.26.0）。 |
 | `delegateTool(name, description, agent, options)` | 高级 helper，把一个 `AgentLike` 或 `AgentSpec` 暴露成 mailbox-backed 委托工具。 |
 | `skill(options)` | 创建内存态 skill。 |
 | `loadSkill(path)` | 从包含 `SKILL.md` 的目录加载 skill。 |
@@ -225,6 +225,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentToolOptions.isConcurrencySafe`：`agentTool()` 工具可以在 `toolConcurrency.mode: "safe"` 下声明并发安全（此前只有 `tool()` 创建的工具能声明） | 0.24.0 |
 | `AgentOptions.submitOutputEndTurn`（经 `defineAgent()` 也生效）：设为 `false` 后校验通过的 `submit_output` 不再结束 run——提交被记录（以最后一次为准），之后的文本收尾成功并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍报 `error_missing_output` | 0.25.0 |
 | 流式工具参数 JSON 非法时返回纠错 tool result，不执行 handler | 0.25.1 |
+| `AgentToolOptions.prepareTarget` 可按每次工具调用准备子级 `AgentLike`；直连 `ask` 的子级 trace 带 `parent_run_id`、`parent_tool_use_id`，`ToolExecutionContext.trace` 暴露父查询身份 | 0.26.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -252,7 +253,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentRuntimeFailure` | 写入失败事件和上游报告 metadata 的归一化成员错误。 |
 | `TeamRunnerConfig` | Team runtime 限制，包括 `maxDelegateDepth` 和 `maxConcurrentWorkItems`。并发默认值为 `1`，同一目标 mailbox 始终串行。 |
 | `ContextTracer` | 包含 `onEvent`、可选 `flush` 和可选 `close` 的 trace sink 接口。只暴露方法——`failOnError` 由创建它的工厂绑定（`createXxxContextTracer` 的 options 或 `defineContextTracer()`）。 |
-| `ContextTraceEvent` | Agent 输出的结构化 trace event envelope。 |
+| `ContextTraceEvent` | Agent 输出的结构化 trace event envelope；直连 `agentTool()` 的子级事件带 `parent_run_id` 和 `parent_tool_use_id`（需要 0.26.0）。 |
 | `ContextTraceEventType` | Trace event 类型字符串 union。 |
 | `JsonlContextTracerOptions` | 内置 JSONL tracer 的配置。 |
 | `LangSmithContextTracerOptions` | LangSmith tracer adapter 的配置。 |
@@ -279,6 +280,8 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `ToolBatchPolicyContext` | 策略输入，包含来源、业务上下文、signal，以及标记为 `tool` 或 `agent_tool` 的工具调用。 |
 | `ToolBatchPolicyResult` | 允许批次，或通过错误码、消息、冲突调用 ID 和下一步建议拒绝批次。 |
 | `AgentToolInput` | `agentTool()` 的标准输入结构。 |
+| `ToolExecutionContext` | 工具 handler 上下文；`trace` 标明当前查询的运行和 trace 会话（需要 0.26.0）。 |
+| `AgentToolOptions.prepareTarget` | 可选回调：每次有效的子级调用返回一个 `AgentLike`，入参包含 target、任务、工具调用 ID、父运行 ID 和 trace 会话 ID（需要 0.26.0）。 |
 | `AgentToolOptions` | `agentTool()` 的说明、目标 mailbox 等配置，以及 `outputSchema`（需要 0.20.0）：`ask` 模式下工具结果是子级校验后的结构化输出 JSON 字符串；子级未提交或提交不合法时以 `child_output_invalid` 工具错误返回。自 0.21.0 起，缺省的 `outputSchema` 从 target 自身的声明继承（`spec.options.outputSchema` 或活 Agent 的 `outputSchema` getter；宿主自定义 `AgentLike` 适配器没有可读声明，不继承也不核对），显式传入且与 target 声明不一致时在装配期抛错。同样自 0.21.0 起，`inputSchema` + `mapInput`（必须成对出现）启用 typed 委派：工具以自定义 schema 为输入——ask-only，没有 `mode`/`workspaceGrants`——先校验父级入参再调用子级，并由 `mapInput` 把校验后的入参投影成子级 prompt。还接收宿主持有的 `metadata`（需要 0.22.0），透传到 `ToolDefinition.metadata`，不展示给模型。自 0.23.0 起又固定了两种契约组合：显式声明 `outputSchema` 而 target 未声明时放行，并按父级 schema 校验子级的 `structuredResult`；父子都没声明 schema 时，`ask` 会把子级的 `structuredResult` 原样（未校验）以 JSON 透出，而不是回退成文本 content 丢弃它。还接收 `isConcurrencySafe`（需要 0.24.0），契约与 `ToolOptions.isConcurrencySafe` 相同，让委派调用可以在 `toolConcurrency.mode: "safe"` 下并发执行；缺省保持顺序执行。 |
 | `DelegateToolOptions` | mailbox-backed AgentLike 委托配置。 |
 | `SkillDefinition` | 可复用指令包。 |
