@@ -2018,6 +2018,26 @@ describe("agent-sdk", () => {
     });
   });
 
+  test.each([
+    ["https://api.deepseek.com/anthropic", undefined, 393216],
+    ["https://api.deepseek.com/anthropic/", undefined, 393216],
+    ["https://api.deepseek.com/anthropic", 8192, 8192],
+    ["https://api.anthropic.com", undefined, 16384],
+    ["https://api.deepseek.com.example.org/anthropic", undefined, 16384],
+    ["https://example.org/anthropic?target=api.deepseek.com", undefined, 16384],
+  ])("output budget - endpoint %s and override %p - requests and traces use %p tokens", async (baseURL, maxTokens, expected) => {
+    const requests: ModelRequest[] = [];
+    const traceEvents: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const agent = createBareAgent({
+      model: "deepseek-v4-flash-vision-exp", baseURL, maxTokens,
+      modelClient: { async createMessage(request) { requests.push(request); return textAssistant("done"); } },
+      tracer: { onEvent(event) { traceEvents.push(event); } },
+    });
+    expect((await agent.prompt("Use the default output budget", { stream: false })).subtype).toBe("success");
+    expect(requests[0]?.maxTokens).toBe(expected);
+    expect(traceEvents.find(event => event.type === "model_request")?.data.max_tokens).toBe(expected);
+  });
+
   test("emits stream events for streaming text responses", async () => {
     const agent = createAgent({
       apiKey: "test-key",

@@ -182,6 +182,24 @@ The Kimi Open Platform endpoint at `https://api.moonshot.cn/v1` uses the OpenAI
 Chat Completions protocol and is not a valid `baseURL` for the SDK's built-in
 Anthropic client.
 
+## Default output budget
+
+*Requires 0.29.0 or later.*
+
+When `baseURL` points to the official `api.deepseek.com` host and `maxTokens` is
+omitted, the SDK uses **393216 tokens (384K)**, the maximum output advertised by
+DeepSeek's [model metadata](https://api-docs.deepseek.com/api/list-models/) and
+[API reference](https://api-docs.deepseek.com/api/create-chat-completion/).
+Other endpoints keep the existing 16384-token default. An explicit `maxTokens`
+always takes precedence. Set `baseURL` explicitly to use this provider default;
+the SDK does not inspect environment variables to choose the output budget.
+
+This is a maximum allowance per model request, including thinking output, not a
+request to generate that many tokens. The provider can end the response sooner;
+usage and billing depend on tokens actually generated. Smaller explicit limits
+remain useful when an application deliberately limits output or cost. The
+separate `autoCompact.maxTokens` summary budget is unchanged.
+
 ## Multimodal Input
 
 Pass Anthropic-compatible content blocks for image or document prompts:

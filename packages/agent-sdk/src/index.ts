@@ -596,6 +596,17 @@ function assertKnownOptionKeys(factory: string, options: object, knownKeys: Set<
   }
 }
 
+function defaultMaxTokens(baseURL: string | undefined): number {
+  if (baseURL) {
+    try {
+      if (new URL(baseURL).hostname === "api.deepseek.com") return 393216;
+    } catch {
+      // Leave endpoint validation to the model client, as before.
+    }
+  }
+  return 16384;
+}
+
 const KNOWN_AGENT_OPTION_KEYS = new Set([
   "apiKey",
   "baseURL",
@@ -2743,9 +2754,9 @@ class Agent<TContext = unknown> {
         ? publicOptions
         : applyAgentWorkspaceOptions(publicOptions, this.sessionId);
     this.options = {
-      maxTokens: 16384,
       maxTurns: 50,
       ...configuredOptions,
+      maxTokens: configuredOptions.maxTokens ?? defaultMaxTokens(configuredOptions.baseURL),
     };
     this.toolConcurrency = normalizeToolConcurrencyOptions(configuredOptions.toolConcurrency);
     if (this.options.retryMissingOutput !== undefined && typeof this.options.retryMissingOutput !== "boolean") {

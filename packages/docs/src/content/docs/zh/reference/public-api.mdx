@@ -99,7 +99,7 @@ const agent = createBareAgent({
 | `name` | `string` | 可选的 trace source 名称。 |
 | `model` | `string` | 模型名。 |
 | `systemPrompt` | `string` | 作为 provider system prompt 发送的稳定角色和职责指令。 |
-| `maxTokens` | `number` | 单次模型请求的最大输出 token。 |
+| `maxTokens` | `number` | 单次请求的最大输出 token，包含 thinking。从 0.29.0 起，显式 `baseURL` 为官方 `api.deepseek.com` 且未传该值时默认 393216，其他端点默认 16384；显式值优先。 |
 | `maxTurns` | `number` | agent loop 最大轮次，超过后返回 `error_max_turns`。 |
 | `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。`disabled` 会显式发送给 provider（即 `thinking: { "type": "disabled" }`），因为 DeepSeek 等 Anthropic 兼容端点默认开启思考。省略时，SDK 不发送 thinking 配置。各 provider 的实际生效情况见 [Provider 兼容性](../provider-compatibility/)。 |
 | `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`（Kimi 约定——DeepSeek 忽略，见 [Provider 兼容性](../provider-compatibility/)）。省略时使用 provider 默认值。 |
@@ -229,6 +229,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentToolOptions.prepareTarget` 可按每次工具调用准备子级 `AgentLike`；直连 `ask` 的子级 trace 带 `parent_run_id`、`parent_tool_use_id`，`ToolExecutionContext.trace` 暴露父查询身份 | 0.26.0 |
 | `AgentOptions.retryMissingOutput`（默认 `false`）：缺少交付时最多补交一次，关闭 thinking 并强制 `submit_output`；`ModelRequest.toolChoice` 向自定义客户端传递强制工具选择 | 0.27.0 |
 | Breaking 默认变更：有 `outputSchema` 或 `submit_output` 的智能体自动开启 `retryMissingOutput`；设为 `false` 保持缺少交付时立即失败，普通聊天不变 | 0.28.0 |
+| 默认行为变更：DeepSeek 官方端点的 `maxTokens` 默认 393216（384K），其他端点仍为 16384，显式配置优先 | 0.29.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

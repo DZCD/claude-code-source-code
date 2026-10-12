@@ -32,6 +32,15 @@ DeepSeek 自己的思考力度旋钮是 `output_config.effort`，SDK 目前尚�
 - `max_tokens`、`system`、`stream`、`temperature`、`top_p`、
   `stop_sequences` 和工具调用完全支持；`cache_control` 一律被忽略。
 
+## 默认输出预算
+
+*需要 0.29.0 及以上版本。*
+
+`baseURL` 指向官方 `api.deepseek.com`，且未传 `maxTokens` 时，SDK 使用 **393216 tokens（384K）**，与 DeepSeek 官方[模型元数据](https://api-docs.deepseek.com/api/list-models/)及[接口说明](https://api-docs.deepseek.com/api/create-chat-completion/)标注的最大输出一致。其他端点保留原来的 16384-token 默认值；显式 `maxTokens` 始终优先。请显式设置 `baseURL`；SDK 不通过环境变量判断输出预算。
+
+这是单次模型请求的输出上限，包含 thinking 输出，不代表每次必须生成这么多 token。供应商可以提前结束响应，实际用量和计费按真实生成量计算。应用需要限制输出或成本时仍可显式设置较小的值。独立的 `autoCompact.maxTokens` 摘要预算不变。
+
+
 ## Kimi
 
 Kimi K3 经 Anthropic 兼容端点/网关使用时，约定正好相反：它接受 SDK 从
