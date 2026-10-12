@@ -28,9 +28,39 @@ async function collect(agent: ReturnType<typeof createBareAgent>, signal?: Abort
 }
 
 describe("retryMissingOutput", () => {
-  test("default - missing submission - fails without another request", async () => {
+  test.each(["native", "custom"])("default - %s submission tool - recovers without an explicit flag", async kind => {
+    const script = createScript([text(), submit()]);
+    const agent = createBareAgent({ model: "test", modelClient: script.client,
+      ...(kind === "native" ? { outputSchema: schema } : {
+        tools: [tool("submit_output", "submit", schema, input => ({ content: "ok", structuredResult: input, endTurn: true }))],
+      }),
+    });
+    expect((await agent.prompt("work")).subtype).toBe("success");
+    expect(script.requests).toHaveLength(2);
+    expect(script.requests[1]?.toolChoice?.name).toBe("submit_output");
+  });
+
+  test("default - ordinary chat - ends normally without submission or retry", async () => {
     const script = createScript([text()]);
-    const agent = createBareAgent({ model: "test", outputSchema: schema, modelClient: script.client });
+    const agent = createBareAgent({ model: "test", modelClient: script.client });
+    expect((await agent.prompt("work")).subtype).toBe("success");
+    expect(script.requests).toHaveLength(1);
+  });
+
+  test("default - submission tool added after construction - recovery is enabled for the query", async () => {
+    const script = createScript([text(), submit()]);
+    const agent = createBareAgent({ model: "test", modelClient: script.client });
+    agent.addTools([tool("submit_output", "submit", schema, input => ({
+      content: "ok", structuredResult: input, endTurn: true,
+    }))]);
+    expect((await agent.prompt("work")).subtype).toBe("success");
+    expect(script.requests).toHaveLength(2);
+  });
+
+
+  test("explicit false - missing submission - fails without another request", async () => {
+    const script = createScript([text()]);
+    const agent = createBareAgent({ model: "test", outputSchema: schema, retryMissingOutput: false, modelClient: script.client });
     expect((await agent.prompt("work")).subtype).toBe("error_missing_output");
     expect(script.requests).toHaveLength(1);
   });

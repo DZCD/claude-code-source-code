@@ -120,6 +120,7 @@ describe("AgentOptions.outputSchema", () => {
     const agent = createBareAgent({
       model: "claude-test",
       outputSchema,
+      retryMissingOutput: false,
       modelClient: clientFromResponses([textAssistant("Here is the answer in prose.")]),
     });
 
@@ -285,6 +286,7 @@ describe("AgentOptions.submitOutputEndTurn", () => {
       model: "claude-test",
       outputSchema,
       submitOutputEndTurn: false,
+      retryMissingOutput: false,
       modelClient: clientFromResponses([textAssistant("prose without submitting")]),
     });
 
@@ -413,7 +415,7 @@ describe("agentTool outputSchema", () => {
 
   test("a child that ends without submitting produces a child_output_invalid tool error", async () => {
     const requests: ModelRequest[] = [];
-    const parent = createParent(createChild([textAssistant("no submission")]), requests);
+    const parent = createParent(createChild([textAssistant("no submission"), textAssistant("still no submission")]), requests);
 
     const result = await parent.prompt("Use the solver", { stream: false });
 

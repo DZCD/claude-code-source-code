@@ -535,7 +535,7 @@ The structure is enforced by the harness, not by prompt discipline:
   loop as an error `tool_result`, so the model can fix it and retry. A valid
   submission ends the run with `subtype: "success"` and the payload on
   `SDKResultMessage.structuredResult`.
-- By default, if the model ends its turn without calling `submit_output`, the run fails
+- If recovery is disabled or unsuccessful, ending without `submit_output` fails
   with `subtype: "error_missing_output"` and a `MissingOutputError`. There is
   no fallback that parses the final text as JSON.
 - `submit_output` must be the only tool call in its batch. A batch that mixes
@@ -557,9 +557,13 @@ ending after a submission succeeds with the last submission as
 
 *Requires 0.27.0 or later.*
 
-Set `retryMissingOutput: true` to allow one additional model request per query
-when the model ends normally without submitting structured output. It defaults
-to `false`; ordinary chat agents keep their existing behavior.
+For agents with `outputSchema` or a registered `submit_output` tool, missing-output
+recovery is enabled by default since 0.28.0. *Requires 0.28.0 or later for this default.*
+It allows one additional model request per query when the model ends normally
+without submitting structured output. Set `retryMissingOutput: false` to disable
+it, restoring the immediate failure behavior. This default change is breaking
+for submission agents; ordinary chat agents keep their existing behavior.
+Version 0.27.0 required an explicit `retryMissingOutput: true`.
 
 ```ts
 import { createBareAgent } from "agent-lattice";
@@ -572,7 +576,7 @@ const agent = createBareAgent({
   outputSchema: z.object({ result: z.string() }),
   thinkingConfig: { type: "enabled", budgetTokens: 4096 },
   maxTurns: 5,
-  retryMissingOutput: true,
+  // Recovery is enabled by default for outputSchema (since 0.28.0).
 });
 const result = await agent.prompt("Explain why the supplied evidence supports the conclusion.");
 if (result.subtype === "success") console.log(result.structuredResult);
@@ -604,8 +608,9 @@ compaction and overflow retries to preserve the conversation and the one-request
 limit. `requestTimeoutMs` is per request; use `QueryOptions.signal` for an overall
 deadline.
 
-The extra request adds latency and token cost. Enable it only with a provider
-that supports forced tool choice with thinking disabled. A custom `ModelClient`
+The extra request adds latency and token cost. Use it only with a provider
+that supports forced tool choice with thinking disabled; otherwise set
+`retryMissingOutput: false`. A custom `ModelClient`
 must honour `ModelRequest.toolChoice` and the thinking override. The SDK does
 not infer or parse tool calls from plain text. The reminder is persisted through
 `HistoryStore` and tracing; the recovery `model_request` trace has

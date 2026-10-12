@@ -890,7 +890,8 @@ export type AgentOptions<TContext = unknown> = {
    * `submit_output` tool with this schema: the run only ends successfully once
    * the model submits a payload through it, and the validated payload lands on
    * `SDKResultMessage.structuredResult`. Ending the turn without submitting
-   * fails the run with subtype `error_missing_output`. The tool must be the
+   * fails with `error_missing_output` if recovery is disabled or unsuccessful.
+   * Missing-output recovery is enabled by default (see retryMissingOutput). The tool must be the
    * only call in its batch, and its name is reserved (registering a user tool
    * with the same name throws).
    */
@@ -909,8 +910,9 @@ export type AgentOptions<TContext = unknown> = {
    */
   submitOutputEndTurn?: boolean;
   /**
-   * Opt in to one extra model request when a normal text ending has not
-   * submitted output. Defaults to false. Requires outputSchema or a custom
+   * Allow one extra model request when a normal text ending has not
+   * submitted output. Defaults to true for agents with submit_output, false
+   * for ordinary chat agents. Requires outputSchema or a custom
    * submit_output tool returning structuredResult. Recovery disables thinking
    * and forces submit_output; no other tool may execute in that request.
    * The extra request counts toward maxTurns and respects cancellation and
@@ -2860,6 +2862,8 @@ class Agent<TContext = unknown> {
     options: QueryOptions<TContext>,
     interruptSignal: AbortSignal,
   ): AsyncGenerator<SDKMessage> {
+    const retryMissingOutput = this.options.retryMissingOutput ??
+      (this.options.tools ?? []).some(tool => tool.name === SUBMIT_OUTPUT_TOOL_NAME);
     const tracer = options.tracer ?? this.options.tracer;
     const runId = randomId();
     const totals: QueryTotals = { usage: emptyUsage() };
@@ -3184,8 +3188,8 @@ class Agent<TContext = unknown> {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
-        if ((this.options.outputSchema || this.options.retryMissingOutput) && !submittedOutput) {
-          if (this.options.retryMissingOutput && !missingOutputRetryUsed &&
+        if ((this.options.outputSchema || retryMissingOutput) && !submittedOutput) {
+          if (retryMissingOutput && !missingOutputRetryUsed &&
               (assistant.stopReason === undefined || assistant.stopReason === "end_turn")) {
             missingOutputRetryUsed = true;
             const reminder: ModelMessage = {
@@ -3522,7 +3526,7 @@ class Agent<TContext = unknown> {
       // history and reported above; only the next model call is skipped.
       const endTurnOutcome = executionResults.find(result => result.endTurn);
       if (endTurnOutcome) {
-        if (this.options.retryMissingOutput && !submittedOutput) {
+        if (retryMissingOutput && !submittedOutput) {
           const error = new MissingOutputError("A tool ended the run without submitting structured output through submit_output.");
           const result = this.resultMessage("error_missing_output", "", turns, error, totals);
           await emitTraceEvent(tracer, { ...traceBase, type: "result", data: traceResultData(result) });

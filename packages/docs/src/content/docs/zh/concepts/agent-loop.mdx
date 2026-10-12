@@ -29,7 +29,7 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 它会改变 loop 允许的收尾方式：
 
 - 模型通过调用 `submit_output` 来交卷。payload 先按 schema 校验；校验失败会作为 error `tool_result` 打回 loop，模型可以修正后重试。校验通过则以 `subtype: "success"` 结束，payload 落在 `SDKResultMessage.structuredResult`。
-- 默认情况下，模型没调用 `submit_output` 就直接结束回合，run 失败：`subtype: "error_missing_output"`，`error` 是 `MissingOutputError`。没有「把最终文本当 JSON 解析」的后门——提交是一个显式动作。
+- 补交关闭或补交失败时，模型未通过 `submit_output` 交付结果就结束，run 失败：`subtype: "error_missing_output"`，`error` 是 `MissingOutputError`。没有「把最终文本当 JSON 解析」的后门——提交是一个显式动作。
 - `submit_output` 必须独占一个 batch：同批混入其它工具调用、或同批出现两次提交，整批被拒绝（code `submit_output_exclusive_batch`），loop 继续。
 - `outputSchema` 设置期间该名字被保留——注册自己的 `submit_output` 工具会让 `createAgent`/`addTools` 直接抛错。
 
@@ -41,7 +41,7 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 
 *需要 0.27.0 及以上版本。*
 
-设置 `retryMissingOutput: true`，允许模型在正常结束但尚未交付结构化结果时，每次 query 额外请求一次。默认 `false`，普通聊天智能体的行为不变。
+设置了 `outputSchema` 或注册了 `submit_output` 的智能体，从 0.28.0 起默认开启补交。*此默认行为需要 0.28.0 及以上版本。* 模型正常结束但尚未交付结构化结果时，每次 query 最多额外请求一次。设置 `retryMissingOutput: false` 可恢复立即失败的行为。这是提交型智能体的 breaking 默认行为变更，普通聊天智能体不受影响；0.27.0 需要显式设置 `retryMissingOutput: true`。
 
 ```ts
 import { createBareAgent } from "agent-lattice";
@@ -54,7 +54,7 @@ const agent = createBareAgent({
   outputSchema: z.object({ result: z.string() }),
   thinkingConfig: { type: "enabled", budgetTokens: 4096 },
   maxTurns: 5,
-  retryMissingOutput: true,
+  // outputSchema 从 0.28.0 起默认开启补交。
 });
 const result = await agent.prompt("说明所给证据为什么支持结论。");
 if (result.subtype === "success") console.log(result.structuredResult);
@@ -66,7 +66,7 @@ if (result.subtype === "success") console.log(result.structuredResult);
 
 补交消耗一个 `maxTurns` 轮次，沿用取消信号和单次请求超时。拒绝、输出截断和其他明确的异常停止不会触发补交；自定义模型客户端未提供停止原因时按正常结束处理。再次漏交、参数无效、工具批次被拒或自定义工具未返回结构化结果，都以 `error_missing_output` 结束，不再发起纠正请求。供应商错误、超时、中断和取消沿用原有结束语义。补交跳过压缩及上下文溢出重试，以保留会话并守住一次请求上限。`requestTimeoutMs` 是单次请求超时；整个任务的时限通过 `QueryOptions.signal` 控制。
 
-额外请求会增加延迟和 token 成本。只在供应商支持关闭 thinking 后强制选择工具时启用。自定义 `ModelClient` 必须遵守 `ModelRequest.toolChoice` 和 thinking 覆盖配置。SDK 不从普通文本解析工具调用。提交提醒会写入 `HistoryStore` 和 trace；补交的 `model_request` trace 带 `missingOutputRetry: true`、实际 `thinkingConfig` 和 `toolChoice`。
+额外请求会增加延迟和 token 成本。供应商需要支持关闭 thinking 后强制选择工具；不支持时设置 `retryMissingOutput: false`。自定义 `ModelClient` 必须遵守 `ModelRequest.toolChoice` 和 thinking 覆盖配置。SDK 不从普通文本解析工具调用。提交提醒会写入 `HistoryStore` 和 trace；补交的 `model_request` trace 带 `missingOutputRetry: true`、实际 `thinkingConfig` 和 `toolChoice`。
 
 ## 内存态会话
 
