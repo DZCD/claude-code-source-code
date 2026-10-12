@@ -42,13 +42,71 @@ Set `AgentOptions.outputSchema` when a run must end with a validated, typed payl
 This changes how the loop is allowed to end:
 
 - The model finishes by calling `submit_output`. The payload is validated against the schema first; a validation failure goes back into the loop as an error `tool_result`, so the model can fix it and retry. A valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`.
-- Ending the turn without calling `submit_output` fails the run with `subtype: "error_missing_output"` and a `MissingOutputError`. There is no fallback that parses the final text as JSON — submission is an explicit act.
+- By default, ending the turn without calling `submit_output` fails the run with `subtype: "error_missing_output"` and a `MissingOutputError`. There is no fallback that parses the final text as JSON — submission is an explicit act.
 - `submit_output` must be the only tool call in its batch: a batch that mixes it with other calls, or contains two submissions, is rejected with code `submit_output_exclusive_batch` and the loop continues.
 - The name is reserved while `outputSchema` is set — registering your own `submit_output` tool throws from `createAgent`/`addTools`.
 
 By default a valid submission ends the run immediately — the bounded, cheapest behavior for schema-delivering workers. For human-facing sessions that should close with a natural-language summary, set `submitOutputEndTurn: false` (*requires 0.25.0 or later*): the submission is recorded — re-submitting revises it, last one wins — the tool result goes back to the model, and the run ends when the model stops. A text ending after a submission succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output`.
 
 The structure is enforced by the harness, not by prompt discipline, and only requires a model that can call tools — unlike `outputFormat`, it does not depend on provider `response_format`/`json_schema` support (see [Provider Compatibility](/reference/provider-compatibility/)).
+
+### Retry a missing submission once
+
+*Requires 0.27.0 or later.*
+
+Set `retryMissingOutput: true` to allow one additional model request per query
+when the model ends normally without submitting structured output. It defaults
+to `false`; ordinary chat agents keep their existing behavior.
+
+```ts
+import { createBareAgent } from "agent-lattice";
+import { z } from "zod/v4";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash-vision-exp",
+  outputSchema: z.object({ result: z.string() }),
+  thinkingConfig: { type: "enabled", budgetTokens: 4096 },
+  maxTurns: 5,
+  retryMissingOutput: true,
+});
+const result = await agent.prompt("Explain why the supplied evidence supports the conclusion.");
+if (result.subtype === "success") console.log(result.structuredResult);
+```
+
+The recovery request keeps the conversation, including thinking blocks and
+completed tool results, and appends a submission reminder. Only `submit_output`
+is offered; thinking is explicitly disabled, reasoning effort is omitted, and
+`tool_choice` is set to `{ type: "tool", name: "submit_output" }`. The SDK also
+rejects any recovery batch other than a single complete `submit_output` call
+before executing handlers. Previous tools are not replayed.
+
+The option requires `outputSchema` or a registered custom `submit_output` tool.
+A custom tool keeps its own argument validation and result transformation and
+must return `ToolResult.structuredResult`; handler success alone is not delivery.
+Enabling the option makes submission required for that query. Custom tools
+remain responsible for validating their result. With `submitOutputEndTurn: false`,
+a successful recovery can still be followed by the usual summary turn; that turn
+restores normal thinking and tools and is not another recovery attempt.
+
+Recovery consumes a `maxTurns` turn and uses the existing cancellation and
+per-request timeout. It does not run after refusal, truncation, or another
+explicit abnormal stop. Custom model clients that omit stop reasons are treated
+as normally ended. A second missing submission, invalid arguments, rejected
+batch, or missing custom structured result ends with `error_missing_output`;
+there is no further corrective model call in recovery. Provider errors, timeout,
+interrupt, and abort retain their existing failure semantics. Recovery skips
+compaction and overflow retries to preserve the conversation and the one-request
+limit. `requestTimeoutMs` is per request; use `QueryOptions.signal` for an overall
+deadline.
+
+The extra request adds latency and token cost. Enable it only with a provider
+that supports forced tool choice with thinking disabled. A custom `ModelClient`
+must honour `ModelRequest.toolChoice` and the thinking override. The SDK does
+not infer or parse tool calls from plain text. The reminder is persisted through
+`HistoryStore` and tracing; the recovery `model_request` trace has
+`missingOutputRetry: true`, the effective `thinkingConfig`, and `toolChoice`.
 
 ## One Agent holds one conversation
 

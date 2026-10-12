@@ -29,13 +29,44 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 它会改变 loop 允许的收尾方式：
 
 - 模型通过调用 `submit_output` 来交卷。payload 先按 schema 校验；校验失败会作为 error `tool_result` 打回 loop，模型可以修正后重试。校验通过则以 `subtype: "success"` 结束，payload 落在 `SDKResultMessage.structuredResult`。
-- 模型没调用 `submit_output` 就直接结束回合，run 失败：`subtype: "error_missing_output"`，`error` 是 `MissingOutputError`。没有「把最终文本当 JSON 解析」的后门——提交是一个显式动作。
+- 默认情况下，模型没调用 `submit_output` 就直接结束回合，run 失败：`subtype: "error_missing_output"`，`error` 是 `MissingOutputError`。没有「把最终文本当 JSON 解析」的后门——提交是一个显式动作。
 - `submit_output` 必须独占一个 batch：同批混入其它工具调用、或同批出现两次提交，整批被拒绝（code `submit_output_exclusive_batch`），loop 继续。
 - `outputSchema` 设置期间该名字被保留——注册自己的 `submit_output` 工具会让 `createAgent`/`addTools` 直接抛错。
 
 默认情况下一次有效提交会立即结束 run——这是交付 schema 的 worker 最有界、最省钱的行为。面向真人的会话如果希望以自然语言总结收尾，可以设置 `submitOutputEndTurn: false`（*需要 0.25.0 及以上版本*）：提交会被记录——再次提交即修订，以最后一次为准——工具结果会回给模型，run 在模型停下时结束。提交之后的文本收尾会成功，并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍然报 `error_missing_output`。
 
 结构由 harness 把守，而不是靠 prompt 纪律；它只要求模型会 tool call——与 `outputFormat` 不同，不依赖各 provider 的 `response_format`/`json_schema` 特性（见 [Provider 兼容性](/zh/reference/provider-compatibility/)）。
+
+### 缺少提交时补交一次
+
+*需要 0.27.0 及以上版本。*
+
+设置 `retryMissingOutput: true`，允许模型在正常结束但尚未交付结构化结果时，每次 query 额外请求一次。默认 `false`，普通聊天智能体的行为不变。
+
+```ts
+import { createBareAgent } from "agent-lattice";
+import { z } from "zod/v4";
+
+const agent = createBareAgent({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/anthropic",
+  model: "deepseek-v4-flash-vision-exp",
+  outputSchema: z.object({ result: z.string() }),
+  thinkingConfig: { type: "enabled", budgetTokens: 4096 },
+  maxTurns: 5,
+  retryMissingOutput: true,
+});
+const result = await agent.prompt("说明所给证据为什么支持结论。");
+if (result.subtype === "success") console.log(result.structuredResult);
+```
+
+补交请求保留完整会话，包括 thinking 块和已完成的工具结果，并追加提交提醒。补交阶段只提供 `submit_output`，显式关闭 thinking，省略 reasoning effort，发送 `tool_choice: { type: "tool", name: "submit_output" }`。执行工具前，SDK 还会拒绝不属于单个完整 `submit_output` 调用的整批请求；之前的工具不会被重放。
+
+该选项要求设置 `outputSchema` 或已注册自定义 `submit_output` 工具。自定义工具保留自己的参数校验和结果转换，必须返回 `ToolResult.structuredResult`；handler 成功不等于交付成功。启用该选项意味着本次 query 必须提交结果，自定义工具仍负责校验自己的交付内容。设置 `submitOutputEndTurn: false` 时，补交成功后仍可继续正常总结；总结轮恢复原来的 thinking 和工具配置，不是第二次补交。
+
+补交消耗一个 `maxTurns` 轮次，沿用取消信号和单次请求超时。拒绝、输出截断和其他明确的异常停止不会触发补交；自定义模型客户端未提供停止原因时按正常结束处理。再次漏交、参数无效、工具批次被拒或自定义工具未返回结构化结果，都以 `error_missing_output` 结束，不再发起纠正请求。供应商错误、超时、中断和取消沿用原有结束语义。补交跳过压缩及上下文溢出重试，以保留会话并守住一次请求上限。`requestTimeoutMs` 是单次请求超时；整个任务的时限通过 `QueryOptions.signal` 控制。
+
+额外请求会增加延迟和 token 成本。只在供应商支持关闭 thinking 后强制选择工具时启用。自定义 `ModelClient` 必须遵守 `ModelRequest.toolChoice` 和 thinking 覆盖配置。SDK 不从普通文本解析工具调用。提交提醒会写入 `HistoryStore` 和 trace；补交的 `model_request` trace 带 `missingOutputRetry: true`、实际 `thinkingConfig` 和 `toolChoice`。
 
 ## 内存态会话
 

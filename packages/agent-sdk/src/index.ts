@@ -390,6 +390,8 @@ export type ModelRequest = {
   maxTokens: number;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
+  /** Forced submission during missing-output recovery. Custom clients must honour it. */
+  toolChoice?: { type: "tool"; name: string };
   stream: boolean;
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
@@ -618,6 +620,7 @@ const KNOWN_AGENT_OPTION_KEYS = new Set([
   "historyStore",
   "outputSchema",
   "submitOutputEndTurn",
+  "retryMissingOutput",
 ]);
 
 const KNOWN_AGENT_TOOL_OPTION_KEYS = new Set([
@@ -905,6 +908,15 @@ export type AgentOptions<TContext = unknown> = {
    * ending without any submission still fails with `error_missing_output`.
    */
   submitOutputEndTurn?: boolean;
+  /**
+   * Opt in to one extra model request when a normal text ending has not
+   * submitted output. Defaults to false. Requires outputSchema or a custom
+   * submit_output tool returning structuredResult. Recovery disables thinking
+   * and forces submit_output; no other tool may execute in that request.
+   * The extra request counts toward maxTurns and respects cancellation and
+   * requestTimeoutMs. An unsuccessful recovery fails with error_missing_output.
+   */
+  retryMissingOutput?: boolean;
   /** Lifecycle callbacks that rewrite tool results and outgoing model requests. */
   hooks?: AgentHooks<TContext>;
   /**
@@ -1125,8 +1137,8 @@ export class APIError extends AgentSDKError {}
 export class ToolExecutionError extends AgentSDKError {}
 export class MaxTurnsError extends AgentSDKError {}
 /**
- * A run with `AgentOptions.outputSchema` ended without the model calling the
- * `submit_output` tool, so no structured output was produced.
+ * A run requiring submission (`outputSchema` or `retryMissingOutput`) ended
+ * without structured output from the `submit_output` tool.
  */
 export class MissingOutputError extends AgentSDKError {}
 export class AbortError extends AgentSDKError {}
@@ -2734,6 +2746,9 @@ class Agent<TContext = unknown> {
       ...configuredOptions,
     };
     this.toolConcurrency = normalizeToolConcurrencyOptions(configuredOptions.toolConcurrency);
+    if (this.options.retryMissingOutput !== undefined && typeof this.options.retryMissingOutput !== "boolean") {
+      throw new Error("AgentOptions.retryMissingOutput must be a boolean");
+    }
     if (this.options.outputSchema) {
       if ((this.options.tools ?? []).some(tool => tool.name === SUBMIT_OUTPUT_TOOL_NAME)) {
         throw new Error(
@@ -2744,6 +2759,9 @@ class Agent<TContext = unknown> {
         ...(this.options.tools ?? []),
         createSubmitOutputTool(this.options.outputSchema, this.options.submitOutputEndTurn !== false),
       ];
+    }
+    if (this.options.retryMissingOutput && !(this.options.tools ?? []).some(tool => tool.name === SUBMIT_OUTPUT_TOOL_NAME)) {
+      throw new Error("AgentOptions.retryMissingOutput requires outputSchema or a custom submit_output tool");
     }
     this.modelClient =
       options.modelClient ??
@@ -2910,7 +2928,9 @@ class Agent<TContext = unknown> {
     // consulted when submitOutputEndTurn is false: the strict close below then
     // turns a post-submission text ending into a success carrying it.
     let submittedOutput: { value: unknown } | undefined;
+    let missingOutputRetryUsed = false;
     while (true) {
+      const recoveringOutput = missingOutputRetryUsed && !submittedOutput;
       const abortError = abortErrorIfNeeded(options.signal);
       if (abortError) {
         const result = this.resultMessage("error_abort", "", turns, abortError, totals);
@@ -2953,7 +2973,7 @@ class Agent<TContext = unknown> {
 
       // Compaction happens between turns, once a response has shown how large
       // the context has become, and before the next request pays for it again.
-      if (autoCompact && lastInputTokens > autoCompact.thresholdTokens) {
+      if (!recoveringOutput && autoCompact && lastInputTokens > autoCompact.thresholdTokens) {
         const compaction = await this.compactHistory(autoCompact, options);
         if (compaction) {
           lastInputTokens = 0;
@@ -3003,10 +3023,13 @@ class Agent<TContext = unknown> {
         if (replacement?.messages) modelMessages = replacement.messages;
         if (replacement?.systemPrompt !== undefined) systemPromptForTurn = replacement.systemPrompt;
       }
-      const modelTools = this.modelTools();
+      const modelTools = this.modelTools().filter(tool => !recoveringOutput || tool.name === SUBMIT_OUTPUT_TOOL_NAME);
       const stream = options.stream ?? true;
-      const thinkingConfig = options.thinkingConfig ?? this.options.thinkingConfig;
-      const reasoningEffort = options.reasoningEffort ?? this.options.reasoningEffort;
+      const thinkingConfig: ThinkingConfig | undefined = recoveringOutput
+        ? { type: "disabled" }
+        : options.thinkingConfig ?? this.options.thinkingConfig;
+      const reasoningEffort = recoveringOutput ? undefined : options.reasoningEffort ?? this.options.reasoningEffort;
+      const toolChoice = recoveringOutput ? { type: "tool" as const, name: SUBMIT_OUTPUT_TOOL_NAME } : undefined;
       const requestTimeoutMs = normalizeRequestTimeout(
         options.requestTimeoutMs ?? this.options.requestTimeoutMs,
         options.requestTimeoutMs !== undefined
@@ -3022,6 +3045,7 @@ class Agent<TContext = unknown> {
           ...(systemPromptForTurn ? { systemPrompt: systemPromptForTurn } : {}),
           messages: modelMessages,
           tools: modelTools.map(tool => tool.name),
+          ...(toolChoice ? { toolChoice, missingOutputRetry: true } : {}),
           permissions: traceRuntimePermissions(effectivePermissions),
           stream,
           ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
@@ -3042,6 +3066,7 @@ class Agent<TContext = unknown> {
             maxTokens: this.options.maxTokens,
             messages: modelMessages,
             tools: modelTools,
+            ...(toolChoice ? { toolChoice } : {}),
             stream,
             outputFormat: options.outputFormat,
             thinkingConfig,
@@ -3087,7 +3112,7 @@ class Agent<TContext = unknown> {
         }
         // An input that already exceeds the window is rejected before
         // generation, so it arrives here rather than as a stop reason.
-        if (autoCompact && !overflowRecovered && isContextOverflowError(outcome.error)) {
+        if (!recoveringOutput && autoCompact && !overflowRecovered && isContextOverflowError(outcome.error)) {
           const recovery = await this.recoverFromOverflow(
             autoCompact, options, tracer, traceBase, totals, triggerInputTokens,
           );
@@ -3129,6 +3154,7 @@ class Agent<TContext = unknown> {
       // failure, and compacting the input would not make the answer complete.
       if (
         autoCompact &&
+        !recoveringOutput &&
         !overflowRecovered &&
         assistant.stopReason === "model_context_window_exceeded"
       ) {
@@ -3158,7 +3184,20 @@ class Agent<TContext = unknown> {
 
       const toolUseBlocks = assistant.content.filter(isToolUseBlock);
       if (toolUseBlocks.length === 0) {
-        if (this.options.outputSchema && !submittedOutput) {
+        if ((this.options.outputSchema || this.options.retryMissingOutput) && !submittedOutput) {
+          if (this.options.retryMissingOutput && !missingOutputRetryUsed &&
+              (assistant.stopReason === undefined || assistant.stopReason === "end_turn")) {
+            missingOutputRetryUsed = true;
+            const reminder: ModelMessage = {
+              role: "user",
+              content: "No structured output has been submitted for this run. Call submit_output now with the complete arguments required by its schema, using the evidence and analysis already in this conversation. Do not call other tools or return only text.",
+            };
+            this.messages.push(reminder);
+            await this.appendStoredHistory(reminder);
+            await emitTraceEvent(tracer, { ...traceBase, type: "user_message", data: { message: reminder } });
+            // Keep internal prompts in the transcript, not the SDK's tool-result stream.
+            continue;
+          }
           // Strict close: a run with a declared output contract must submit
           // through submit_output; a plain-text ending fails the run rather
           // than being guessed at as the answer. With submitOutputEndTurn:
@@ -3166,7 +3205,7 @@ class Agent<TContext = unknown> {
           // ending then succeeds below, carrying the last submitted payload.
           const error = new MissingOutputError(
             `Agent ended its turn without calling ${SUBMIT_OUTPUT_TOOL_NAME}. ` +
-              `A run with AgentOptions.outputSchema must submit its structured output via the ${SUBMIT_OUTPUT_TOOL_NAME} tool.`,
+              `${this.options.outputSchema ? "A run with AgentOptions.outputSchema" : "This run"} must submit its structured output via the ${SUBMIT_OUTPUT_TOOL_NAME} tool.`,
           );
           const result = this.resultMessage("error_missing_output", extractText(assistant), turns, error, totals);
           await emitTraceEvent(tracer, {
@@ -3199,6 +3238,15 @@ class Agent<TContext = unknown> {
       const toolResults: ToolResultBlock[] = [];
       let firstToolError: Error | undefined;
       let batchRejection: ToolBatchPolicyRejection | undefined;
+      if (recoveringOutput && (toolUseBlocks.length !== 1 ||
+          toolUseBlocks[0]?.name !== SUBMIT_OUTPUT_TOOL_NAME ||
+          (assistant.stopReason !== undefined && assistant.stopReason !== "tool_use"))) {
+        batchRejection = {
+          allowed: false,
+          code: "missing_output_retry_submit_only",
+          message: "Missing-output recovery only permits one complete submit_output call. No tools were executed.",
+        };
+      }
 
       // Emitted per call at its own start rather than for the whole batch up
       // front, so a trace shows when each tool really began and which calls
@@ -3275,7 +3323,7 @@ class Agent<TContext = unknown> {
         });
       };
 
-      if (!truncatedAtMaxTokens && this.options.toolBatchPolicy) {
+      if (!truncatedAtMaxTokens && !batchRejection && this.options.toolBatchPolicy) {
         const toolCalls: ToolBatchCall[] = toolUseBlocks.map(block => ({
           id: block.id,
           name: block.name,
@@ -3360,7 +3408,10 @@ class Agent<TContext = unknown> {
         : undefined;
 
       let executionResults: ToolExecutionOutcome[];
-      if (truncatedAtMaxTokens) {
+      if (recoveringOutput && (abortErrorIfNeeded(options.signal) || interruptSignal.aborted)) {
+        executionResults = [];
+        for (const block of toolUseBlocks) executionResults.push(await cancelTool(block));
+      } else if (truncatedAtMaxTokens) {
         executionResults = [];
         for (const block of toolUseBlocks) {
           const error = new ToolExecutionError(
@@ -3437,6 +3488,18 @@ class Agent<TContext = unknown> {
         ...(firstToolError ? { error: firstToolError } : {}),
       };
 
+      if (recoveringOutput && !submittedOutput) {
+        // Cancellation keeps its existing terminal subtype, including when it
+        // happens while the attempted submission is executing.
+        if (abortErrorIfNeeded(options.signal) || interruptSignal.aborted) continue;
+        const error = new MissingOutputError("The single missing-output recovery request did not submit structured output.");
+        const result = this.resultMessage("error_missing_output", extractText(assistant), turns, error, totals);
+        await emitTraceEvent(tracer, { ...traceBase, type: "result", data: traceResultData(result) });
+        await flushTracer(tracer);
+        yield result;
+        return;
+      }
+
       if (options.agentRuntime?.shouldPauseAfterToolBatch?.()) {
         const result = this.resultMessage(
           "success",
@@ -3459,6 +3522,14 @@ class Agent<TContext = unknown> {
       // history and reported above; only the next model call is skipped.
       const endTurnOutcome = executionResults.find(result => result.endTurn);
       if (endTurnOutcome) {
+        if (this.options.retryMissingOutput && !submittedOutput) {
+          const error = new MissingOutputError("A tool ended the run without submitting structured output through submit_output.");
+          const result = this.resultMessage("error_missing_output", "", turns, error, totals);
+          await emitTraceEvent(tracer, { ...traceBase, type: "result", data: traceResultData(result) });
+          await flushTracer(tracer);
+          yield result;
+          return;
+        }
         const result = this.resultMessage(
           "success",
           toolResultText(endTurnOutcome.block.content),
@@ -4025,6 +4096,7 @@ class AnthropicModelClient implements ModelClient {
           description: tool.description,
           input_schema: tool.input_schema,
         })) as never,
+        ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
         ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
         ...(request.thinkingConfig
           ? { thinking: toAnthropicThinkingConfig(request.thinkingConfig, request.maxTokens) }

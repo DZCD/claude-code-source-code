@@ -104,8 +104,9 @@ const agent = createBareAgent({
 | `thinkingConfig` | `ThinkingConfig` | 默认推理配置。可传 `{ type: "adaptive" }`、`{ type: "enabled", budgetTokens }` 或 `{ type: "disabled" }`。`disabled` 会显式发送给 provider（即 `thinking: { "type": "disabled" }`），因为 DeepSeek 等 Anthropic 兼容端点默认开启思考。省略时，SDK 不发送 thinking 配置。各 provider 的实际生效情况见 [Provider 兼容性](../provider-compatibility/)。 |
 | `reasoningEffort` | `ReasoningEffort` | Provider 的默认推理强度。可传 `"low"`、`"high"` 或 `"max"`，请求时序列化为 `reasoning_effort`（Kimi 约定——DeepSeek 忽略，见 [Provider 兼容性](../provider-compatibility/)）。省略时使用 provider 默认值。 |
 | `requestTimeoutMs` | `number` | 单次模型请求的期限（毫秒）。即使 model client 忽略它，SDK 也会兜底执行。不设置则 SDK 不加限制。 |
-| `outputSchema` | `OutputSchema` | 要求 run 以校验过的结构化 payload 收尾。SDK 会注入内置的 `submit_output` 工具；校验通过的提交以 `subtype: "success"` 结束、payload 落在 `SDKResultMessage.structuredResult`；未提交就结束回合则以 `error_missing_output`（`MissingOutputError`）失败。与 `QueryOptions.outputFormat` 不同，它只要求 provider 支持工具调用。 |
+| `outputSchema` | `OutputSchema` | 要求 run 以校验过的结构化 payload 收尾。SDK 会注入内置的 `submit_output` 工具；校验通过的提交以 `subtype: "success"` 结束、payload 落在 `SDKResultMessage.structuredResult`；默认情况下未提交就结束回合则以 `error_missing_output`（`MissingOutputError`）失败。与 `QueryOptions.outputFormat` 不同，它只要求 provider 支持工具调用。 |
 | `submitOutputEndTurn` | `boolean` | 只在设置 `outputSchema` 时有意义；默认 `true`。设为 `false`（需要 0.25.0）后，校验通过的 `submit_output` 不再结束 run：提交被记录（再次提交即修订，以最后一次为准），之后的文本收尾会成功并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍报 `error_missing_output`。 |
+| `retryMissingOutput` | `boolean` | 默认 `false`。要求设置 `outputSchema` 或注册自定义 `submit_output`；正常结束但未交付时额外补交一次，关闭 thinking 并强制提交。消耗 `maxTurns`，补交失败报 `error_missing_output`。需要 0.27.0。 |
 | `tools` | `ToolDefinition[]` | 模型可调用的自定义工具。 |
 | `toolBatchPolicy` | `ToolBatchPolicy` | 可选的执行前 hook，在任何 handler 运行前允许或拒绝完整工具批次。 |
 | `hooks` | `AgentHooks` | 改写工具结果和外发模型请求的生命周期回调。委派的子 agent 不会继承。 |
@@ -226,6 +227,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentOptions.submitOutputEndTurn`（经 `defineAgent()` 也生效）：设为 `false` 后校验通过的 `submit_output` 不再结束 run——提交被记录（以最后一次为准），之后的文本收尾成功并带最后一次提交的 `structuredResult`；一次都没提交就收尾仍报 `error_missing_output` | 0.25.0 |
 | 流式工具参数 JSON 非法时返回纠错 tool result，不执行 handler | 0.25.1 |
 | `AgentToolOptions.prepareTarget` 可按每次工具调用准备子级 `AgentLike`；直连 `ask` 的子级 trace 带 `parent_run_id`、`parent_tool_use_id`，`ToolExecutionContext.trace` 暴露父查询身份 | 0.26.0 |
+| `AgentOptions.retryMissingOutput`（默认 `false`）：缺少交付时最多补交一次，关闭 thinking 并强制 `submit_output`；`ModelRequest.toolChoice` 向自定义客户端传递强制工具选择 | 0.27.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -244,6 +246,8 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentWorkspaceToolsOptions` | `createBuiltinTools()` 和 `createAgentWorkspaceTools()` 接收的 `cwd`、写入根目录和 Shell 超时配置。 |
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
+| `ModelRequest` | 传给自定义模型客户端的请求；补交时设置 `toolChoice: { type: "tool", name: "submit_output" }` 并关闭 thinking（需要 0.27.0）。 |
+| `ModelClient` | 实现 `createMessage(request)` 的自定义模型客户端，必须遵守补交阶段的工具选择和 thinking 覆盖配置。 |
 | `OutputSchema` | `AgentOptions.outputSchema` 和 `AgentToolOptions.outputSchema` 接收的校验形状：`{ parse(input: unknown): T }`。zod schema 直接满足该接口（需要 0.20.0）。 |
 | `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
 | `ReasoningEffort` | `AgentOptions.reasoningEffort` 和 `QueryOptions.reasoningEffort` 接收的 provider 推理强度：`"low"`、`"high"` 或 `"max"`。 |
@@ -312,4 +316,4 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `TimeoutError` | 模型请求超过 `requestTimeoutMs`，result subtype 为 `error_timeout`。 |
 | `ToolBatchRejectedError` | 工具批次在任何工具执行前被拒绝。 |
 | `ConcurrentQueryError` | Agent 上一次 query 尚未结束时又发起了一次。一个 Agent 只承载一个会话。 |
-| `MissingOutputError` | 设置了 `AgentOptions.outputSchema` 的 run 在模型未调用 `submit_output` 的情况下结束；result subtype 为 `error_missing_output`。 |
+| `MissingOutputError` | 要求提交结果（设置了 `outputSchema` 或 `retryMissingOutput`）的 run 未通过 `submit_output` 交付结果就结束；result subtype 为 `error_missing_output`。 |

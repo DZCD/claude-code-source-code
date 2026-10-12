@@ -108,8 +108,9 @@ const agent = createBareAgent({
 | `thinkingConfig` | `ThinkingConfig` | Default reasoning configuration. Accepts `{ type: "adaptive" }`, `{ type: "enabled", budgetTokens }`, or `{ type: "disabled" }`. `disabled` is sent to the provider explicitly (as `thinking: { "type": "disabled" }`) because some Anthropic-compatible providers, such as DeepSeek, default thinking to on. When omitted, the SDK sends no thinking configuration. See [Provider Compatibility](../provider-compatibility/) for what each provider actually honors. |
 | `reasoningEffort` | `ReasoningEffort` | Default provider reasoning effort. Accepts `"low"`, `"high"`, or `"max"` and is sent as `reasoning_effort` (a Kimi convention — ignored by DeepSeek; see [Provider Compatibility](../provider-compatibility/)). When omitted, the provider applies its default. |
 | `requestTimeoutMs` | `number` | Deadline for each single model request, in milliseconds. Enforced by the SDK even when a model client ignores it. Unset means no SDK-side limit. |
-| `outputSchema` | `OutputSchema` | Requires the run to end with a validated structured payload. The SDK injects a built-in `submit_output` tool; a valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`, while ending the turn without submitting fails with `error_missing_output` (`MissingOutputError`). Unlike `QueryOptions.outputFormat`, it only requires a tool-capable provider. |
+| `outputSchema` | `OutputSchema` | Requires the run to end with a validated structured payload. The SDK injects a built-in `submit_output` tool; a valid submission ends the run with `subtype: "success"` and the payload on `SDKResultMessage.structuredResult`, while by default ending the turn without submitting fails with `error_missing_output` (`MissingOutputError`). Unlike `QueryOptions.outputFormat`, it only requires a tool-capable provider. |
 | `submitOutputEndTurn` | `boolean` | Only meaningful with `outputSchema`; default `true`. `false` (requires 0.25.0) keeps the loop going after a validated `submit_output` call: the submission is recorded (re-submitting revises it, last one wins), and a later text ending succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output`. |
+| `retryMissingOutput` | `boolean` | Default `false`. Requires `outputSchema` or a custom `submit_output`. On a normal ending without delivery, allows one extra request with thinking disabled and forced submission. Counts toward `maxTurns`; failed recovery ends with `error_missing_output`. Requires 0.27.0. |
 | `tools` | `ToolDefinition[]` | Custom tools available to the model. |
 | `toolBatchPolicy` | `ToolBatchPolicy` | Optional pre-execution hook that accepts or rejects the complete tool-call batch before any handler runs. |
 | `hooks` | `AgentHooks` | Lifecycle callbacks that rewrite tool results and outgoing model requests. Not inherited by delegated agents. |
@@ -240,6 +241,7 @@ than relying on an error.
 | `AgentOptions.submitOutputEndTurn` (also via `defineAgent()`): `false` keeps the loop going after a validated `submit_output` call — submissions are recorded (last one wins) and a later text ending succeeds with the last submission as `structuredResult`; ending without any submission still fails with `error_missing_output` | 0.25.0 |
 | Invalid streamed tool argument JSON returns corrective error tool results without executing the handler | 0.25.1 |
 | `AgentToolOptions.prepareTarget` prepares a child `AgentLike` per tool invocation; direct `ask` child trace events carry `parent_run_id` and `parent_tool_use_id`, and `ToolExecutionContext.trace` exposes the parent query identity | 0.26.0 |
+| `AgentOptions.retryMissingOutput` (default `false`): one submission-only recovery request with thinking disabled and forced `submit_output`; `ModelRequest.toolChoice` carries the forced choice to custom clients | 0.27.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -253,12 +255,14 @@ package does not export it as an importable path.
 | `AgentLike` | Minimal callable interface implemented by `Agent` and the callable `Team` wrapper: `query()`, `prompt()`, and `interrupt()` (the latter requires 0.16.0; its `boolean` return requires 0.17.0). |
 | `AgentSpec` | Agent template created by `defineAgent()`: a stateless identity (name, model, prompt, tools, workspace policy) plus `spawn()` for creating independent sessions. |
 | `AgentToolTarget` | Union accepted by `agentTool()` and `delegateTool()`: a live `AgentLike` session or an `AgentSpec` template. |
-| `AgentOptions` | Agent construction options. |
+| `AgentOptions` | Agent construction options, including opt-in `retryMissingOutput` (requires 0.27.0). |
 | `BareAgentOptions` | Construction options for `createBareAgent()`, equivalent to `AgentOptions` without `workspace`. |
 | `AgentWorkspaceOptions` | String path or workspace configuration object accepted by `AgentOptions.workspace` to override the default workspace. |
 | `AgentWorkspaceToolsOptions` | `cwd`, write-root, and shell timeout options accepted by `createBuiltinTools()` and `createAgentWorkspaceTools()`. |
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
+| `ModelRequest` | Request passed to a custom model client. Recovery sets `toolChoice: { type: "tool", name: "submit_output" }` and disables thinking (requires 0.27.0). |
+| `ModelClient` | Custom provider client implementing `createMessage(request)`; must honour recovery tool choice and thinking overrides. |
 | `OutputSchema` | Validation shape accepted by `AgentOptions.outputSchema` and `AgentToolOptions.outputSchema`: `{ parse(input: unknown): T }`. A zod schema satisfies it directly (requires 0.20.0). |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
@@ -327,4 +331,4 @@ package does not export it as an importable path.
 | `TimeoutError` | A model request exceeded `requestTimeoutMs`; the result subtype is `error_timeout`. |
 | `ToolBatchRejectedError` | Tool batch was rejected before any tool executed. |
 | `ConcurrentQueryError` | A second query was started while the Agent was still running one. An Agent holds one conversation. |
-| `MissingOutputError` | A run with `AgentOptions.outputSchema` ended without the model calling `submit_output`; the result subtype is `error_missing_output`. |
+| `MissingOutputError` | A run requiring submission (`outputSchema` or `retryMissingOutput`) ended without delivery through `submit_output`; the result subtype is `error_missing_output`. |
