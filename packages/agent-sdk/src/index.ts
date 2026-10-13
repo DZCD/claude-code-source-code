@@ -59,7 +59,24 @@ export type ToolUseBlock = {
   input: Record<string, unknown>;
 };
 // Internal per-response parse state; never serialized into provider messages.
-const toolInputFailures = new WeakMap<ToolUseBlock, { kind: "json" | "object"; position?: number }>();
+const toolInputFailures = new WeakMap<ToolUseBlock, { kind: "json" | "object"; position?: number; detail?: string }>();
+
+// Distill a JSON.parse failure into a stable description. Never echoes argument text:
+// V8's "Unexpected token" style embeds a source snippet, so only the token itself is kept.
+function describeJsonParseError(error: unknown): { position?: number; detail?: string } {
+  if (!(error instanceof Error)) return {};
+  const message = error.message;
+  const atPosition = /^(.+?) (in|after) JSON at position (\d+)(?: \(line \d+ column \d+\))?$/.exec(message);
+  if (atPosition) return { detail: `${atPosition[1]} ${atPosition[2]} JSON`, position: Number(atPosition[3]) };
+  if (message === "Unexpected end of JSON input") return { detail: message };
+  const token = /^(Unexpected token (?:'[^']*'|.))[, ]/.exec(message);
+  if (token) {
+    const position = /position (\d+)/.exec(message);
+    return { detail: token[1], ...(position ? { position: Number(position[1]) } : {}) };
+  }
+  if (message.startsWith("JSON Parse error:")) return { detail: message.slice("JSON Parse error:".length).trim() };
+  return {};
+}
 
 export type ToolResultBlock = {
   type: "tool_result";
@@ -3816,6 +3833,7 @@ class Agent<TContext = unknown> {
         : [];
       const message = [
         `Tool ${block.name} was not executed: ${inputFailure.kind === "json" ? "arguments are not valid JSON" : "arguments must be a JSON object"}.`,
+        ...(inputFailure.detail === undefined ? [] : [`Parser error: ${inputFailure.detail}.`]),
         ...(inputFailure.position === undefined ? [] : [`JSON syntax error near character ${inputFailure.position}.`]),
         "Regenerate the complete arguments using this tool's input schema. Use double-quoted property names and strings, balanced braces, and no Markdown fences.",
         ...(required.length ? [`Required top-level fields: ${required.map(key => JSON.stringify(key.slice(0, 80))).join(", ")}. Do not submit an empty object.`] : []),
@@ -4434,8 +4452,7 @@ class AnthropicStreamAssembler {
           block.input = parsed as Record<string, unknown>;
         }
       } catch (error) {
-        const match = error instanceof Error ? /position (\d+)/.exec(error.message) : null;
-        toolInputFailures.set(block, { kind: "json", ...(match ? { position: Number(match[1]) } : {}) });
+        toolInputFailures.set(block, { kind: "json", ...describeJsonParseError(error) });
         block.input = {};
       }
     }

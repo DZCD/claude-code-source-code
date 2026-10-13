@@ -26,6 +26,7 @@ describe('tool JSON feedback', () => {
       const result = await agent.prompt('go');
       expect(feedback.is_error).toBe(true); expect(feedback.tool_use_id).toBe('call-test');
       expect(feedback.content).toContain('not valid JSON'); expect(feedback.content).toContain('Required top-level fields: "result"');
+      expect(feedback.content).toContain("Parser error:"); expect(feedback.content).toContain("Expected ':'");
       expect(feedback.content).toContain('double-quoted'); expect(feedback.content).not.toContain('private-content');
       expect(result.is_error).toBe(false); expect(result.structuredResult).toEqual({ result: { reason: 'fixed' } }); expect(requests).toBe(2);
     } finally { server.stop(true); }
@@ -37,6 +38,18 @@ describe('tool JSON feedback', () => {
       const messages = []; for await (const message of agent.query('go')) messages.push(message);
       expect(calls).toBe(0); const response = messages.find((m: any) => m.type === 'user') as any;
       expect(response.message.content[0].is_error).toBe(true); expect(response.message.content[0].content).toContain(raw.startsWith('{') ? 'not valid JSON' : 'must be a JSON object');
+    } finally { server.stop(true); }
+  });
+  test('stream - arguments failing at a content token - parser detail is passed through without echoing the source', async () => {
+    const server = Bun.serve({ port: 0, fetch: () => stream(['SECRET-XY-TOKEN'], 'write') });
+    try {
+      const agent = createBareAgent({ apiKey: 'test', baseURL: server.url.origin, model: 'test', maxTurns: 1, tools: [tool('write', 'test', z.any(), () => ({ content: 'bad' }))] });
+      const messages = []; for await (const message of agent.query('go')) messages.push(message);
+      const response = messages.find((m: any) => m.type === 'user') as any;
+      expect(response.message.content[0].is_error).toBe(true);
+      expect(response.message.content[0].content).toContain('not valid JSON');
+      expect(response.message.content[0].content).toContain('Parser error:');
+      expect(response.message.content[0].content).not.toContain('SECRET-XY-TOKEN');
     } finally { server.stop(true); }
   });
   test('stream - incomplete chunks become valid - executes normally', async () => {

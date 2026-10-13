@@ -159,4 +159,6 @@ const agent = createAgent({
 
 Anthropic 兼容流结束后，若工具参数不是合法 JSON，SDK 不执行工具，而是返回匹配该调用的 `tool_result`，设置 `is_error: true`。结果明确说明 JSON 语法问题（能确定时附字符位置）、列出顶层必填字段，并要求模型按工具 schema 重新生成完整参数。错误提示不回显原始参数片段。
 
+从 0.29.1 起，错误还会带上运行时解析器自己的报错（经消毒，不含任何参数原文），例如 `Parser error: Bad control character in string literal in JSON.`。*需要 0.29.1 及以上版本。*
+
 中间分片暂时不完整不算错误，只要最终 JSON 合法即可。合法 JSON 对象（包括 `{}`）仍走正常 schema 校验；合法 JSON 但不是对象的值会在执行前被拒绝。原有轮数上限仍生效，这些提示不保证模型一定能纠正输出。

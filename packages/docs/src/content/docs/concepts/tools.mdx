@@ -157,4 +157,6 @@ The option objects of `createAgent()`/`createBareAgent()`/`defineAgent()` (`Agen
 
 When a completed Anthropic-compatible stream contains malformed tool argument JSON, the SDK does not execute the tool. It returns a matching `tool_result` with `is_error: true`, identifies the JSON syntax problem (including a character position when available), lists required top-level fields, and asks the model to regenerate complete arguments from the tool schema. Raw argument excerpts are not echoed in the error.
 
+From 0.29.1 the error also carries the runtime parser's own message, sanitized so no argument text is included (for example, `Parser error: Bad control character in string literal in JSON.`). *Requires 0.29.1 or later.*
+
 Incomplete intermediate chunks are not errors if the final JSON is valid. Valid JSON objects, including `{}`, still go through normal schema validation. Valid JSON values that are not objects are rejected before execution. Existing turn limits still apply; this feedback does not guarantee that a model will correct its response.
