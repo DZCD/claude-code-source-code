@@ -128,6 +128,7 @@ const agent = createBareAgent({
 | 选项 | 类型 | 说明 |
 | --- | --- | --- |
 | `stream` | `boolean` | 是否输出底层 provider stream event，默认 `true`。 |
+| `includeToolUseResult` | `boolean` | 是否在 `user` 事件上携带 `tool_use_result` 便捷视图，默认 `true`。该视图与 `message.content` 内容重复，持久化事件流的消费方可以传 `false` 避免每批工具结果存两份（需要 0.30.0）。 |
 | `outputFormat` | `OutputFormat` | 请求结构化输出，可传 `"json"`，也可通过 `{ type: "json_schema", schema }` 指定 JSON Schema 输出；最终文本会原样返回。 |
 | `thinkingConfig` | `ThinkingConfig` | 覆盖当前 query 的 Agent 推理配置。固定预算最大为 `maxTokens - 1`。 |
 | `reasoningEffort` | `ReasoningEffort` | 覆盖当前 query 的 Agent 默认推理强度。 |
@@ -231,6 +232,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `AgentOptions.retryMissingOutput`（默认 `false`）：缺少交付时最多补交一次，关闭 thinking 并强制 `submit_output`；`ModelRequest.toolChoice` 向自定义客户端传递强制工具选择 | 0.27.0 |
 | Breaking 默认变更：有 `outputSchema` 或 `submit_output` 的智能体自动开启 `retryMissingOutput`；设为 `false` 保持缺少交付时立即失败，普通聊天不变 | 0.28.0 |
 | 默认行为变更：DeepSeek 官方端点的 `maxTokens` 默认 393216（384K），其他端点仍为 16384，显式配置优先 | 0.29.0 |
+| `QueryOptions.includeToolUseResult`：传 `false` 时 `user` 事件不再携带 `tool_use_result` 便捷视图 | 0.30.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

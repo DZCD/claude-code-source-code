@@ -542,6 +542,44 @@ describe("agent-sdk", () => {
     });
   });
 
+  test("omits the tool_use_result convenience view when includeToolUseResult is false", async () => {
+    const modelClient: ModelClient = {
+      async createMessage({ messages }) {
+        const seen = messages as unknown[];
+        if (seen.length === 1) {
+          return toolUseAssistant("toolu_1", "calculator", { expr: "2+2" });
+        }
+        return textAssistant("The answer is 4");
+      },
+    };
+    const agent = createAgent({
+      apiKey: "test-key",
+      model: "claude-test",
+      modelClient,
+      tools: [
+        tool(
+          "calculator",
+          "Evaluate a simple expression",
+          z.object({ expr: z.string() }),
+          async input => ({ content: input.expr === "2+2" ? "4" : "unknown" }),
+        ),
+      ],
+    });
+
+    const messages = await collect(agent.query("What is 2+2?", { includeToolUseResult: false }));
+
+    const user = messages.find(message => message.type === "user");
+    expect(user).toMatchObject({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "4" }],
+      },
+    });
+    expect(user && "tool_use_result" in user).toBe(false);
+    expect(messages.at(-1)).toMatchObject({ type: "result", subtype: "success" });
+  });
+
   test("createBareAgent runs concurrency-safe tools together and preserves result order", async () => {
     type BusinessContext = { requestId: string };
     const emptySchema = z.object({});

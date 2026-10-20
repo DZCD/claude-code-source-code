@@ -992,6 +992,13 @@ export type AgentWorkspaceToolsOptions = {
 
 export type QueryOptions<TContext = unknown> = {
   stream?: boolean;
+  /**
+   * Include the `tool_use_result` convenience view on `user` events
+   * (default true). `tool_use_result` duplicates what `message.content`
+   * already carries; consumers persisting the event stream can set this to
+   * false to avoid storing every tool result twice.
+   */
+  includeToolUseResult?: boolean;
   outputFormat?: OutputFormat;
   thinkingConfig?: ThinkingConfig;
   reasoningEffort?: ReasoningEffort;
@@ -1060,6 +1067,7 @@ export type SDKAssistantMessage = {
  * `ToolResultBlock[]`; the declared `ModelMessage` type is wider than this
  * guarantee. `tool_use_result` is a convenience view: a single tool's result
  * `content`, or the array of result blocks when the batch had several tools.
+ * Omit it with `QueryOptions.includeToolUseResult: false`.
  */
 export type SDKUserMessage = {
   type: "user";
@@ -2896,6 +2904,7 @@ class Agent<TContext = unknown> {
     const runId = randomId();
     const totals: QueryTotals = { usage: emptyUsage() };
     const autoCompact = normalizeAutoCompact(this.options.autoCompact);
+    const includeToolUseResult = options.includeToolUseResult ?? true;
     let lastInputTokens = 0;
     let triggerInputTokens = 0;
     let overflowRecovered = false;
@@ -3398,7 +3407,9 @@ class Agent<TContext = unknown> {
               type: "user",
               message: abortedMessage,
               session_id: this.sessionId,
-              tool_use_result: abortedResults.length === 1 ? abortedResults[0]?.content : abortedResults,
+              ...(includeToolUseResult
+                ? { tool_use_result: abortedResults.length === 1 ? abortedResults[0]?.content : abortedResults }
+                : {}),
               error: abortError,
             };
             const result = this.resultMessage("error_abort", "", turns, abortError, totals);
@@ -3516,7 +3527,9 @@ class Agent<TContext = unknown> {
         type: "user",
         message: userMessage,
         session_id: this.sessionId,
-        tool_use_result: toolResults.length === 1 ? toolResults[0]?.content : toolResults,
+        ...(includeToolUseResult
+          ? { tool_use_result: toolResults.length === 1 ? toolResults[0]?.content : toolResults }
+          : {}),
         ...(firstToolError ? { error: firstToolError } : {}),
       };
 

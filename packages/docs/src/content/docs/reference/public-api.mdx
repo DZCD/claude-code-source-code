@@ -132,6 +132,7 @@ const agent = createBareAgent({
 | Option | Type | Description |
 | --- | --- | --- |
 | `stream` | `boolean` | Enables raw provider stream events. Defaults to `true`. |
+| `includeToolUseResult` | `boolean` | Includes the `tool_use_result` convenience view on `user` events. Defaults to `true`; the view duplicates `message.content`, so consumers persisting the event stream can set `false` to avoid storing every tool result twice (requires 0.30.0). |
 | `outputFormat` | `OutputFormat` | Requests structured output via `"json"` or JSON Schema output via `{ type: "json_schema", schema }`; the final text is returned unchanged. |
 | `thinkingConfig` | `ThinkingConfig` | Overrides the agent's reasoning configuration for this query. A fixed budget is capped at `maxTokens - 1`. |
 | `reasoningEffort` | `ReasoningEffort` | Overrides the agent's provider reasoning effort for this query. |
@@ -245,6 +246,7 @@ than relying on an error.
 | `AgentOptions.retryMissingOutput` (default `false`): one submission-only recovery request with thinking disabled and forced `submit_output`; `ModelRequest.toolChoice` carries the forced choice to custom clients | 0.27.0 |
 | Breaking default change: `retryMissingOutput` is enabled automatically for agents with `outputSchema` or `submit_output`; set `false` to retain immediate missing-output failure. Ordinary chat agents are unchanged | 0.28.0 |
 | DeepSeek official endpoint defaults `maxTokens` to 393216 (384K); other endpoints keep 16384, and explicit overrides take precedence (default behavior change) | 0.29.0 |
+| `QueryOptions.includeToolUseResult`: `false` omits the `tool_use_result` convenience view from `user` events | 0.30.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
