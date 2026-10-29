@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { toolInputFailures, describeJsonParseError } from "./toolInput.js";
+import { isDeepSeekBaseURL, needsNonThinkingToolContinuation } from "./deepseekCompatibility.js";
 import type { OpenAIReasoningBlock } from "./openaiResponses.js";
 import type {
   DocumentBlockParam,
@@ -4112,16 +4113,20 @@ function settle<T>(promise: Promise<T>, onSettled: () => void): Promise<SettledO
 
 class AnthropicModelClient implements ModelClient {
   private readonly client: Anthropic;
+  private readonly isDeepSeek: boolean;
 
   constructor(options: { apiKey?: string; baseURL?: string }) {
     this.client = new Anthropic({
       apiKey: options.apiKey,
       baseURL: options.baseURL,
     });
+    this.isDeepSeek = isDeepSeekBaseURL(this.client.baseURL);
   }
 
   async createMessage(request: ModelRequest): Promise<AssistantModelMessage> {
     try {
+      const thinkingConfig = this.isDeepSeek && needsNonThinkingToolContinuation(request.messages)
+        ? { type: "disabled" as const } : request.thinkingConfig;
       const body = {
         model: request.model,
         ...(request.systemPrompt ? { system: request.systemPrompt } : {}),
@@ -4134,8 +4139,8 @@ class AnthropicModelClient implements ModelClient {
         })) as never,
         ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
         ...(request.outputFormat ? { output_config: { format: toAnthropicOutputFormat(request.outputFormat) } } : {}),
-        ...(request.thinkingConfig
-          ? { thinking: toAnthropicThinkingConfig(request.thinkingConfig, request.maxTokens) }
+        ...(thinkingConfig
+          ? { thinking: toAnthropicThinkingConfig(thinkingConfig, request.maxTokens) }
           : {}),
         ...(request.reasoningEffort
           ? { reasoning_effort: request.reasoningEffort }

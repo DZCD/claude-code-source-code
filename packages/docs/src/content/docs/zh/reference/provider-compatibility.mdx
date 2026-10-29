@@ -50,7 +50,8 @@ schema；适配器不改写 schema。使用 JSON 模式时，提示词也需要�
 工厂的 `reasoningEffort` 接受 `none`、`minimal`、`low`、`medium`、`high` 和
 `xhigh`；省略时使用 provider 默认值，各模型支持范围不同。智能体/查询上的
 `reasoningEffort: "low"` 或 `"high"` 覆盖工厂配置；SDK 的 `"max"` 映射为
-OpenAI `"xhigh"`。`thinkingConfig` 的 `enabled` 和 `adaptive` 会报错，
+OpenAI `"xhigh"`（DeepSeek 的例外见下文）。除自 0.32.0 起的官方 DeepSeek
+端点外，`thinkingConfig` 的 `enabled` 和 `adaptive` 会报错，
 因为 Anthropic 的思考预算在此没有对应参数。
 除下文说明的官方 DeepSeek 端点外，
 `thinkingConfig: { type: "disabled" }` 会省略已配置的推理力度，补交阶段也如此，
@@ -96,7 +97,49 @@ DeepSeek 开启推理时，不接受指定某个函数的 `tool_choice`。
 再强制调用 `submit_output`。其他端点保留原有行为。
 自定义 DeepSeek 网关若需要强制补交，可在工厂上显式绑定
 `reasoningEffort: "none"`。
-已于 2026-10-29 使用 `deepseek-flash` 对官方端点实测。
+
+*需要 0.32.0 及以上版本。*
+
+官方 DeepSeek Responses 端点现在接受现有的
+`thinkingConfig: { type: "enabled", budgetTokens }` 和 `{ type: "adaptive" }`，
+与其 Anthropic 端点一样开启思考。查询级开关可覆盖工厂上的
+`reasoningEffort: "none"`；智能体/查询上显式设置的力度优先于工厂力度。
+DeepSeek 在两种协议下都忽略 `budgetTokens`，因此这只是开关，不是思考 token 上限。
+智能体/查询上的 `reasoningEffort: "max"` 原样发送为 `max`；其他 Responses
+端点保留原来的 `max` 到 `xhigh` 映射。
+
+DeepSeek 不允许在接收一个未带思考内容的工具调用结果时开启思考。
+两个内置客户端都会让这次工具结果续写保持关闭思考，包括强制补交后
+`submitOutputEndTurn: false` 的总结；下一次用户输入再恢复正常的思考配置。
+历史中保留真实推理内容，SDK 不伪造思考文本或签名。
+
+两种协议由同一个 SDK 循环执行 `submit_output` 契约：
+
+| 行为 | 验证范围 |
+| --- | --- |
+| 默认提交即结束；`submitOutputEndTurn: false` 记录提交后允许总结 | 两种协议、流式/非流式、思考开/关实测 |
+| 后一次合法提交覆盖前一次；schema 校验失败返回工具反馈供模型修正 | 两种协议、流式/非流式实测 |
+| `agentTool()` 使用子级已校验的 `structuredResult`，即使子级最后输出了自然语言总结 | 两种协议、流式/非流式实测 |
+| 混合/重复提交批次不执行 handler；截断调用不执行；缺少交付最多补交一次 | 确定性的 HTTP/SSE 协议对照测试 |
+| 思考增量拼接后与完整思考一致，并保留在追踪中；中断丢弃未完成思考 | 两种协议实测 |
+| Base64/URL 图片、多图顺序、带图片的工具结果可用于 `submit_output` | 两种协议实测 |
+
+事件外壳和工具生命周期一致，provider 载荷保留原生格式。
+Anthropic 使用 `thinking` 内容块和思考增量；Responses 使用 `openai_reasoning`
+内容项，以及承载 DeepSeek 明文思考的 `response.reasoning_text.delta`。
+OpenAI 的加密推理只原样保留，不伪装成明文思考。
+此 Responses 适配器仍不支持 document/PDF 输入，遇到时明确报错；
+图片测试通过不代表所有模态都已支持。URL 图片由 provider 下载，远端下载失败仍作为
+`APIError` 返回；宿主已经持有图片、且不希望请求受远端可用性影响时，可使用 Base64。
+
+在 `packages/agent-sdk` 下设置下文的真实测试环境变量后，可重复运行：
+
+```bash
+bun test ./src/__tests__/deepseekProtocolParity.integration.test.ts
+bun test ./src/__tests__/responsesAnthropicParity.test.ts
+```
+
+已于 2026-10-29 使用 `deepseek-flash` 对官方的两种协议端点实测。
 按需启用真实测试时，设置 `OPENAI_BASE_URL=https://api.deepseek.com`、
 `OPENAI_MODEL=deepseek-flash`，并将 DeepSeek 凭据放在 `OPENAI_API_KEY` 中。参见
 [DeepSeek Responses 兼容性说明](https://api-docs.deepseek.com/guides/responses_api/)。

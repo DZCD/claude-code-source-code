@@ -68,7 +68,7 @@ if (result.subtype === "success") console.log(result.structuredResult);
 
 补交请求保留完整会话，包括 thinking 块和已完成的工具结果，并追加提交提醒。补交阶段只提供 `submit_output`，显式关闭 thinking，省略 reasoning effort，发送 `tool_choice: { type: "tool", name: "submit_output" }`。执行工具前，SDK 还会拒绝不属于单个完整 `submit_output` 调用的整批请求；之前的工具不会被重放。
 
-该选项要求设置 `outputSchema` 或已注册自定义 `submit_output` 工具。自定义工具保留自己的参数校验和结果转换，必须返回 `ToolResult.structuredResult`；handler 成功不等于交付成功。启用该选项意味着本次 query 必须提交结果，自定义工具仍负责校验自己的交付内容。设置 `submitOutputEndTurn: false` 时，补交成功后仍可继续正常总结；总结轮恢复原来的 thinking 和工具配置，不是第二次补交。
+该选项要求设置 `outputSchema` 或已注册自定义 `submit_output` 工具。自定义工具保留自己的参数校验和结果转换，必须返回 `ToolResult.structuredResult`；handler 成功不等于交付成功。启用该选项意味着本次 query 必须提交结果，自定义工具仍负责校验自己的交付内容。设置 `submitOutputEndTurn: false` 时，补交成功后仍可继续正常总结；总结轮恢复正常工具集合，不是第二次补交。自 0.32.0 起，DeepSeek 的两个内置协议客户端会让非思考提交的工具结果续写保持关闭思考，下一次用户输入再恢复正常思考配置，见 [Provider 兼容性](/zh/reference/provider-compatibility/#deepseek-responses-api)。
 
 补交消耗一个 `maxTurns` 轮次，沿用取消信号和单次请求超时。拒绝、输出截断和其他明确的异常停止不会触发补交；自定义模型客户端未提供停止原因时按正常结束处理。再次漏交、参数无效、工具批次被拒或自定义工具未返回结构化结果，都以 `error_missing_output` 结束，不再发起纠正请求。供应商错误、超时、中断和取消沿用原有结束语义。补交跳过压缩及上下文溢出重试，以保留会话并守住一次请求上限。`requestTimeoutMs` 是单次请求超时；整个任务的时限通过 `QueryOptions.signal` 控制。
 

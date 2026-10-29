@@ -98,7 +98,10 @@ must return `ToolResult.structuredResult`; handler success alone is not delivery
 Enabling the option makes submission required for that query. Custom tools
 remain responsible for validating their result. With `submitOutputEndTurn: false`,
 a successful recovery can still be followed by the usual summary turn; that turn
-restores normal thinking and tools and is not another recovery attempt.
+restores the normal tool set and is not another recovery attempt. Since 0.32.0,
+DeepSeek's two built-in protocol clients keep thinking off while consuming the
+non-thinking submission's tool result, then restore normal thinking selection
+on the next user prompt; see [Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/#deepseek-responses-api).
 
 Recovery consumes a `maxTurns` turn and uses the existing cancellation and
 per-request timeout. It does not run after refusal, truncation, or another

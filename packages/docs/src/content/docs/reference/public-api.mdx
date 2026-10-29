@@ -250,6 +250,7 @@ than relying on an error.
 | `QueryOptions.includeToolUseResult`: `false` omits the `tool_use_result` convenience view from `user` events | 0.30.0 |
 | `createOpenAIResponsesClient()`, `OpenAIReasoningBlock`, `TextBlock.phase` | 0.31.0 |
 | Official DeepSeek Responses: disabled thinking sends `reasoning.effort: "none"`, fixing forced submission recovery | 0.31.1 |
+| DeepSeek Responses accepts existing enabled/adaptive thinking switches and preserves `max` effort; both clients keep non-thinking tool-result continuations off until a new user prompt | 0.32.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -270,12 +271,12 @@ package does not export it as an importable path.
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ModelRequest` | Request passed to a custom model client. Recovery sets `toolChoice: { type: "tool", name: "submit_output" }` and disables thinking (requires 0.27.0). |
-| `OpenAIResponsesClientOptions` | Responses client factory options: `apiKey`, `baseURL`, `fetch`, `reasoningEffort` (requires 0.31.0). |
+| `OpenAIResponsesClientOptions` | Responses client factory options: `apiKey`, `baseURL`, `fetch`, `reasoningEffort` (requires 0.31.0). `fetch` accepts an ordinary fetch-compatible function without runtime-specific static members since 0.32.0. |
 | `OpenAIReasoningBlock` | Replayable Responses reasoning item inside message content; persist it unchanged (requires 0.31.0). |
 | `TextBlock` | Text content block; optional `phase` preserves Responses assistant phase (requires 0.31.0 for `phase`). |
 | `ModelClient` | Custom provider client implementing `createMessage(request)`; must honour recovery tool choice and thinking overrides. |
 | `OutputSchema` | Validation shape accepted by `AgentOptions.outputSchema` and `AgentToolOptions.outputSchema`: `{ parse(input: unknown): T }`. A zod schema satisfies it directly (requires 0.20.0). |
-| `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |
+| `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`; official DeepSeek Responses accepts enabled/adaptive switches since 0.32.0, with budgets ignored by the provider. |
 | `ReasoningEffort` | Provider reasoning effort accepted by `AgentOptions.reasoningEffort` and `QueryOptions.reasoningEffort`: `"low"`, `"high"`, or `"max"`. |
 | `TokenUsage` | Token counts reported on `SDKResultMessage.usage` and `AssistantModelMessage.usage`. |
 | `AssistantModelMessage` | One assistant turn returned by a `ModelClient`: `content`, optional `usage` and `stopReason`, plus optional provider metadata `providerResponseId` (the provider-assigned response id) and `model` (the model that actually served the response, which may differ from the requested one). |

@@ -236,6 +236,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `QueryOptions.includeToolUseResult`：传 `false` 时 `user` 事件不再携带 `tool_use_result` 便捷视图 | 0.30.0 |
 | `createOpenAIResponsesClient()`、`OpenAIReasoningBlock`、`TextBlock.phase` | 0.31.0 |
 | 官方 DeepSeek Responses：关闭推理时发送 `reasoning.effort: "none"`，修复强制补交恢复 | 0.31.1 |
+| DeepSeek Responses 支持现有 enabled/adaptive 思考开关、原样发送 `max` 力度；两个客户端在非思考工具结果续写时保持关闭思考，直到新的用户输入 | 0.32.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -255,12 +256,12 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
 | `ModelRequest` | 传给自定义模型客户端的请求；补交时设置 `toolChoice: { type: "tool", name: "submit_output" }` 并关闭 thinking（需要 0.27.0）。 |
-| `OpenAIResponsesClientOptions` | Responses 客户端工厂选项：`apiKey`、`baseURL`、`fetch`、`reasoningEffort`（需要 0.31.0）。 |
+| `OpenAIResponsesClientOptions` | Responses 客户端工厂选项：`apiKey`、`baseURL`、`fetch`、`reasoningEffort`（需要 0.31.0）。自 0.32.0 起，`fetch` 接收普通兼容函数，无需运行时特有的静态成员。 |
 | `OpenAIReasoningBlock` | 消息内容中可回传的 Responses 推理项；存储时原样保留（需要 0.31.0）。 |
 | `TextBlock` | 文本内容块；可选 `phase` 保留 Responses assistant 阶段（`phase` 需要 0.31.0）。 |
 | `ModelClient` | 实现 `createMessage(request)` 的自定义模型客户端，必须遵守补交阶段的工具选择和 thinking 覆盖配置。 |
 | `OutputSchema` | `AgentOptions.outputSchema` 和 `AgentToolOptions.outputSchema` 接收的校验形状：`{ parse(input: unknown): T }`。zod schema 直接满足该接口（需要 0.20.0）。 |
-| `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |
+| `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置；自 0.32.0 起，官方 DeepSeek Responses 接受 enabled/adaptive 开关，provider 忽略预算。 |
 | `ReasoningEffort` | `AgentOptions.reasoningEffort` 和 `QueryOptions.reasoningEffort` 接收的 provider 推理强度：`"low"`、`"high"` 或 `"max"`。 |
 | `TokenUsage` | `SDKResultMessage.usage` 和 `AssistantModelMessage.usage` 上报的 token 计数。 |
 | `AssistantModelMessage` | `ModelClient` 返回的一轮 assistant 消息：`content`，可选的 `usage` 与 `stopReason`，以及可选的 provider 元数据 `providerResponseId`（provider 分配的响应 id）和 `model`（实际服务该响应的模型，可能与请求的模型不同）。 |

@@ -56,8 +56,9 @@ model's JSON prompting requirements when using JSON mode.
 The factory's `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`,
 `high`, and `xhigh`; omit it to use the provider default. Model support varies.
 Agent/query `reasoningEffort: "low"` or `"high"` overrides the factory setting;
-the SDK's `"max"` maps to OpenAI `"xhigh"`. `thinkingConfig` with `enabled` or
-`adaptive` is rejected: Anthropic thinking budgets have no equivalent here.
+the SDK's `"max"` maps to OpenAI `"xhigh"` (see the DeepSeek exception below).
+Except on the official DeepSeek endpoint since 0.32.0, `thinkingConfig` with
+`enabled` or `adaptive` is rejected: Anthropic thinking budgets have no equivalent here.
 Except for the official DeepSeek endpoint described below,
 `thinkingConfig: { type: "disabled" }` suppresses configured reasoning effort,
 including during submission recovery, but preserves a factory setting of `none`.
@@ -110,7 +111,56 @@ Since 0.31.1, `thinkingConfig: { type: "disabled" }` sends
 mapping before forcing `submit_output`. Other endpoints retain their existing
 behavior. Custom DeepSeek gateways can explicitly bind
 `reasoningEffort: "none"` on the factory when forced-tool recovery is needed.
-Verified against the official endpoint with `deepseek-flash` on 2026-10-29.
+
+*Requires 0.32.0 or later.*
+
+On the official DeepSeek Responses endpoint, `thinkingConfig: { type: "enabled",
+budgetTokens }` and `{ type: "adaptive" }` enable thinking just as on its
+Anthropic endpoint. A query-level switch overrides a factory setting of
+`reasoningEffort: "none"`; an explicit agent/query effort takes precedence over
+the factory effort. DeepSeek ignores `budgetTokens` on both protocols, so this
+is an on/off control, not a thinking-token limit. `reasoningEffort: "max"` on
+the agent/query is forwarded as `max`; other Responses endpoints keep the
+existing `max` to `xhigh` mapping.
+
+DeepSeek cannot enable thinking while consuming the results of a tool call
+that was generated without thinking. Both built-in clients therefore keep
+thinking off for that tool-result continuation, including the closing summary
+when `submitOutputEndTurn: false` follows forced recovery. The next user prompt
+restores normal thinking selection. History retains the actual reasoning;
+the SDK does not invent reasoning text or signatures.
+
+The same SDK loop enforces `submit_output` on both protocols:
+
+| Behavior | Coverage |
+| --- | --- |
+| Default submission ends the run; `submitOutputEndTurn: false` records it and allows a summary | Live on both protocols, streaming/non-streaming, thinking on/off |
+| A later valid submission replaces the earlier one; schema failures return tool feedback for correction | Live on both protocols, streaming/non-streaming |
+| `agentTool()` uses the child's validated `structuredResult`, including when the child closes with prose | Live on both protocols, streaming/non-streaming |
+| Mixed/duplicate submission batches execute no handlers; truncated calls do not execute; missing submission gets at most one recovery request | Deterministic HTTP/SSE transport parity tests |
+| Reasoning deltas equal the final reasoning and survive tracing; interruption discards unfinished reasoning | Live on both protocols |
+| Base64/URL images, ordered multiple images, and image-bearing tool results can feed `submit_output` | Live on both protocols |
+
+The event envelope and tool lifecycle match; provider payloads remain native.
+Anthropic uses `thinking` blocks and thinking deltas. Responses uses
+`openai_reasoning` items and `response.reasoning_text.delta` for DeepSeek's
+plaintext reasoning. OpenAI encrypted reasoning is preserved opaquely, not
+exposed as fabricated plaintext. Document/PDF input is still unsupported by
+this Responses adapter and raises an explicit error; image tests do not imply
+support for every modality. URL images are downloaded by the provider; a remote
+download failure remains an `APIError`. Use base64 for images already held by
+the host when remote availability must not affect the request.
+
+To repeat the matrix from `packages/agent-sdk`, set the live-test environment
+variables described below and run:
+
+```bash
+bun test ./src/__tests__/deepseekProtocolParity.integration.test.ts
+bun test ./src/__tests__/responsesAnthropicParity.test.ts
+```
+
+Verified against both official DeepSeek protocol endpoints with `deepseek-flash`
+on 2026-10-29.
 The opt-in live suites use `OPENAI_BASE_URL=https://api.deepseek.com`,
 `OPENAI_MODEL=deepseek-flash`, and the DeepSeek credential in `OPENAI_API_KEY`.
 See [DeepSeek Responses compatibility](https://api-docs.deepseek.com/guides/responses_api/).

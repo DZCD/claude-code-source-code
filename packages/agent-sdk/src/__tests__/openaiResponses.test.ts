@@ -214,6 +214,57 @@ describe("createOpenAIResponsesClient", () => {
     expect(bodies[3].reasoning).toEqual({ effort: "none" });
   });
 
+  test.each([
+    ["https://api.deepseek.com", "max"],
+    ["https://api.deepseek.com/v1", "max"],
+    ["https://api.openai.com/v1", "xhigh"],
+    ["https://api.deepseek.com.proxy.example/v1", "xhigh"],
+  ])("query max effort keeps the provider's strongest setting (%s)", async (baseURL, expectedEffort) => {
+    const efforts: Array<string | undefined> = [];
+    const client = createOpenAIResponsesClient({ apiKey: "test-key", baseURL, reasoningEffort: "low",
+      fetch: async (_url, init) => {
+        efforts.push(JSON.parse(String(init?.body)).reasoning?.effort);
+        return Response.json(response());
+      },
+    });
+    await client.createMessage(request({ reasoningEffort: "max" }));
+    await client.createMessage(request({ thinkingConfig: { type: "disabled" } }));
+    await client.createMessage(request());
+    expect(efforts).toEqual([expectedEffort, baseURL.startsWith("https://api.deepseek.com/") || baseURL === "https://api.deepseek.com" ? "none" : undefined, "low"]);
+  });
+
+  test.each(["https://api.deepseek.com", "https://api.deepseek.com/v1"])("DeepSeek thinkingConfig overrides a factory off switch without inventing a token budget (%s)", async baseURL => {
+    const bodies: any[] = [];
+    const client = createOpenAIResponsesClient({ apiKey: "test-key", baseURL, reasoningEffort: "none",
+      fetch: async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return Response.json(response()); },
+    });
+    await client.createMessage(request({ thinkingConfig: { type: "enabled", budgetTokens: 1024 } }));
+    await client.createMessage(request({ thinkingConfig: { type: "adaptive" } }));
+    await client.createMessage(request({ thinkingConfig: { type: "enabled", budgetTokens: 1024 }, reasoningEffort: "high" }));
+    await client.createMessage(request({ thinkingConfig: { type: "disabled" }, reasoningEffort: "max" }));
+    await client.createMessage(request());
+    expect(bodies.map(body => body.reasoning?.effort)).toEqual([undefined, undefined, "high", "none", "none"]);
+    expect(bodies.every(body => body.thinking === undefined)).toBe(true);
+  });
+
+  test("DeepSeek finishes a non-thinking tool turn before restoring configured reasoning on a new prompt", async () => {
+    const efforts: Array<string | undefined> = [];
+    const client = createOpenAIResponsesClient({ apiKey: "test-key", baseURL: "https://api.deepseek.com", reasoningEffort: "low",
+      fetch: async (_url, init) => { efforts.push(JSON.parse(String(init?.body)).reasoning?.effort); return Response.json(response()); },
+    });
+    const messages: ModelRequest["messages"] = [{ role: "user", content: "task" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "submit_output", input: { answer: 42 } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "Structured output recorded" }] },
+    ];
+    await client.createMessage(request({ messages, thinkingConfig: { type: "enabled", budgetTokens: 1024 } }));
+    await client.createMessage(request({ messages: [...messages, { role: "user", content: "new task" }] }));
+    await client.createMessage(request({ messages: [messages[0]!, { role: "assistant", content: [
+      { type: "openai_reasoning", item: { type: "reasoning", id: "rs_1", summary: [], content: [{ type: "reasoning_text", text: "fixture" }] } },
+      { type: "tool_use", id: "call_1", name: "submit_output", input: { answer: 42 } },
+    ] }, messages[2]!] }));
+    expect(efforts).toEqual(["none", "low", "low"]);
+  });
+
   test("HTTP errors are SDK APIErrors and failed/truncated streams never become successful answers", async () => {
     const { client } = endpoint(() => Response.json({ error: { message: "unauthorized" } }, { status: 401 }));
     await expect(client.createMessage(request())).rejects.toBeInstanceOf(APIError);
