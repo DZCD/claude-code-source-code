@@ -8,6 +8,7 @@ description: SDK 暴露的稳定入口和核心类型。
 | Export | 说明 |
 | --- | --- |
 | `createAgent(options)` | 创建一个带私有 workspace 和默认 workspace 工具的内存态 `Agent`。 |
+| `createOpenAIResponsesClient(options?)` | 创建通过 `AgentOptions.modelClient` 注入的 Responses API 客户端，见 [Provider 兼容性](/zh/reference/provider-compatibility/#openai-responses-api)（需要 0.31.0）。 |
 | `createBareAgent(options)` | 创建一个不带默认工具、workspace 提示词，也不创建 workspace 目录的内存态 `Agent`。 |
 | `defineAgent(options)` | 从 agent 配置创建一个 `AgentSpec` 模板。模板本身无状态；`spawn()` 每次创建一个拥有独立历史和 workspace 的会话。 |
 | `isAgentSpec(target)` | 类型守卫，区分 `AgentSpec` 模板与存活的 `AgentLike` 会话。 |
@@ -233,6 +234,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | Breaking 默认变更：有 `outputSchema` 或 `submit_output` 的智能体自动开启 `retryMissingOutput`；设为 `false` 保持缺少交付时立即失败，普通聊天不变 | 0.28.0 |
 | 默认行为变更：DeepSeek 官方端点的 `maxTokens` 默认 393216（384K），其他端点仍为 16384，显式配置优先 | 0.29.0 |
 | `QueryOptions.includeToolUseResult`：传 `false` 时 `user` 事件不再携带 `tool_use_result` 便捷视图 | 0.30.0 |
+| `createOpenAIResponsesClient()`、`OpenAIReasoningBlock`、`TextBlock.phase` | 0.31.0 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 
@@ -252,6 +254,9 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | `QueryOptions` | 每次 query 的 streaming、取消、runtime 和 tracing 配置。 |
 | `OutputFormat` | `QueryOptions.outputFormat` 接收的结构化输出格式：`"json"` 或 `{ type: "json_schema", schema }`。 |
 | `ModelRequest` | 传给自定义模型客户端的请求；补交时设置 `toolChoice: { type: "tool", name: "submit_output" }` 并关闭 thinking（需要 0.27.0）。 |
+| `OpenAIResponsesClientOptions` | Responses 客户端工厂选项：`apiKey`、`baseURL`、`fetch`、`reasoningEffort`（需要 0.31.0）。 |
+| `OpenAIReasoningBlock` | 消息内容中可回传的 Responses 推理项；存储时原样保留（需要 0.31.0）。 |
+| `TextBlock` | 文本内容块；可选 `phase` 保留 Responses assistant 阶段（`phase` 需要 0.31.0）。 |
 | `ModelClient` | 实现 `createMessage(request)` 的自定义模型客户端，必须遵守补交阶段的工具选择和 thinking 覆盖配置。 |
 | `OutputSchema` | `AgentOptions.outputSchema` 和 `AgentToolOptions.outputSchema` 接收的校验形状：`{ parse(input: unknown): T }`。zod schema 直接满足该接口（需要 0.20.0）。 |
 | `ThinkingConfig` | `AgentOptions.thinkingConfig` 和 `QueryOptions.thinkingConfig` 接收的推理配置。 |

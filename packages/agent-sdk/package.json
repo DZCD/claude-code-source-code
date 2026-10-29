@@ -1,6 +1,6 @@
 {
   "name": "agent-lattice",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "AgentLattice framework for coordinated agent systems with tools, tracing, and teams",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,6 +29,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "1.9.1",
     "langsmith": "0.7.14",
+    "openai": "^7.45.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

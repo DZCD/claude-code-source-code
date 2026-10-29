@@ -3,9 +3,85 @@ title: Provider 兼容性
 description: SDK 的思考、力度和结构化输出选项在 DeepSeek、Kimi 等 Anthropic 兼容 provider 上的实际生效情况。
 ---
 
-SDK 的内置模型客户端使用 Anthropic Messages 格式，可以对接任何 Anthropic
+SDK 的默认模型客户端使用 Anthropic Messages 格式，可以对接任何 Anthropic
 兼容端点，但每个 provider 对思考相关参数的支持子集不同。本页记录的内容
 以 provider 官方兼容性文档和真实请求验证为准。
+
+## OpenAI Responses API
+
+*需要 0.31.0 及以上版本。*
+
+`createOpenAIResponsesClient()` 创建使用 OpenAI `POST /v1/responses` 协议的
+`ModelClient`。通过 `modelClient` 注入；默认客户端仍使用 Anthropic Messages。
+仅修改智能体的 `baseURL` 不会切换协议。
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const agent = createBareAgent({
+  model: process.env.OPENAI_MODEL ?? "gpt-4.1",
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.OPENAI_API_KEY,
+  }),
+});
+
+const result = await agent.prompt("Say hello");
+console.log(result.result);
+```
+
+`apiKey` 和自定义 `baseURL` 应传给 `createOpenAIResponsesClient()`，
+而不是智能体。工厂默认读取 `OPENAI_API_KEY`，地址默认为
+`https://api.openai.com/v1`。自定义基础地址必须提供 `/responses`；
+仅支持 Chat Completions 的端点不能使用。可选的 `fetch` 用于覆盖 HTTP 传输。
+请求使用官方 OpenAI 客户端，关闭自动重试；HTTP 和协议错误转为 SDK `APIError`。
+
+适配器支持文本、URL/base64 图片、函数工具（含并行调用）、包含文本/图片的工具结果、
+JSON 输出、流式输出、取消和请求超时。工具执行、`outputSchema` 校验和补交机制
+仍由现有 SDK 循环驱动。函数工具显式设置 `strict: false`，保留现有 schema 中
+可选字段的语义。查询选项 `outputFormat: "json"` 映射为
+`text.format.type: "json_object"`；JSON schema 映射为 `json_schema`，
+设置 `strict: true`，名称为 `agent_output`。请提供 OpenAI strict 模式支持的
+schema；适配器不改写 schema。使用 JSON 模式时，提示词也需要满足模型的 JSON 要求。
+
+### 推理与会话历史
+
+*需要 0.31.0 及以上版本。*
+
+工厂的 `reasoningEffort` 接受 `none`、`minimal`、`low`、`medium`、`high` 和
+`xhigh`；省略时使用 provider 默认值，各模型支持范围不同。智能体/查询上的
+`reasoningEffort: "low"` 或 `"high"` 覆盖工厂配置；SDK 的 `"max"` 映射为
+OpenAI `"xhigh"`。`thinkingConfig` 的 `enabled` 和 `adaptive` 会报错，
+因为 Anthropic 的思考预算在此没有对应参数。
+`thinkingConfig: { type: "disabled" }` 会省略已配置的推理力度，补交阶段也如此，
+但保留工厂上显式设置的 `none`。省略力度不保证 provider 关闭默认推理。若模型支持显式关闭推理，请在工厂上设置
+`reasoningEffort: "none"`。
+
+每次请求携带会话历史，设置 `store: false` 和
+`include: ["reasoning.encrypted_content"]`。推理输出以
+`OpenAIReasoningBlock`（`{ type: "openai_reasoning", item }`）保留在消息
+`content` 内；assistant 文本在 `TextBlock.phase` 中保留可选的 Responses
+`phase`。历史存储必须完整保留这些内容字段，内置 JSONL 存储已经支持。
+它们属于会话内容，不是响应元数据。恢复后请继续使用同一协议和兼容模型；
+此适配器遇到 Anthropic thinking/document 内容块会报错。
+
+### 事件、用量与边界
+
+*需要 0.31.0 及以上版本。*
+
+`stream_event.event` 原样携带 Responses 事件（例如
+`response.output_text.delta`），不会转为 Anthropic `content_block_delta`。
+可根据增量显示文本，以最终 `assistant` 事件获取完整消息。
+流缺少终止响应时会报错。用量沿用 SDK 现有的互斥分类：`input_tokens` 不含缓存命中，
+`cache_read_input_tokens` 单独报告缓存命中，`output_tokens` 包含推理输出。
+响应 ID 和实际模型仍通过 assistant 消息及 `ContextTracer` 提供。
+
+此适配器不暴露 OpenAI 托管工具、文档输入、`previous_response_id`、后台任务或
+WebSocket 模式。工具执行和会话历史由 SDK 管理。适配器有本地 HTTP/SSE 契约测试；
+真实 provider 测试通过 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 按需启用。
+
+协议参考：[Responses 迁移](https://developers.openai.com/api/docs/guides/migrate-to-responses)、
+[推理历史](https://developers.openai.com/api/docs/guides/reasoning)、
+[函数调用](https://developers.openai.com/api/docs/guides/function-calling)。
 
 ## DeepSeek
 

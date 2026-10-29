@@ -8,6 +8,7 @@ description: Stable exports exposed by the SDK package.
 | Export | Description |
 | --- | --- |
 | `createAgent(options)` | Creates an in-memory `Agent` with a private workspace and default workspace tools. |
+| `createOpenAIResponsesClient(options?)` | Creates a Responses API model client for `AgentOptions.modelClient`; see [Provider Compatibility](/reference/provider-compatibility/#openai-responses-api) (requires 0.31.0). |
 | `createBareAgent(options)` | Creates an in-memory `Agent` without default tools, workspace instructions, or workspace directory creation. |
 | `defineAgent(options)` | Creates an `AgentSpec` template from agent options. The spec is stateless; `spawn()` creates an independent session with its own history and workspace. |
 | `isAgentSpec(target)` | Type guard distinguishing an `AgentSpec` template from a live `AgentLike` session. |
@@ -247,6 +248,7 @@ than relying on an error.
 | Breaking default change: `retryMissingOutput` is enabled automatically for agents with `outputSchema` or `submit_output`; set `false` to retain immediate missing-output failure. Ordinary chat agents are unchanged | 0.28.0 |
 | DeepSeek official endpoint defaults `maxTokens` to 393216 (384K); other endpoints keep 16384, and explicit overrides take precedence (default behavior change) | 0.29.0 |
 | `QueryOptions.includeToolUseResult`: `false` omits the `tool_use_result` convenience view from `user` events | 0.30.0 |
+| `createOpenAIResponsesClient()`, `OpenAIReasoningBlock`, `TextBlock.phase` | 0.31.0 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.
@@ -267,6 +269,9 @@ package does not export it as an importable path.
 | `QueryOptions` | Per-query options for streaming, cancellation, runtime, and tracing. |
 | `OutputFormat` | Structured output format accepted by `QueryOptions.outputFormat`: `"json"` or `{ type: "json_schema", schema }`. |
 | `ModelRequest` | Request passed to a custom model client. Recovery sets `toolChoice: { type: "tool", name: "submit_output" }` and disables thinking (requires 0.27.0). |
+| `OpenAIResponsesClientOptions` | Responses client factory options: `apiKey`, `baseURL`, `fetch`, `reasoningEffort` (requires 0.31.0). |
+| `OpenAIReasoningBlock` | Replayable Responses reasoning item inside message content; persist it unchanged (requires 0.31.0). |
+| `TextBlock` | Text content block; optional `phase` preserves Responses assistant phase (requires 0.31.0 for `phase`). |
 | `ModelClient` | Custom provider client implementing `createMessage(request)`; must honour recovery tool choice and thinking overrides. |
 | `OutputSchema` | Validation shape accepted by `AgentOptions.outputSchema` and `AgentToolOptions.outputSchema`: `{ parse(input: unknown): T }`. A zod schema satisfies it directly (requires 0.20.0). |
 | `ThinkingConfig` | Reasoning configuration accepted by `AgentOptions.thinkingConfig` and `QueryOptions.thinkingConfig`. |

@@ -33,6 +33,12 @@ A tool can also end the loop itself: when any tool in a batch returns `endTurn: 
 
 *Requires 0.16.0 or later.*
 
+*Requires 0.31.0 or later.*
+
+The default model client uses Anthropic Messages. Inject
+[`createOpenAIResponsesClient()`](/reference/provider-compatibility/#openai-responses-api)
+through `modelClient` to use OpenAI Responses API with the same tool execution loop.
+
 ## Structured output with submit_output
 
 *Requires 0.20.0 or later.*

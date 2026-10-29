@@ -10,7 +10,7 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 一次 `agent.query()` 大致会经历这些步骤：
 
 1. 追加用户消息到内存对话。
-2. 调用 Anthropic 兼容 Messages API。
+2. 调用配置的模型客户端。
 3. 如果模型返回普通文本，输出 `result` 并结束。
 4. 如果模型返回 `tool_use`，SDK 找到对应工具并执行。
 5. SDK 把工具结果作为 `tool_result` 回填给模型。
@@ -19,6 +19,12 @@ Agent loop 是 SDK 的核心。它负责把用户输入、模型回复、工具�
 工具也可以主动结束循环：批次中任一工具返回 `endTurn: true` 时，SDK 仍会把该批次的全部 `tool_result` 写入历史，然后直接以 `subtype: "success"` 收尾——第 6 步不再发起模型请求，该工具的内容成为结果文本。
 
 *需要 0.16.0 及以上版本。*
+
+*需要 0.31.0 及以上版本。*
+
+默认模型客户端使用 Anthropic Messages；通过 `modelClient` 注入
+[`createOpenAIResponsesClient()`](/zh/reference/provider-compatibility/#openai-responses-api)
+可使用 OpenAI Responses API，工具仍由本循环执行。
 
 ## 用 submit_output 提交结构化输出
 

@@ -5,7 +5,8 @@ with tools, skills, tracing, supervisor delegation, and mailbox-backed teams.
 
 Install it from npm as `agent-lattice`. It works with Anthropic and
 Anthropic-compatible providers such as DeepSeek, without installing the Claude
-Code CLI runtime.
+Code CLI runtime. OpenAI Responses API is available through
+`createOpenAIResponsesClient()` (requires 0.31.0 or later).
 
 > **Integrating this SDK from an AI agent?** Start at
 > <https://docs.claude-code-sdk.com/llms.txt> for an index of the documentation,
@@ -181,6 +182,92 @@ K3). Kimi K3 does not accept `thinkingConfig`; use `reasoningEffort` instead.
 The Kimi Open Platform endpoint at `https://api.moonshot.cn/v1` uses the OpenAI
 Chat Completions protocol and is not a valid `baseURL` for the SDK's built-in
 Anthropic client.
+
+## OpenAI Responses API
+
+*Requires 0.31.0 or later.*
+
+`createOpenAIResponsesClient()` creates a `ModelClient` for OpenAI's
+`POST /v1/responses` protocol. Pass it as `modelClient`; the default client
+still uses Anthropic Messages. Changing the agent's `baseURL` alone does not
+switch protocols.
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const agent = createBareAgent({
+  model: process.env.OPENAI_MODEL ?? "gpt-4.1",
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.OPENAI_API_KEY,
+  }),
+});
+
+const result = await agent.prompt("Say hello");
+console.log(result.result);
+```
+
+Put `apiKey` and any custom `baseURL` on `createOpenAIResponsesClient()`,
+not on the agent. The factory defaults to `OPENAI_API_KEY` and
+`https://api.openai.com/v1`. A custom base URL must expose `/responses`;
+Chat Completions-only endpoints do not work. `fetch` optionally overrides the
+HTTP transport. Requests use the official OpenAI client with automatic retries
+disabled; HTTP and protocol failures become SDK `APIError`s.
+
+The adapter supports text, URL/base64 images, function tools (including parallel
+calls), tool results containing text/images, JSON output, streaming, cancellation,
+and request timeouts. Agent tools, `outputSchema` validation and submission recovery
+continue to run in the existing SDK loop. Tools use `strict: false` to preserve
+existing optional schema fields. For structured responses, query
+`outputFormat: "json"` maps to `text.format.type: "json_object"`; a JSON schema
+maps to `json_schema` with `strict: true` and name `agent_output`. Supply a schema
+supported by OpenAI strict mode; the adapter does not rewrite it. Follow the
+model's JSON prompting requirements when using JSON mode.
+
+### Reasoning and conversation history
+
+*Requires 0.31.0 or later.*
+
+The factory's `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`,
+`high`, and `xhigh`; omit it to use the provider default. Model support varies.
+Agent/query `reasoningEffort: "low"` or `"high"` overrides the factory setting;
+the SDK's `"max"` maps to OpenAI `"xhigh"`. `thinkingConfig` with `enabled` or
+`adaptive` is rejected: Anthropic thinking budgets have no equivalent here.
+`thinkingConfig: { type: "disabled" }` suppresses configured reasoning effort,
+including during submission recovery, but preserves a factory setting of `none`.
+Omitting effort does not guarantee that the provider disables its default reasoning. To explicitly request no reasoning on a compatible model,
+set `reasoningEffort: "none"` on the factory.
+
+Every request sends the conversation with `store: false` and
+`include: ["reasoning.encrypted_content"]`. Reasoning output is preserved as
+`OpenAIReasoningBlock` (`{ type: "openai_reasoning", item }`) inside message
+`content`. Assistant text preserves the optional Responses `phase` as
+`TextBlock.phase`. History stores must round-trip these content fields; the
+built-in JSONL store does so. They are conversation content, not response
+metadata. Continue a restored conversation with the same protocol and a
+compatible model; Anthropic thinking/document blocks are rejected by this adapter.
+
+### Events, usage and limits
+
+*Requires 0.31.0 or later.*
+
+`stream_event.event` contains native Responses events such as
+`response.output_text.delta`; it is not converted into Anthropic
+`content_block_delta`. Render text from the delta and use the final `assistant`
+event for the complete message. A stream without a terminal response fails.
+Usage follows the SDK's existing mutually exclusive buckets: `input_tokens`
+excludes cached tokens, `cache_read_input_tokens` reports them, and
+`output_tokens` includes reasoning output. Response ID and actual model remain
+available on the assistant message and through `ContextTracer`.
+
+This adapter does not expose OpenAI-hosted tools, document input,
+`previous_response_id`, background jobs, or WebSocket mode. The SDK owns tool
+execution and conversation history. The adapter is covered by local HTTP/SSE
+contract tests; live provider tests are opt-in using `OPENAI_API_KEY` and
+`OPENAI_MODEL`.
+
+Protocol references: [Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+[reasoning history](https://developers.openai.com/api/docs/guides/reasoning),
+and [function calling](https://developers.openai.com/api/docs/guides/function-calling).
 
 ## Default output budget
 
