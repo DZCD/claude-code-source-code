@@ -235,6 +235,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 默认行为变更：DeepSeek 官方端点的 `maxTokens` 默认 393216（384K），其他端点仍为 16384，显式配置优先 | 0.29.0 |
 | `QueryOptions.includeToolUseResult`：传 `false` 时 `user` 事件不再携带 `tool_use_result` 便捷视图 | 0.30.0 |
 | `createOpenAIResponsesClient()`、`OpenAIReasoningBlock`、`TextBlock.phase` | 0.31.0 |
+| 官方 DeepSeek Responses：关闭推理时发送 `reasoning.effort: "none"`，修复强制补交恢复 | 0.31.1 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

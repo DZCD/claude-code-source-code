@@ -165,6 +165,31 @@ describe("createOpenAIResponsesClient", () => {
     expect(bodies[1].reasoning).toBeUndefined();
   });
 
+  test.each([
+    ["https://api.deepseek.com", true],
+    ["https://api.deepseek.com/v1", true],
+    ["https://api.deepseek.com.proxy.example/v1", false],
+    ["https://api.openai.com/v1", false],
+  ])("submission recovery disables DeepSeek thinking only for the official host (%s)", async (baseURL, deepSeek) => {
+    const bodies: any[] = [];
+    const client = createOpenAIResponsesClient({ apiKey: "test-key", baseURL,
+      reasoningEffort: "low", fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        bodies.push(body);
+        if (body.tool_choice && deepSeek && body.reasoning?.effort !== "none") {
+          return Response.json({ error: { message: "Thinking mode does not support this tool_choice" } }, { status: 400 });
+        }
+        return Response.json(response(bodies.length === 1 ? [text("forgot")]
+          : [call('{"answer":42}', "submit_output")]));
+      },
+    });
+    const agent = createBareAgent({ model: "test-model", modelClient: client, outputSchema: z.object({ answer: z.number() }) });
+    expect(await agent.prompt("answer", { stream: false })).toMatchObject({ subtype: "success", structuredResult: { answer: 42 } });
+    expect(bodies[0].reasoning).toEqual({ effort: "low" });
+    expect(bodies[1].tool_choice).toEqual({ type: "function", name: "submit_output" });
+    expect(bodies[1].reasoning).toEqual(deepSeek ? { effort: "none" } : undefined);
+  });
+
   test("maps JSON formats, images and reasoning configuration without mutating schemas", async () => {
     const { baseURL, bodies } = endpoint(() => Response.json(response()));
     const client = createOpenAIResponsesClient({ apiKey: "test-key", baseURL, reasoningEffort: "medium" });

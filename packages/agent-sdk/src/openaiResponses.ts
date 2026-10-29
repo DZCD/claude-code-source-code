@@ -41,16 +41,18 @@ export function createOpenAIResponsesClient(options: OpenAIResponsesClientOption
     fetch: options.fetch,
     maxRetries: 0,
   });
+  const isDeepSeek = new URL(client.baseURL).hostname === "api.deepseek.com";
   return {
     async createMessage(request) {
       try {
         if (request.thinkingConfig && request.thinkingConfig.type !== "disabled") {
           throw new APIError("Responses does not support thinkingConfig budgets or adaptive thinking; use reasoningEffort");
         }
-        // The loop also sets disabled during submission recovery. Suppress configured
-        // effort, without sending a reasoning parameter to non-reasoning models.
+        // Submission recovery forces a tool and disables thinking. DeepSeek rejects
+        // forced tools while thinking is on and defaults thinking to on, so omission
+        // is insufficient there. Other endpoints may use non-reasoning models.
         const effort = request.thinkingConfig?.type === "disabled"
-          ? (options.reasoningEffort === "none" ? "none" : undefined)
+          ? (isDeepSeek || options.reasoningEffort === "none" ? "none" : undefined)
           : request.reasoningEffort === "max" ? "xhigh"
           : request.reasoningEffort ?? options.reasoningEffort;
         const body: ResponseCreateParamsNonStreaming = {

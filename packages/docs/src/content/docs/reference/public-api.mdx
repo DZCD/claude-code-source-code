@@ -249,6 +249,7 @@ than relying on an error.
 | DeepSeek official endpoint defaults `maxTokens` to 393216 (384K); other endpoints keep 16384, and explicit overrides take precedence (default behavior change) | 0.29.0 |
 | `QueryOptions.includeToolUseResult`: `false` omits the `tool_use_result` convenience view from `user` events | 0.30.0 |
 | `createOpenAIResponsesClient()`, `OpenAIReasoningBlock`, `TextBlock.phase` | 0.31.0 |
+| Official DeepSeek Responses: disabled thinking sends `reasoning.effort: "none"`, fixing forced submission recovery | 0.31.1 |
 
 Read the installed version from `node_modules/agent-lattice/package.json`; the
 package does not export it as an importable path.

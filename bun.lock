@@ -137,7 +137,7 @@
     },
     "packages/agent-sdk": {
       "name": "agent-lattice",
-      "version": "0.31.0",
+      "version": "0.31.1",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.80.0",
         "@langfuse/tracing": "5.10.0",

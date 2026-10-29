@@ -58,9 +58,11 @@ The factory's `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`,
 Agent/query `reasoningEffort: "low"` or `"high"` overrides the factory setting;
 the SDK's `"max"` maps to OpenAI `"xhigh"`. `thinkingConfig` with `enabled` or
 `adaptive` is rejected: Anthropic thinking budgets have no equivalent here.
+Except for the official DeepSeek endpoint described below,
 `thinkingConfig: { type: "disabled" }` suppresses configured reasoning effort,
 including during submission recovery, but preserves a factory setting of `none`.
-Omitting effort does not guarantee that the provider disables its default reasoning. To explicitly request no reasoning on a compatible model,
+Omitting effort does not guarantee that the provider disables its default reasoning.
+To explicitly request no reasoning on a compatible model,
 set `reasoningEffort: "none"` on the factory.
 
 Every request sends the conversation with `store: false` and
@@ -90,6 +92,28 @@ This adapter does not expose OpenAI-hosted tools, document input,
 execution and conversation history. The adapter is covered by local HTTP/SSE
 contract tests; live provider tests are opt-in using `OPENAI_API_KEY` and
 `OPENAI_MODEL`.
+
+### DeepSeek Responses API
+
+*Requires 0.31.1 or later.*
+
+Use `baseURL: "https://api.deepseek.com"` on the Responses client factory
+with `model: "deepseek-flash"` on the agent. This is a separate protocol from
+DeepSeek's `/anthropic` endpoint. DeepSeek returns reasoning as plaintext
+`item.content`, which the adapter preserves and replays inside
+`OpenAIReasoningBlock`; it does not require encrypted reasoning content.
+
+DeepSeek rejects a forced function `tool_choice` while thinking is enabled.
+Since 0.31.1, `thinkingConfig: { type: "disabled" }` sends
+`reasoning: { effort: "none" }` when the factory's base URL has the exact
+`api.deepseek.com` hostname. The SDK's missing-submission recovery uses this
+mapping before forcing `submit_output`. Other endpoints retain their existing
+behavior. Custom DeepSeek gateways can explicitly bind
+`reasoningEffort: "none"` on the factory when forced-tool recovery is needed.
+Verified against the official endpoint with `deepseek-flash` on 2026-10-29.
+The opt-in live suites use `OPENAI_BASE_URL=https://api.deepseek.com`,
+`OPENAI_MODEL=deepseek-flash`, and the DeepSeek credential in `OPENAI_API_KEY`.
+See [DeepSeek Responses compatibility](https://api-docs.deepseek.com/guides/responses_api/).
 
 Protocol references: [Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
 [reasoning history](https://developers.openai.com/api/docs/guides/reasoning),

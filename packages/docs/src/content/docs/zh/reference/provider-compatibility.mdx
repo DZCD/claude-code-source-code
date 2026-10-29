@@ -52,6 +52,7 @@ schema；适配器不改写 schema。使用 JSON 模式时，提示词也需要�
 `reasoningEffort: "low"` 或 `"high"` 覆盖工厂配置；SDK 的 `"max"` 映射为
 OpenAI `"xhigh"`。`thinkingConfig` 的 `enabled` 和 `adaptive` 会报错，
 因为 Anthropic 的思考预算在此没有对应参数。
+除下文说明的官方 DeepSeek 端点外，
 `thinkingConfig: { type: "disabled" }` 会省略已配置的推理力度，补交阶段也如此，
 但保留工厂上显式设置的 `none`。省略力度不保证 provider 关闭默认推理。若模型支持显式关闭推理，请在工厂上设置
 `reasoningEffort: "none"`。
@@ -78,6 +79,27 @@ OpenAI `"xhigh"`。`thinkingConfig` 的 `enabled` 和 `adaptive` 会报错，
 此适配器不暴露 OpenAI 托管工具、文档输入、`previous_response_id`、后台任务或
 WebSocket 模式。工具执行和会话历史由 SDK 管理。适配器有本地 HTTP/SSE 契约测试；
 真实 provider 测试通过 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 按需启用。
+
+### DeepSeek Responses API
+
+*需要 0.31.1 及以上版本。*
+
+在 Responses 客户端工厂上设置 `baseURL: "https://api.deepseek.com"`，
+智能体上设置 `model: "deepseek-flash"`。这与 DeepSeek 的 `/anthropic`
+端点使用不同协议。DeepSeek 在 `item.content` 中返回明文推理内容，适配器通过
+`OpenAIReasoningBlock` 原样保存并回传，不要求加密推理内容。
+
+DeepSeek 开启推理时，不接受指定某个函数的 `tool_choice`。
+自 0.31.1 起，工厂基础地址的主机名精确为 `api.deepseek.com` 时，
+`thinkingConfig: { type: "disabled" }` 会发送
+`reasoning: { effort: "none" }`。SDK 缺少交付后的补交恢复先通过此映射关闭推理，
+再强制调用 `submit_output`。其他端点保留原有行为。
+自定义 DeepSeek 网关若需要强制补交，可在工厂上显式绑定
+`reasoningEffort: "none"`。
+已于 2026-10-29 使用 `deepseek-flash` 对官方端点实测。
+按需启用真实测试时，设置 `OPENAI_BASE_URL=https://api.deepseek.com`、
+`OPENAI_MODEL=deepseek-flash`，并将 DeepSeek 凭据放在 `OPENAI_API_KEY` 中。参见
+[DeepSeek Responses 兼容性说明](https://api-docs.deepseek.com/guides/responses_api/)。
 
 协议参考：[Responses 迁移](https://developers.openai.com/api/docs/guides/migrate-to-responses)、
 [推理历史](https://developers.openai.com/api/docs/guides/reasoning)、
