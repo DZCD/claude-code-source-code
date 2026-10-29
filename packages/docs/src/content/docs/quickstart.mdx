@@ -19,7 +19,9 @@ import { createAgent } from "agent-lattice";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
 });
 
 for await (const message of agent.query("Say hello in one sentence.")) {
@@ -28,6 +30,44 @@ for await (const message of agent.query("Say hello in one sentence.")) {
 ```
 
 `agent.query()` returns an async iterator of SDK events. Use it when you want to observe the agent as it runs: initialization, assistant messages, streaming deltas, tool calls, tool results, and the final result.
+
+## Choose a model protocol
+
+*Requires 0.31.0 or later.*
+
+DeepSeek thinking compatibility requires 0.32.0 or later.
+
+The default client uses Anthropic Messages. For an endpoint exposing OpenAI
+Responses API, inject `createOpenAIResponsesClient()` through `modelClient`:
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const responsesAgent = createBareAgent({
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com",
+    reasoningEffort: "low",
+  }),
+});
+
+const result = await responsesAgent.prompt("What is 2 + 2?");
+console.log(result.result);
+```
+
+Put Responses credentials and the base URL on the client factory. The agent's
+`baseURL` configures only the default Anthropic client. Changing it alone does
+not switch protocols. For OpenAI directly, omit the factory's `baseURL`, use
+`apiKey: process.env.OPENAI_API_KEY`, and set the agent's `model` from your
+application's `OPENAI_MODEL` configuration. Chat Completions-only endpoints
+are not supported by either built-in client.
+
+Use [Configuration](/configuration/#openai-responses-api) for both connection
+examples and [Provider Compatibility](/reference/provider-compatibility/) for
+thinking, structured output, and media limits.
 
 ## Return only the final result
 
@@ -40,11 +80,16 @@ console.log(result.result);
 
 ## Send multimodal input
 
-For image or document input, pass a content block array instead of embedding
-media in a string. The SDK forwards Anthropic-compatible `image` and `document`
-blocks through the agent loop.
+Pass image input as a content block array. Both clients accept URL and base64
+images when the provider/model supports them. The Responses adapter rejects
+`document`/PDF input; Anthropic document support depends on the provider.
+Image understanding does not enable image generation.
 
 ```ts
+import { readFile } from "node:fs/promises";
+
+// Read an image file owned by your application.
+const imageBase64 = (await readFile("./screenshot.png")).toString("base64");
 const result = await agent.prompt([
   { type: "text", text: "Summarize this screenshot." },
   {
@@ -113,7 +158,11 @@ const result = await agent.prompt("Return the answer to 2 + 2.", {
 
 When `outputFormat` is set, the SDK sends structured output parameters to the provider and returns the final text unchanged. Parse or validate the returned JSON in your application when you need a typed value.
 
-In short: `query()` is the event-stream API, `prompt()` is the final-result API, `{ stream: true | false }` controls model streaming, and `outputFormat` requests JSON or provider-supported schema output.
+For an SDK-validated artifact, use `outputSchema` and read `result.structuredResult`.
+The SDK injects `submit_output`, validates its arguments, and applies the same
+submission lifecycle on both protocols. `outputFormat` requests a provider
+format and returns text; it does not replace SDK validation. See
+[Structured output](/concepts/agent-loop/#structured-output-with-submit_output).
 
 ## Next steps
 

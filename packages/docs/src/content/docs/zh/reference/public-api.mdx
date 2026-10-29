@@ -82,7 +82,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "你是一个简洁的工程助手。",
   tools: createBuiltinTools({
     cwd: process.cwd(),
@@ -138,6 +138,25 @@ const agent = createBareAgent({
 | `runtime` | `AgentRuntimeContext` | Team runner 和 delegate tools 传入的运行时上下文。 |
 | `tracer` | `ContextTracer` | query 级 trace sink，可覆盖或补充本次 query 的追踪。 |
 
+## Responses 客户端选项
+
+*需要 0.31.0 及以上版本。*
+
+`createOpenAIResponsesClient(options?)` 返回用于 `AgentOptions.modelClient` 的
+`ModelClient`，不创建智能体，也不拥有会话历史。
+
+| 选项 | 默认值 | 含义 |
+| --- | --- | --- |
+| `apiKey` | `process.env.OPENAI_API_KEY` | Responses 端点凭据。兼容服务应传入对应 provider 的 Key。 |
+| `baseURL` | `https://api.openai.com/v1` | 提供 `POST /responses` 的基础地址，配置在此工厂上。 |
+| `fetch` | 官方客户端的传输实现 | 可选的兼容 fetch 函数；普通可调用覆盖需要 0.32.0 及以上版本。 |
+| `reasoningEffort` | provider 默认值 | `none`、`minimal`、`low`、`medium`、`high` 或 `xhigh`，模型支持范围各不相同；智能体/查询配置覆盖此值。 |
+
+`model`、`maxTokens`、`requestTimeoutMs`、工具和 `outputSchema` 仍配置在智能体上。
+`maxTokens` 映射为 `max_output_tokens`；`outputSchema` 使用 SDK 校验的
+`submit_output` 生命周期。完整 OpenAI 和 DeepSeek 示例见
+[配置](/zh/configuration/#openai-responses-api)。
+
 ## 上下文追踪
 
 ```ts
@@ -157,7 +176,7 @@ const tracer = createCompositeContextTracer([
 ]);
 
 const agent = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   tracer,

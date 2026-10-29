@@ -86,7 +86,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "You are a concise engineering assistant.",
   tools: createBuiltinTools({
     cwd: process.cwd(),
@@ -142,6 +142,25 @@ const agent = createBareAgent({
 | `runtime` | `AgentRuntimeContext` | Runtime context supplied by team runners and delegate tools. |
 | `tracer` | `ContextTracer` | Query-scoped trace sink. Overrides or supplies tracing for this query. |
 
+## Responses client options
+
+*Requires 0.31.0 or later.*
+
+`createOpenAIResponsesClient(options?)` returns a `ModelClient` for
+`AgentOptions.modelClient`. It does not create an Agent or own conversation history.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `apiKey` | `process.env.OPENAI_API_KEY` | Credential for the Responses endpoint. Pass the provider's key when using a compatible service. |
+| `baseURL` | `https://api.openai.com/v1` | Base address exposing `POST /responses`. Set it on this factory. |
+| `fetch` | Official client's transport | Optional fetch-compatible function; ordinary callable overrides require 0.32.0 or later. |
+| `reasoningEffort` | Provider default | `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; supported values depend on the model. Agent/query effort overrides this setting. |
+
+Keep `model`, `maxTokens`, `requestTimeoutMs`, tools, and `outputSchema` on the
+agent. `maxTokens` maps to `max_output_tokens`; `outputSchema` uses the SDK's
+validated `submit_output` lifecycle. See [Configuration](/configuration/#openai-responses-api)
+for complete OpenAI and DeepSeek examples.
+
 ## Context tracing
 
 ```ts
@@ -161,7 +180,7 @@ const tracer = createCompositeContextTracer([
 ]);
 
 const agent = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   tracer,

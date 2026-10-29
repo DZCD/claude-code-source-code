@@ -14,7 +14,7 @@ const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   name: "backend",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   workspace: {
     cwd: process.cwd(),
     allowedDirectories: [process.cwd()],
@@ -31,7 +31,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "Use the configured project directory for file work.",
   tools: createBuiltinTools({
     cwd: process.cwd(),

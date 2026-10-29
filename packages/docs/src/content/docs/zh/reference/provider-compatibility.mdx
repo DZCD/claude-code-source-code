@@ -1,6 +1,6 @@
 ---
 title: Provider 兼容性
-description: SDK 的思考、力度和结构化输出选项在 DeepSeek、Kimi 等 Anthropic 兼容 provider 上的实际生效情况。
+description: 选择 Anthropic Messages 或 OpenAI Responses，核对思考、工具、结构化输出和媒体支持。
 ---
 
 SDK 的默认模型客户端使用 Anthropic Messages 格式，可以对接任何 Anthropic
@@ -80,6 +80,20 @@ OpenAI `"xhigh"`（DeepSeek 的例外见下文）。除自 0.32.0 起的官方 D
 此适配器不暴露 OpenAI 托管工具、文档输入、`previous_response_id`、后台任务或
 WebSocket 模式。工具执行和会话历史由 SDK 管理。适配器有本地 HTTP/SSE 契约测试；
 真实 provider 测试通过 `OPENAI_API_KEY` 和 `OPENAI_MODEL` 按需启用。
+
+### 识图与生图
+
+*需要 0.31.0 及以上版本。*
+
+| 能力 | 本 SDK 的 Responses 适配器 |
+| --- | --- |
+| URL/Base64 图片输入，以及函数工具返回的图片 | 模型支持视觉时可用 |
+| 原生 `image_generation` 托管工具及 `image_generation_call` 输出 | 未暴露 |
+| Document/PDF、音频或视频输入 | 此适配器不支持 |
+
+OpenAI 可通过 Responses 托管工具或独立 Images API 生图，但本 SDK 适配器没有
+暴露这些托管工具。应用需要生图时，可把 Images API 封装成普通 SDK `tool()`；
+这部分集成由应用实现。参见 [OpenAI 生图说明](https://developers.openai.com/api/docs/guides/image-generation)。
 
 ### DeepSeek Responses API
 
@@ -167,8 +181,8 @@ DeepSeek 自己的思考力度旋钮是 `output_config.effort`，SDK 目前尚�
 
 其他值得知道的 DeepSeek 差异：
 
-- 不认识的模型名会被静默映射到 `deepseek-v4-flash`，请显式传入
-  `deepseek-*` 模型名。
+- 使用 `deepseek-flash` 或 `deepseek-v4-pro`。文档列出的 Claude 名称别名
+  按 DeepSeek 的映射处理，其他不支持的名称会被拒绝。
 - 消息历史里的 `thinking` 内容块被接受，`redacted_thinking` 块不支持。
 - `max_tokens`、`system`、`stream`、`temperature`、`top_p`、
   `stop_sequences` 和工具调用完全支持；`cache_control` 一律被忽略。

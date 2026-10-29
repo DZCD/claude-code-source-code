@@ -24,7 +24,7 @@ const tracer = createJsonlContextTracer({
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 
@@ -91,7 +91,7 @@ const tracer = createLangSmithContextTracer({
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 
@@ -207,7 +207,7 @@ const tracer = createLangfuseContextTracer({
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 

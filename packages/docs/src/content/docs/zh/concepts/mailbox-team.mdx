@@ -22,7 +22,7 @@ import {
 const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "你负责调研 agent SDK 架构，并输出简洁结论。",
   workspace: ".agent-workspaces/researcher",
 });
@@ -32,7 +32,7 @@ const team = createTeam({
   lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     systemPrompt: "你是工程负责人。需要调研时委托 researcher。",
     workspace: ".agent-workspaces/engineering-lead",
   }),
@@ -140,7 +140,7 @@ const team = createTeam({
   lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
   }),
   members: [],
   mailbox,

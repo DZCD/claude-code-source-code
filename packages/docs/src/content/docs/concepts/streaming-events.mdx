@@ -27,6 +27,35 @@ for await (const message of agent.query("What is 2+2?")) {
 }
 ```
 
+## Responses text and reasoning events
+
+*Requires 0.31.0 or later.*
+
+The SDK envelope stays `stream_event`, but its `event` payload is provider-native.
+For a Responses-configured agent, consume text deltas like this:
+
+```ts
+for await (const message of responsesAgent.query("Explain 2 + 2")) {
+  if (message.type !== "stream_event") continue;
+  const event = message.event;
+  if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+    process.stdout.write(event.delta);
+  }
+}
+```
+
+`responsesAgent` is the agent configured in [Quickstart](/quickstart/#choose-a-model-protocol).
+DeepSeek plaintext reasoning arrives as `response.reasoning_text.delta`;
+Anthropic uses `content_block_delta` with `delta.type: "thinking_delta"`.
+The final `assistant.message.content` contains `openai_reasoning` items on
+Responses and `thinking` blocks on Anthropic. Preserve complete content in
+history. OpenAI encrypted reasoning remains opaque; it is not plaintext to render.
+
+Use [ContextTracer](/concepts/context-tracing/) for the full transcript and
+response metadata. Tool execution and `submit_output` validation belong to
+the SDK loop; consuming raw events does not execute tools or deliver an artifact.
+Do not parse tool-looking prose as a function call.
+
 ## Message types
 
 | Type | Description |

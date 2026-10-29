@@ -29,7 +29,9 @@ import { createAgent } from "agent-lattice";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
 });
 
 for await (const message of agent.query("Say hello")) {
@@ -47,7 +49,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "You are a concise engineering assistant.",
   tools: createBuiltinTools({
     cwd: process.cwd(),
@@ -343,6 +345,36 @@ Protocol references: [Responses migration](https://developers.openai.com/api/doc
 [reasoning history](https://developers.openai.com/api/docs/guides/reasoning),
 and [function calling](https://developers.openai.com/api/docs/guides/function-calling).
 
+## DeepSeek Responses connection
+
+*Requires 0.32.0 or later.*
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const responsesAgent = createBareAgent({
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com",
+    reasoningEffort: "low",
+  }),
+});
+
+const result = await responsesAgent.prompt("What is 2 + 2?");
+console.log(result.result);
+```
+
+This uses the same agent/tool loop as Anthropic Messages. Use `outputSchema`
+for SDK-validated `submit_output` artifacts; `outputFormat` requests a provider
+format and still returns text. Responses supports image understanding when the
+model supports vision. Native OpenAI `image_generation` hosted tools and
+`image_generation_call` output are not exposed by this adapter. An application
+can wrap the separate Images API as an ordinary SDK tool. Document/PDF, audio,
+and video input are also outside this adapter's supported input blocks.
+
 ## Default output budget
 
 *Requires 0.29.0 or later.*
@@ -363,9 +395,14 @@ separate `autoCompact.maxTokens` summary budget is unchanged.
 
 ## Multimodal Input
 
-Pass Anthropic-compatible content blocks for image or document prompts:
+Pass content blocks for image prompts. URL/base64 images work on both clients
+when the provider/model supports vision. Document blocks depend on the
+Anthropic provider and are rejected by the Responses adapter.
 
 ```ts
+import { readFile } from "node:fs/promises";
+
+const imageBase64 = (await readFile("./screenshot.png")).toString("base64");
 const result = await agent.prompt([
   { type: "text", text: "Summarize this screenshot." },
   {
@@ -396,7 +433,7 @@ const tracer = createJsonlContextTracer({
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 
@@ -456,7 +493,7 @@ const tracer = createCompositeContextTracer([
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 
@@ -560,7 +597,7 @@ const tracer = createCompositeContextTracer([
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tracer,
 });
 
@@ -614,12 +651,12 @@ DeepSeek model name:
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
 });
 ```
 
 Pass an explicit `deepseek-*` model name — unknown names are silently mapped to
-`deepseek-v4-flash`. For which SDK options DeepSeek actually honors (thinking
+`deepseek-flash`. For which SDK options DeepSeek actually honors (thinking
 budgets are ignored; `reasoningEffort` does not apply; structured output is not
 supported), see
 [Provider Compatibility](https://docs.claude-code-sdk.com/reference/provider-compatibility/).
@@ -633,7 +670,7 @@ import { z } from "zod/v4";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tools: [
     tool(
       "calculator",
@@ -751,7 +788,7 @@ import { z } from "zod/v4";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash-vision-exp",
+  model: "deepseek-flash",
   outputSchema: z.object({ result: z.string() }),
   thinkingConfig: { type: "enabled", budgetTokens: 4096 },
   maxTurns: 5,
@@ -1178,7 +1215,7 @@ const readPatientRecord = qcTool(
 const agent = createBareAgent<QcContext>({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tools: [readPatientRecord],
 });
 
@@ -1196,7 +1233,7 @@ const result = await agent.prompt("Review the current patient record.", {
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tools: [dangerousTool],
   permission: async request => {
     if (request.toolName === "danger") {
@@ -1230,7 +1267,7 @@ const pdf = await loadSkill("./skills/pdf");
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   skills: [codeReview, pdf],
 });
 ```
@@ -1271,7 +1308,7 @@ const mcp = await connectMCPStdioServer(
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tools: mcp.tools,
 });
 
@@ -1306,7 +1343,7 @@ const mcp = await connectMCPStreamableHTTPServer("https://mcp.example.com/mcp", 
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   tools: mcp.tools,
 });
 ```
@@ -1396,7 +1433,7 @@ import {
 const researcher = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "You research agent SDK architecture and report concise findings.",
 });
 
@@ -1405,7 +1442,7 @@ const team = createTeam({
   lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     systemPrompt: "You lead engineering work. Delegate research tasks to researcher.",
   }),
   members: [
@@ -1535,7 +1572,7 @@ const team = createTeam({
   lead: createAgent({
     apiKey: process.env.DEEPSEEK_API_KEY,
     baseURL: "https://api.deepseek.com/anthropic",
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
   }),
   members: [],
   mailbox,
@@ -1560,7 +1597,7 @@ import {
 const createDeepSeekAgent = (systemPrompt: string) => createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt,
 });
 
@@ -1677,7 +1714,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "Use the configured project directory for file work.",
   tools: createBuiltinTools({
     cwd: process.cwd(),
@@ -1713,7 +1750,7 @@ at all.
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
 });
 
 await agent.prompt("My name is Ada.");
@@ -1750,7 +1787,7 @@ const historyStore = createJsonlHistoryStore({
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   historyStore,
 });
 

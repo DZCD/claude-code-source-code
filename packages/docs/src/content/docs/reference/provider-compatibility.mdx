@@ -1,6 +1,6 @@
 ---
 title: Provider Compatibility
-description: How SDK thinking, reasoning-effort, and structured-output options behave on Anthropic-compatible providers such as DeepSeek and Kimi.
+description: Choose Anthropic Messages or OpenAI Responses and check thinking, tools, structured output, and media support.
 ---
 
 The SDK's default model client speaks the Anthropic Messages format and works
@@ -93,6 +93,21 @@ This adapter does not expose OpenAI-hosted tools, document input,
 execution and conversation history. The adapter is covered by local HTTP/SSE
 contract tests; live provider tests are opt-in using `OPENAI_API_KEY` and
 `OPENAI_MODEL`.
+
+### Image understanding and generation
+
+*Requires 0.31.0 or later.*
+
+| Capability | This SDK's Responses adapter |
+| --- | --- |
+| URL/base64 image input and images returned by function tools | Supported when the model supports vision |
+| Native `image_generation` hosted tool and `image_generation_call` output | Not exposed |
+| Document/PDF, audio, or video input | Not supported by this adapter |
+
+OpenAI offers image generation through its Responses hosted tool and a separate
+Images API. The SDK adapter does not expose those hosted tools. Applications
+can wrap the Images API in an ordinary SDK `tool()` when needed; that remains
+application-owned integration. See [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation).
 
 ### DeepSeek Responses API
 
@@ -189,8 +204,8 @@ the on/off switch via `thinkingConfig`.
 
 Other DeepSeek specifics worth knowing:
 
-- Unknown model names are silently mapped to `deepseek-v4-flash`; pass an
-  explicit `deepseek-*` model name.
+- Use `deepseek-flash` or `deepseek-v4-pro`. Documented Claude-name aliases
+  follow DeepSeek's mapping; other unsupported names are rejected.
 - `thinking` content blocks in message history are accepted;
   `redacted_thinking` blocks are not.
 - `max_tokens`, `system`, `stream`, `temperature`, `top_p`, `stop_sequences`,

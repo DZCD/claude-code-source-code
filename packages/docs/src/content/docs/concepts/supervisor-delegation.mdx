@@ -25,7 +25,7 @@ import {
 const explorer = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "explorer",
   systemPrompt: [
     "You are an explore subagent.",
@@ -38,7 +38,7 @@ const explorer = createAgent({
 const supervisor = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "supervisor",
   systemPrompt: "You supervise the task and call specialist subagents when useful.",
   tools: [
@@ -98,7 +98,7 @@ import { agentTool, defineAgent } from "agent-lattice";
 const explorerSpec = defineAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "explorer",
   systemPrompt: "You are an explore subagent. Inspect and report; do not make code changes.",
 });
@@ -137,14 +137,14 @@ const findingsSchema = z.object({
 });
 
 const explorer = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "explorer",
   systemPrompt: "You are an explore subagent. Inspect and report; do not make code changes.",
   outputSchema: findingsSchema,
 });
 
 const supervisor = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "supervisor",
   tools: [
     agentTool("explore", explorer, {
@@ -185,7 +185,7 @@ When neither side declares an `outputSchema` and the child ends with a `structur
 
 ```ts
 const judge = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   name: "judge",
   systemPrompt: "You judge a case and submit a structured verdict.",
   outputSchema: verdictSchema,
@@ -211,7 +211,7 @@ Each child agent has its own workspace. Ask child agents to write durable report
 
 ```ts
 const reviewer = createAgent({
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
   systemPrompt: "Review the patch and write notes under your workspace.",

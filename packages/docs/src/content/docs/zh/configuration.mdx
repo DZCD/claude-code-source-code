@@ -13,7 +13,7 @@ import { createAgent } from "agent-lattice";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "你是一个简洁的工程助手。",
   maxTokens: 16384,
   maxTurns: 50,
@@ -32,6 +32,68 @@ const agent = createAgent({
 });
 ```
 
+## OpenAI Responses API
+
+*需要 0.31.0 及以上版本。*
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const agent = createBareAgent({
+  model: process.env.OPENAI_MODEL ?? "gpt-4.1",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.OPENAI_API_KEY,
+  }),
+});
+
+const result = await agent.prompt("Say hello");
+console.log(result.result);
+```
+
+工厂默认读取 `OPENAI_API_KEY`，基础地址默认为 `https://api.openai.com/v1`。
+凭据和自定义 `baseURL` 应传给工厂，而不是智能体。显式 `modelClient`
+会替换默认 Anthropic 客户端；智能体上的 `apiKey`/`baseURL` 不会配置这个注入的客户端。
+
+### 通过 Responses 使用 DeepSeek
+
+*需要 0.32.0 及以上版本。*
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const responsesAgent = createBareAgent({
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com",
+    reasoningEffort: "low",
+  }),
+});
+
+const result = await responsesAgent.prompt("What is 2 + 2?");
+console.log(result.result);
+```
+
+每次查询可用 `thinkingConfig: { type: "disabled" }` 关闭思考；官方 DeepSeek
+端点的 `enabled` 和 `adaptive` 会开启思考。DeepSeek 忽略思考 token 预算。
+智能体/查询的 `reasoningEffort` 覆盖工厂力度，`max` 原样发送为 `max`。
+其他 Responses provider 仍需遵守各自支持的力度范围，省略时使用 provider 默认值。
+强制补交恢复和推理历史要求见
+[Provider 兼容性](/zh/reference/provider-compatibility/#deepseek-responses-api)。
+
+### 输出上限与非流式调用
+
+`maxTokens` 属于智能体，会映射为 Responses 的 `max_output_tokens`。
+使用注入客户端、且智能体未设置 DeepSeek `baseURL` 时，正常默认值为 16384；
+客户端工厂不会改变该上限。需要控制延迟和输出成本时，请显式设置预算。
+Anthropic 兼容请求若使用 DeepSeek 的大默认预算，底层 Anthropic 客户端可能要求
+流式调用，除非设置合适的 `maxTokens` 或显式请求超时。示例在两种协议下均设置
+明确的预算和超时。
+
 ## 系统提示词
 
 使用 `systemPrompt` 定义 agent 的稳定角色、职责和边界。团队场景尤其需要它，因为每个真正工作的 `Agent` 都应该有自己的职责描述。
@@ -40,7 +102,7 @@ const agent = createAgent({
 const backendAgent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: [
     "你是 backend 执行 agent。",
     "你负责 API、数据模型、存储、集成和服务端正确性。",

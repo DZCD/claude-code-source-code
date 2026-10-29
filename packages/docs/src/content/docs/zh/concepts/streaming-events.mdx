@@ -11,6 +11,34 @@ for await (const message of agent.query("Explain tools.")) {
 }
 ```
 
+## Responses 文本与思考事件
+
+*需要 0.31.0 及以上版本。*
+
+SDK 外壳仍是 `stream_event`，但 `event` 保留 provider 原生格式。
+已配置 Responses 的智能体可这样消费文本增量：
+
+```ts
+for await (const message of responsesAgent.query("Explain 2 + 2")) {
+  if (message.type !== "stream_event") continue;
+  const event = message.event;
+  if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+    process.stdout.write(event.delta);
+  }
+}
+```
+
+`responsesAgent` 是 [快速开始](/zh/quickstart/#选择模型协议) 中配置的智能体。
+DeepSeek 明文思考通过 `response.reasoning_text.delta` 送达；Anthropic 使用
+`content_block_delta`，其中 `delta.type: "thinking_delta"`。
+最终 `assistant.message.content` 在 Responses 下包含 `openai_reasoning`
+内容项，在 Anthropic 下包含 `thinking` 块。历史存储应保留完整内容。
+OpenAI 加密推理是不可直接展示的载荷，不是明文思考。
+
+完整对话和响应元数据请使用 [ContextTracer](/zh/concepts/context-tracing/)。
+工具执行和 `submit_output` 校验由 SDK 循环负责；消费原始事件不会执行工具，
+也不等于已经交付产物。不要将看起来像工具调用的普通文本解析成函数调用。
+
 ## 事件的送达时机
 
 `stream_event` 在模型响应期间实时送达，不会等整轮请求结束后再补发，因此可以直接用来做打字机效果。`assistant` 在该轮模型响应组装完成后送达，`user` 在这一批工具全部执行完后送达。

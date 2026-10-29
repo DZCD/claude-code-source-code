@@ -23,14 +23,14 @@ AgentLattice 是一个智能体解决方案开发框架，用来在你自己的 
 
 - 你想把 agent loop 集成进自己的服务端、桌面端或 Worker runtime。
 - 你需要自定义工具、权限审批、流式事件，而不是完整的 Claude Code UI。
-- 你希望支持 Anthropic 兼容接口，比如 DeepSeek 的 Anthropic-compatible endpoint。
+- 你希望使用 Anthropic Messages 或 OpenAI Responses 协议，包括 DeepSeek 的兼容端点。
 - 你想要可组合的 MCP、skills、内置文件工具、AgentLike 委托或团队 mailbox 协作能力。
 
 ## 能力概览
 
 <CardGrid>
   <Card title="Agent 循环" icon="setting">
-    保存对话状态，调用 Anthropic 兼容模型，识别工具调用，执行工具，再把结果回填给模型。
+    保存对话状态，调用 Anthropic Messages 或 OpenAI Responses 模型，识别工具调用，执行工具，再把结果回填给模型。
   </Card>
   <Card title="自定义工具" icon="puzzle">
     用 Zod schema 定义输入，SDK 会解析参数并转成模型可用的 JSON Schema。
@@ -56,3 +56,14 @@ npm install agent-lattice zod
 ```
 
 AgentLattice 的 npm 包名是 `agent-lattice`，并且刻意和 Claude Code 解耦：它不依赖 Claude Code CLI、Ink UI、AppState、sessionStorage 或 Claude Code 的内部运行时。
+
+## 模型协议
+
+*需要 0.31.0 及以上版本。*
+
+DeepSeek 思考兼容需要 0.32.0 及以上版本。
+
+可使用默认 Anthropic Messages 客户端，或注入 `createOpenAIResponsesClient()`
+连接 OpenAI 和 Responses 兼容 provider。两种协议共用工具循环、结构化交付、
+追踪和历史接口。先阅读 [快速开始](/zh/quickstart/#选择模型协议)，
+再按 [Provider 兼容性](/zh/reference/provider-compatibility/) 选择协议。

@@ -11,7 +11,7 @@ import { createAgent } from "agent-lattice";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "You are a concise engineering assistant.",
   maxTokens: 16384,
   maxTurns: 50,
@@ -32,6 +32,71 @@ const agent = createAgent({
 });
 ```
 
+## OpenAI Responses API
+
+*Requires 0.31.0 or later.*
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const agent = createBareAgent({
+  model: process.env.OPENAI_MODEL ?? "gpt-4.1",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.OPENAI_API_KEY,
+  }),
+});
+
+const result = await agent.prompt("Say hello");
+console.log(result.result);
+```
+
+The factory defaults to `OPENAI_API_KEY` and `https://api.openai.com/v1`.
+Pass credentials and any custom `baseURL` to this factory, not to the agent.
+An explicit `modelClient` replaces the default Anthropic client; agent-level
+`apiKey`/`baseURL` do not configure that injected client.
+
+### DeepSeek through Responses
+
+*Requires 0.32.0 or later.*
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const responsesAgent = createBareAgent({
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com",
+    reasoningEffort: "low",
+  }),
+});
+
+const result = await responsesAgent.prompt("What is 2 + 2?");
+console.log(result.result);
+```
+
+Use `thinkingConfig: { type: "disabled" }` per query to disable thinking;
+`enabled` and `adaptive` enable it on the official DeepSeek endpoint. DeepSeek
+ignores thinking token budgets. The agent/query's `reasoningEffort` overrides
+the factory effort; `max` is forwarded as `max`. Other Responses providers
+keep their own supported effort levels. Omitted effort uses the provider default.
+See [Provider Compatibility](/reference/provider-compatibility/#deepseek-responses-api)
+for forced-submission recovery and reasoning-history requirements.
+
+### Output limits and non-streaming calls
+
+`maxTokens` belongs to the agent and maps to Responses `max_output_tokens`.
+With an injected client and no agent-level DeepSeek `baseURL`, the agent's
+normal default is 16384; the factory does not change this limit. Set an explicit
+budget when latency and output cost matter. For Anthropic-compatible requests
+using the large DeepSeek default, the underlying Anthropic client can require
+streaming unless you set a suitable `maxTokens` or an explicit request timeout.
+The examples use explicit budgets and deadlines on both protocols.
+
 ## System prompt
 
 Use `systemPrompt` to define an agent's stable role, responsibility, and boundaries. This is especially important in team setups where each working `Agent` needs a different job description.
@@ -40,7 +105,7 @@ Use `systemPrompt` to define an agent's stable role, responsibility, and boundar
 const backendAgent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: [
     "You are the backend executor agent.",
     "Handle APIs, data models, storage, integrations, and server-side correctness.",

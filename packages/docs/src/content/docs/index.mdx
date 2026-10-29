@@ -19,7 +19,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid>
   <Card title="Agent loop" icon="setting">
-    Maintains conversation state, calls an Anthropic-compatible model, runs tools, and feeds results back to the model.
+    Maintains conversation state, calls an Anthropic Messages or OpenAI Responses model, runs tools, and feeds results back to the model.
   </Card>
   <Card title="Custom tools" icon="puzzle">
     Define tools with Zod schemas, parsed inputs, typed handlers, and model-ready JSON Schema.
@@ -45,3 +45,15 @@ npm install agent-lattice zod
 ```
 
 Install AgentLattice from npm as `agent-lattice`. It is intentionally independent from Claude Code: it does not require the Claude Code CLI, Ink UI, session storage, MCP runtime, or app runtime.
+
+## Model protocols
+
+*Requires 0.31.0 or later.*
+
+DeepSeek thinking compatibility requires 0.32.0 or later.
+
+Use the default Anthropic Messages client or inject `createOpenAIResponsesClient()`
+for OpenAI and Responses-compatible providers. Both use the same tool loop,
+structured submission, tracing, and history interfaces.
+Start with [Quickstart](/quickstart/#choose-a-model-protocol) and check
+[Provider Compatibility](/reference/provider-compatibility/) before choosing a protocol.

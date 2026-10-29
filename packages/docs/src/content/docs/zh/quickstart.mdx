@@ -19,7 +19,9 @@ import { createAgent } from "agent-lattice";
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
 });
 
 for await (const message of agent.query("用一句话介绍你自己。")) {
@@ -28,6 +30,42 @@ for await (const message of agent.query("用一句话介绍你自己。")) {
 ```
 
 `agent.query()` 返回 async iterator。你可以边跑边消费初始化事件、模型回复、工具结果、流式事件和最终结果。
+
+## 选择模型协议
+
+*需要 0.31.0 及以上版本。*
+
+DeepSeek 思考兼容需要 0.32.0 及以上版本。
+
+默认客户端使用 Anthropic Messages。若端点提供 OpenAI Responses API，
+通过 `modelClient` 注入 `createOpenAIResponsesClient()`：
+
+```ts
+import { createBareAgent, createOpenAIResponsesClient } from "agent-lattice";
+
+const responsesAgent = createBareAgent({
+  model: "deepseek-flash",
+  maxTokens: 4096,
+  requestTimeoutMs: 60_000,
+  modelClient: createOpenAIResponsesClient({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com",
+    reasoningEffort: "low",
+  }),
+});
+
+const result = await responsesAgent.prompt("What is 2 + 2?");
+console.log(result.result);
+```
+
+Responses 的凭据和基础地址应放在客户端工厂上。智能体的 `baseURL` 只配置默认
+Anthropic 客户端，单独修改它不会切换协议。直连 OpenAI 时，省略工厂的
+`baseURL`，使用 `apiKey: process.env.OPENAI_API_KEY`，并从应用的
+`OPENAI_MODEL` 配置设置智能体的 `model`。两个内置客户端均不支持仅提供
+Chat Completions 的端点。
+
+两种连接方式见 [配置](/zh/configuration/#openai-responses-api)，
+思考、结构化输出和媒体边界见 [Provider 兼容性](/zh/reference/provider-compatibility/)。
 
 ## 只拿最终结果
 
@@ -40,10 +78,15 @@ console.log(result.result);
 
 ## 发送多模态输入
 
-图片或文档输入要传 content block 数组，不要塞进普通字符串。SDK 会在 agent loop
-中原样转发 Anthropic 兼容的 `image` 和 `document` block。
+图片输入应传 content block 数组。两个客户端均可在 provider/模型支持时接收 URL
+和 Base64 图片。Responses 适配器不支持 `document`/PDF，Anthropic 文档输入
+是否可用取决于 provider。识图不代表支持生图。
 
 ```ts
+import { readFile } from "node:fs/promises";
+
+// 读取应用自己的图片文件。
+const imageBase64 = (await readFile("./screenshot.png")).toString("base64");
 const result = await agent.prompt([
   { type: "text", text: "请总结这张截图。" },
   {
@@ -112,7 +155,10 @@ const result = await agent.prompt("返回 2 + 2 的答案。", {
 
 设置 `outputFormat` 后，SDK 会把结构化输出参数发送给 provider，并原样返回最终文本。需要类型化结果时，请在应用层解析或验证返回的 JSON。
 
-简单记：`query()` 是事件流 API，`prompt()` 是最终结果 API，`{ stream: true | false }` 控制模型是否流式输出，`outputFormat` 请求 JSON 或 provider 支持的 schema 输出。
+需要由 SDK 校验的产物时，使用 `outputSchema` 并读取 `result.structuredResult`。
+SDK 会注入 `submit_output`、校验参数，并在两种协议下执行相同的提交生命周期。
+`outputFormat` 只是请求 provider 的输出格式，结果仍是文本，不能代替 SDK 校验。
+见 [结构化输出](/zh/concepts/agent-loop/#用-submit_output-提交结构化输出)。
 
 ## 下一步
 

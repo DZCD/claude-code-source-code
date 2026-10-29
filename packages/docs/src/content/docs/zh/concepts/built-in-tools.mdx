@@ -30,7 +30,7 @@ import { createBareAgent, createBuiltinTools } from "agent-lattice";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   systemPrompt: "使用已配置的项目目录完成文件工作。",
   tools: createBuiltinTools({
     cwd: process.cwd(),

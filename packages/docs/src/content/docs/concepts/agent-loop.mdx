@@ -19,7 +19,7 @@ For each prompt, it:
 const agent = createAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash",
+  model: "deepseek-flash",
   maxTurns: 50,
 });
 
@@ -75,7 +75,7 @@ import { z } from "zod/v4";
 const agent = createBareAgent({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: "https://api.deepseek.com/anthropic",
-  model: "deepseek-v4-flash-vision-exp",
+  model: "deepseek-flash",
   outputSchema: z.object({ result: z.string() }),
   thinkingConfig: { type: "enabled", budgetTokens: 4096 },
   maxTurns: 5,
