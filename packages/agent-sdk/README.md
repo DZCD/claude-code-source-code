@@ -1283,6 +1283,15 @@ description: Read and inspect PDF documents
 Render pages before claiming layout is correct.
 ```
 
+
+*Requires 0.32.1 or later for Chinese matching.* Chinese text in a skill's name
+or description is preserved and split into words with `Intl.Segmenter`; words
+of at least two Han characters can match the user's text. Latin tokens retain
+the existing minimum of three characters. Matching is lexical, not semantic: a
+request such as `生成汇报` can match a description containing `制作病例汇报`, but
+unrelated requests do not load the skill merely because they share one Han
+character. Text blocks in multimodal prompts use the same rule.
+
 ## MCP Tools
 
 The SDK can expose MCP server tools as agent tools. The first version supports

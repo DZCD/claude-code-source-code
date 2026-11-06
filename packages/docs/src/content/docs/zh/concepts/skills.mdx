@@ -41,3 +41,8 @@ Render pages before claiming layout is correct.
 SDK 会根据用户 prompt 和 skill 的 `name/description` 做简单匹配。匹配到的 skill 会被作为额外上下文注入到模型请求中。
 
 这不是完整的 Claude Code skill 系统，但足够支撑“按需注入专业指令”的轻量场景。
+
+*需要 0.32.1 及以上版本。* 中文名称和描述会保留汉字，并使用 `Intl.Segmenter`
+分词；至少两个汉字的词可与用户文本匹配。拉丁字母词仍保持至少三个字符的规则。
+这是文字匹配，不是语义分类：例如“生成汇报”可匹配含“制作病例汇报”的描述，
+仅有一个相同汉字的无关请求不会触发 Skill。多模态请求的文字块使用相同规则。

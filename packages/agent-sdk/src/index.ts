@@ -3803,10 +3803,7 @@ class Agent<TContext = unknown> {
     const normalizedPrompt = normalizeForMatch(promptText);
     return skills.filter(definition => {
       const haystack = normalizeForMatch(`${definition.name} ${definition.description}`);
-      return haystack
-        .split(/\s+/)
-        .filter(token => token.length >= 3)
-        .some(token => normalizedPrompt.includes(token));
+      return skillMatchTokens(haystack).some(token => normalizedPrompt.includes(token));
     });
   }
 
@@ -4599,7 +4596,21 @@ function stripQuotes(value: string): string {
 }
 
 function normalizeForMatch(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+const skillChineseSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
+
+function skillMatchTokens(value: string): string[] {
+  const tokens = value.split(/\s+/).filter(token => token.length >= 3);
+  // Han text has no whitespace between words. Match meaningful words without
+  // treating a shared single character as evidence that a skill is relevant.
+  for (const phrase of value.match(/\p{Script=Han}+/gu) ?? []) {
+    for (const { segment, isWordLike } of skillChineseSegmenter.segment(phrase)) {
+      if (isWordLike && [...segment].length >= 2) tokens.push(segment);
+    }
+  }
+  return tokens;
 }
 
 function promptTextForMatching(prompt: string | ContentBlock[]): string {

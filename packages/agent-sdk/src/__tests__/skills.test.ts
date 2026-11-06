@@ -178,3 +178,36 @@ describe("skills", () => {
     });
   });
 });
+
+
+describe("Chinese skill matching", () => {
+  test.each(["生成汇报", "请制作病例汇报。", "生成PPT", "PPT report"])("loads a matching skill for %s", async prompt => {
+    let messages: ModelMessage[] = [];
+    const agent = createAgent({ model: "fake", workspace: false,
+      modelClient: { async createMessage(request) { messages = request.messages; return textAssistant("done"); } },
+      skills: [skill({ name: "mdt-report", description: "为医生制作病例汇报，生成PPT和PPT report", instructions: "CHINESE_SKILL_LOADED" })],
+    });
+    await agent.prompt(prompt);
+    expect(JSON.stringify(messages)).toContain("CHINESE_SKILL_LOADED");
+  });
+
+  test.each(["今天天气怎么样", "报一个数", "Say hello"])("does not load a skill for unrelated request %s", async prompt => {
+    let messages: ModelMessage[] = [];
+    const agent = createAgent({ model: "fake", workspace: false,
+      modelClient: { async createMessage(request) { messages = request.messages; return textAssistant("done"); } },
+      skills: [skill({ name: "mdt-report", description: "制作病例汇报", instructions: "CHINESE_SKILL_LOADED" })],
+    });
+    await agent.prompt(prompt);
+    expect(JSON.stringify(messages)).not.toContain("CHINESE_SKILL_LOADED");
+  });
+
+  test("loads Chinese skills from multimodal text blocks without matching image data", async () => {
+    let messages: ModelMessage[] = [];
+    const agent = createAgent({ model: "fake", workspace: false,
+      modelClient: { async createMessage(request) { messages = request.messages; return textAssistant("done"); } },
+      skills: [skill({ name: "report", description: "制作病例汇报", instructions: "CHINESE_SKILL_LOADED" })],
+    });
+    await agent.prompt([{ type: "text", text: "生成汇报" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } }]);
+    expect(JSON.stringify(messages)).toContain("CHINESE_SKILL_LOADED");
+  });
+});
