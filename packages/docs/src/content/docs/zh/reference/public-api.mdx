@@ -257,6 +257,7 @@ trace session，并显示为该 chain 的子节点。Agent 原来的 session ID 
 | 官方 DeepSeek Responses：关闭推理时发送 `reasoning.effort: "none"`，修复强制补交恢复 | 0.31.1 |
 | DeepSeek Responses 支持现有 enabled/adaptive 思考开关、原样发送 `max` 力度；两个客户端在非思考工具结果续写时保持关闭思考，直到新的用户输入 | 0.32.0 |
 | Skill 中文名称与描述按词匹配；拉丁字母词保留至少三个字符的原规则 | 0.32.1 |
+| DeepSeek Anthropic 协议续写把空 thinking 块视为思考轮次，保持开启思考 | 0.32.2 |
 
 已安装版本可从 `node_modules/agent-lattice/package.json` 读取；包没有把它导出为可 import 的路径。
 

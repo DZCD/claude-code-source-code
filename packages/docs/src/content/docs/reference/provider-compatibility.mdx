@@ -145,6 +145,16 @@ when `submitOutputEndTurn: false` follows forced recovery. The next user prompt
 restores normal thinking selection. History retains the actual reasoning;
 the SDK does not invent reasoning text or signatures.
 
+*Requires 0.32.2 or later.*
+
+A tool call returned with a thinking block counts as a thinking turn even when
+the block's text is empty, so the continuation keeps thinking on. DeepSeek
+accepts the empty block back in thinking mode, and keeping the switch unchanged
+keeps its prefix cache valid: DeepSeek does not share cached prefixes between
+thinking-on and thinking-off requests. A tool call with no thinking block still
+continues with thinking off. Before 0.32.2, an empty block turned thinking off
+for the rest of the turn.
+
 The same SDK loop enforces `submit_output` on both protocols:
 
 | Behavior | Coverage |

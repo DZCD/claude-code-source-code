@@ -16,6 +16,12 @@ describe("DeepSeek same-turn thinking compatibility", () => {
   test.each([thinking, responsesThinking])("a genuine reasoning-bearing tool turn may continue thinking (%s)", block => {
     expect(needsNonThinkingToolContinuation(conversation([block, call]))).toBe(false);
   });
+  test("an empty thinking block returned in thinking mode still marks a thinking tool turn", () => {
+    expect(needsNonThinkingToolContinuation(conversation([{ type: "thinking", thinking: "", signature: "signature" }, call]))).toBe(false);
+  });
+  test("an empty Responses reasoning item does not mark a thinking tool turn", () => {
+    expect(needsNonThinkingToolContinuation(conversation([{ type: "openai_reasoning", item: { type: "reasoning", id: "rs_1", summary: [], content: [] } }, call]))).toBe(true);
+  });
   test("reasoning on an earlier assistant does not authorize thinking on the latest non-thinking call", () => {
     const messages = conversation([call]);
     messages.splice(1, 0, { role: "assistant", content: [thinking] }, { role: "user", content: "Continue" });
